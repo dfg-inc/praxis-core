@@ -1,0 +1,12 @@
+product:
+  epic: 1
+  cr: 1
+  wp: 1
+  bug: 0
+  baselineSeq: {}
+epics:
+  E1:
+    fr: 1
+    nfr: 0
+    br: 0
+retired: []

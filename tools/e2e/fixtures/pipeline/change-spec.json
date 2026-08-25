@@ -1,0 +1,37 @@
+{
+  "decisionIds": ["ADR-E2E-001"],
+  "requirementIds": ["E1-FR1"],
+  "researchGlobs": ["src/**/*.js", "test/**/*.js"],
+  "design": {
+    "title": "Correct Hello greeting",
+    "decision": "Implement greeting as `Hello, ${name}!` in product `formatGreeting`.",
+    "contextInScope": [
+      "Product source: `src/greeter.js` (`formatGreeting`)",
+      "Tests: `test/greeter.test.js`"
+    ],
+    "outOfScope": ["Marketplace, Jira, TLS"],
+    "changeIntent": "Replace incorrect greeting prefix `Hi` with `Hello` and ensure trailing `!`."
+  },
+  "features": [
+    {
+      "id": "FEAT-GREET-1",
+      "title": "Correct Hello greeting",
+      "estimateHours": 1,
+      "readyForDev": true
+    }
+  ],
+  "changes": [
+    {
+      "file": "src/greeter.js",
+      "description": "formatGreeting must return Hello, name!",
+      "match": "return `Hi, ${name}`;",
+      "replace": "return `Hello, ${name}!`;"
+    }
+  ],
+  "acceptanceChecks": [
+    {
+      "file": "src/greeter.js",
+      "contains": "Hello, ${name}!"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "name": "praxis",
+  "owner": {
+    "name": "dfuture-co"
+  },
+  "description": "Internal marketplace entry for praxis-jira (not public Apache).",
+  "plugins": [
+    {
+      "name": "praxis-jira",
+      "source": "./",
+      "description": "Jira Server client with human-gated mutations.",
+      "version": "0.1.0"
+    }
+  ]
+}

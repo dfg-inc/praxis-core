@@ -1,0 +1,20 @@
+{
+  "name": "@praxis/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Executable BA→Arch→Dev→Quality pipeline e2e + contract checks",
+  "license": "UNLICENSED",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pipeline": "node src/run-pipeline.mjs"
+  },
+  "dependencies": {
+    "@praxis/contracts": "0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
