@@ -10,7 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "esbuild": "^0.21.5"
+    "esbuild": "^0.21.5",
+    "yaml": "^2.7.0"
   },
   "devDependencies": {
     "vitest": "^3.2.4"

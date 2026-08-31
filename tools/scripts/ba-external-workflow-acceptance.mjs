@@ -95,26 +95,42 @@ if (rebuild || !existsSync(join(mirror, "plugins/ba/bin/praxis-ba.cjs"))) {
   buildAllPluginArtifacts(mirror);
 }
 
-const baArtifact = join(mirror, "plugins/ba");
-assert(existsSync(join(baArtifact, "bin/praxis-ba.cjs")), "missing staged praxis-ba.cjs");
+const PLUGIN_IDS = ["ba", "architect", "developer", "jira"];
+for (const id of PLUGIN_IDS) {
+  assert(existsSync(join(mirror, "plugins", id)), `missing staged plugin ${id}`);
+}
+
+// Strict metadata validation against staged release artifacts (not only source).
+const meta = run(
+  `node "${join(root, "tools/scripts/validate-plugins.mjs")}" --root "${join(mirror, "plugins")}"`,
+  root,
+);
+assert(meta.ok, `plugins:validate on release artifacts failed:\n${meta.stdout}\n${meta.stderr}`);
 
 const packBase = mkdtempSync(join(tmpdir(), "praxis-ba-pack-"));
-const packDest = join(packBase, "ba");
-cpSync(baArtifact, packDest, { recursive: true });
-const pack = run("npm pack", packDest);
-assert(pack.ok, `npm pack failed: ${pack.stderr}`);
-const tgz = readdirSync(packDest).find((f) => f.endsWith(".tgz"));
-assert(tgz, "no .tgz from npm pack");
-const tgzPath = join(packDest, tgz);
-console.log(`packed ${tgzPath}`);
+const tgzPaths = [];
+for (const id of PLUGIN_IDS) {
+  const dest = join(packBase, id);
+  cpSync(join(mirror, "plugins", id), dest, { recursive: true });
+  const pack = run("npm pack", dest);
+  assert(pack.ok, `npm pack ${id} failed: ${pack.stderr}`);
+  const tgz = readdirSync(dest).find((f) => f.endsWith(".tgz"));
+  assert(tgz, `no .tgz for ${id}`);
+  tgzPaths.push(join(dest, tgz));
+  console.log(`packed ${id}: ${tgz}`);
+}
 
 const consumer = mkdtempSync(join(tmpdir(), "praxis-ba-ext-"));
 write(join(consumer, "package.json"), JSON.stringify({ name: "praxis-ba-ext-accept", private: true }, null, 2));
-const install = run(`npm install "${tgzPath}"`, consumer);
+const install = run(`npm install ${tgzPaths.map((p) => `"${p}"`).join(" ")}`, consumer);
 assert(install.ok, `npm install failed:\n${install.stderr}`);
 
 const installed = join(consumer, "node_modules/@praxis/ba");
 assert(existsSync(installed), `missing ${installed}`);
+assert(
+  existsSync(join(consumer, "node_modules/@praxis/architect")),
+  "missing @praxis/architect (needed for node_modules traversal regression)",
+);
 const real = run(`node -e "console.log(require('fs').realpathSync(${JSON.stringify(installed)}))"`, consumer);
 assert(!real.stdout.includes(join(root, "plugins")), `install resolves into monorepo plugins/: ${real.stdout.trim()}`);
 
@@ -269,16 +285,39 @@ const wpRaw = readFileSync(wpIndex, "utf8");
 assert(/status:\s*plan-approved/.test(wpRaw), "WP not plan-approved");
 assert(!wpRaw.includes("canon/epics"), "WP Scope must not duplicate canon/ prefix");
 
+// --- node_modules must not be traversed when validating the project root ---
+// Mirror the confirmed external trigger: installed Architect ships SKILL.md
+// under node_modules; `--repo .` must ignore it.
+write(
+  join(consumer, ".ba/counters.yaml"),
+  `product:\n  epic: 0\n  cr: 0\n  wp: 0\n  bug: 0\n  baselineSeq: {}\nepics: {}\nretired: []\n`,
+);
+write(
+  join(consumer, "vision.md"),
+  `---\ntype: vision\nstatus: confirmed\nconfirmed_at: "${date}"\nconfirmed_by: acceptance\n---\n\nRoot-surface vision for --repo . traversal check.\n`,
+);
+const rootValidate = baJson(cli, ["validate", "--repo", consumer], consumer);
+assert(
+  rootValidate.verdict === "VERIFY-OK",
+  `validate --repo . must ignore node_modules skills, got: ${JSON.stringify(rootValidate.checks?.filter((c) => !c.ok))}`,
+);
+assert(
+  !(rootValidate.checks ?? []).some((c) => /node_modules|nfr-budget/i.test(c.reason ?? "")),
+  "validate reason must not mention node_modules / nfr-budget",
+);
+
 console.log(
   JSON.stringify(
     {
       ok: true,
       consumer,
       installed,
-      tgz: tgzPath,
+      plugins: PLUGIN_IDS,
       wpId,
       frs: [fr1, fr2],
       validate: lint.verdict,
+      validateRepoDot: rootValidate.verdict,
+      artifactsMetadata: "PASS",
     },
     null,
     2,

@@ -1,6 +1,6 @@
 ---
 name: read-feature-statuses
-description: Read-only: return a feature’s status and linked issue statuses from Jira Server without a confirm gate (WBS 3.9).
+description: "Read-only: return a feature's status and linked issue statuses from Jira Server without a confirm gate (WBS 3.9)."
 ---
 
 # read-feature-statuses

@@ -261,6 +261,7 @@ function cmdRelease(version) {
     "npm run verify",
     "npm run smoke",
     "npm run release:mirror",
+    "npm run plugins:validate -- --root dist/release-mirror/plugins",
   ]) {
     const r = run(step);
     if (!r.ok) {
