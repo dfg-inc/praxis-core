@@ -11,7 +11,7 @@
     "pipeline": "node src/run-pipeline.mjs"
   },
   "dependencies": {
-    "@praxis/contracts": "0.1.0"
+    "@praxis/contracts": "*"
   },
   "devDependencies": {
     "typescript": "~5.8.3",

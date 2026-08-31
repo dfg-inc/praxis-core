@@ -22,6 +22,7 @@ import {
   readJson,
   repoRootFrom,
   syncAllVersions,
+  syncInternalWorkspaceDeps,
 } from "./release-lib.mjs";
 
 const root = repoRootFrom(import.meta.url);
@@ -144,13 +145,14 @@ ${planned.map((f) => `  - ${f}`).join("\n") || "  (none)"}
 
 Checks:
   1. SemVer + clean tree + branch + tag absence
-  2. npm run build
-  3. npm run verify
-  4. npm run smoke
-  5. npm run release:mirror
-  6. commit chore(release): v${version}
-  7. annotated tag v${version}
-  8. git push origin ${branch} && git push origin v${version}
+  2. sync package/manifest versions + internal @praxis/* deps → "*"
+  3. npm run build
+  4. npm run verify
+  5. npm run smoke
+  6. npm run release:mirror
+  7. commit chore(release): v${version}
+  8. annotated tag v${version}
+  9. git push origin ${branch} && git push origin v${version}
 `);
 }
 
@@ -172,6 +174,7 @@ function cmdCheck() {
       {
         ok,
         expected: report.expected,
+        internalDepPolicy: report.internalDeps?.range ?? "*",
         tag: {
           name: expectedTag,
           local: localTag,
@@ -181,6 +184,7 @@ function cmdCheck() {
             : `missing local tag ${expectedTag} (create via release:version)`,
         },
         files: report.files.length,
+        internalDeps: report.internalDeps?.refs?.length ?? 0,
         mismatches: report.mismatches,
       },
       null,
@@ -189,7 +193,7 @@ function cmdCheck() {
   );
   if (!report.ok) {
     console.error(
-      `version:check FAILED — ${report.mismatches.length} file mismatch(es) vs root ${report.expected}`,
+      `version:check FAILED — ${report.mismatches.length} mismatch(es) vs root ${report.expected} / "*" internal-dep policy`,
     );
   }
   if (!tagOk) {
@@ -199,7 +203,7 @@ function cmdCheck() {
   }
   if (!ok) process.exit(1);
   console.log(
-    `version:check PASS — ${report.files.length} files + tag ${expectedTag} match ${report.expected}`,
+    `version:check PASS — ${report.files.length} files + ${report.internalDeps?.refs?.length ?? 0} internal deps + tag ${expectedTag}`,
   );
 }
 
@@ -245,6 +249,10 @@ function cmdRelease(version) {
   for (const rel of discoverVersionFiles(root)) {
     if (rel === "package.json") continue;
     if (applyVersionToFile(root, rel, version)) touched.push(rel);
+  }
+  const depSync = syncInternalWorkspaceDeps(root, { dryRun: false });
+  for (const rel of depSync.changed) {
+    if (!touched.includes(rel)) touched.push(rel);
   }
   ensureLockfileVersion(version, touched);
 

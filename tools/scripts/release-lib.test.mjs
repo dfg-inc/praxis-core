@@ -3,13 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  INTERNAL_WORKSPACE_RANGE,
+  applyInternalWorkspaceDeps,
   applyVersionToData,
   applyVersionToFile,
+  checkInternalWorkspaceDeps,
   checkVersionConsistency,
   discoverVersionFiles,
   extractVersions,
   isValidSemVer,
+  listInternalDependencyRefs,
   syncAllVersions,
+  syncInternalWorkspaceDeps,
 } from "./release-lib.mjs";
 
 describe("isValidSemVer", () => {
@@ -60,6 +65,96 @@ describe("applyVersionToData", () => {
     };
     applyVersionToData("plugins/ba/.claude-plugin/marketplace.json", data, "1.0.0");
     expect(data.plugins[0].version).toBe("1.0.0");
+  });
+});
+
+describe("internal workspace dependencies", () => {
+  function seedDepsTree() {
+    const root = mkdtempSync(join(tmpdir(), "praxis-deps-"));
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "praxis", version: "0.1.0-alpha.2" }, null, 2) +
+        "\n",
+    );
+    mkdirSync(join(root, "packages/knowledge"), { recursive: true });
+    mkdirSync(join(root, "packages/plugin-sdk"), { recursive: true });
+    writeFileSync(
+      join(root, "packages/knowledge/package.json"),
+      JSON.stringify(
+        { name: "@praxis/knowledge", version: "0.1.0-alpha.2" },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(
+      join(root, "packages/plugin-sdk/package.json"),
+      JSON.stringify(
+        {
+          name: "@praxis/plugin-sdk",
+          version: "0.1.0-alpha.2",
+          dependencies: { "@praxis/knowledge": "0.1.0" },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    return root;
+  }
+
+  it("lists pinned internal deps as mismatches", () => {
+    const root = seedDepsTree();
+    const refs = listInternalDependencyRefs(root);
+    expect(refs).toEqual([
+      expect.objectContaining({
+        path: "packages/plugin-sdk/package.json",
+        name: "@praxis/knowledge",
+        range: "0.1.0",
+      }),
+    ]);
+    const check = checkInternalWorkspaceDeps(root);
+    expect(check.ok).toBe(false);
+    expect(check.mismatches[0].expected).toBe(INTERNAL_WORKSPACE_RANGE);
+  });
+
+  it("rewrites exact pins to *", () => {
+    const root = seedDepsTree();
+    const { changed } = syncInternalWorkspaceDeps(root, { dryRun: false });
+    expect(changed).toContain("packages/plugin-sdk/package.json");
+    const pkg = JSON.parse(
+      readFileSync(join(root, "packages/plugin-sdk/package.json"), "utf8"),
+    );
+    expect(pkg.dependencies["@praxis/knowledge"]).toBe("*");
+    expect(checkInternalWorkspaceDeps(root).ok).toBe(true);
+  });
+
+  it("applyInternalWorkspaceDeps is a no-op when already correct", () => {
+    const data = {
+      dependencies: { "@praxis/knowledge": "*", lodash: "4.0.0" },
+    };
+    expect(
+      applyInternalWorkspaceDeps(data, new Set(["@praxis/knowledge"])),
+    ).toBe(false);
+  });
+
+  it("syncAllVersions also rewrites internal deps", () => {
+    const root = seedDepsTree();
+    const { depChanged } = syncAllVersions(root, "0.1.0-alpha.3", {
+      dryRun: false,
+    });
+    expect(depChanged).toContain("packages/plugin-sdk/package.json");
+    applyVersionToFile(root, "package.json", "0.1.0-alpha.3");
+    const after = checkVersionConsistency(root, "0.1.0-alpha.3");
+    expect(after.ok).toBe(true);
+    expect(after.internalDeps.ok).toBe(true);
+  });
+
+  it("checkVersionConsistency reports exact-pin dep drift", () => {
+    const root = seedDepsTree();
+    const report = checkVersionConsistency(root, "0.1.0-alpha.2");
+    expect(report.ok).toBe(false);
+    expect(
+      report.mismatches.some((m) => m.kind === "internal-dependency"),
+    ).toBe(true);
   });
 });
 

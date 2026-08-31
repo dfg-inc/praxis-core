@@ -20,8 +20,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@praxis/knowledge": "0.1.0",
-    "@praxis/project-config": "0.1.0"
+    "@praxis/knowledge": "*",
+    "@praxis/project-config": "*"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
