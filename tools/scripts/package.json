@@ -6,6 +6,10 @@
   "description": "Monorepo maintenance scripts",
   "license": "UNLICENSED",
   "scripts": {
-    "check:boundaries": "node ./check-boundaries.mjs"
+    "check:boundaries": "node ./check-boundaries.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
   }
 }
