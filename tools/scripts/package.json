@@ -1,11 +1,15 @@
 {
   "name": "@praxis/tools-scripts",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.2",
   "private": true,
   "type": "module",
   "description": "Monorepo maintenance scripts",
   "license": "UNLICENSED",
   "scripts": {
-    "check:boundaries": "node ./check-boundaries.mjs"
+    "check:boundaries": "node ./check-boundaries.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
   }
 }
