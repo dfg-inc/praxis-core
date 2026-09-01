@@ -9,7 +9,7 @@
       "name": "praxis-jira",
       "source": "./",
       "description": "Jira Server client with human-gated mutations.",
-      "version": "0.1.0-alpha.7"
+      "version": "0.1.0-alpha.8"
     }
   ]
 }
