@@ -52,6 +52,8 @@ export const REQUIRED_PATHS = {
     "README.md",
     "tools/session-bootstrap.cjs",
     "tools/build-architecture-package.mjs",
+    "tools/emit-developer-handoff.mjs",
+    "tools/lib/architecture-package.mjs",
     "agents",
     "skills",
     "templates",
@@ -64,6 +66,7 @@ export const REQUIRED_PATHS = {
     "tools/session-bootstrap.cjs",
     "tools/final-arbiter.mjs",
     "tools/run-work-package.mjs",
+    "tools/accept-work-package.mjs",
     "agents",
     "skills",
   ],
@@ -300,7 +303,9 @@ export function stagePlugin(id, outPluginsDir) {
     ensureDir(join(dest, "tools"));
     for (const name of readdirSync(join(src, "tools"))) {
       if (name === "session-bootstrap.mjs") continue;
-      cpSync(join(src, "tools", name), join(dest, "tools", name));
+      cpSync(join(src, "tools", name), join(dest, "tools", name), {
+        recursive: true,
+      });
     }
     bundleSessionBootstrap(src, join(dest, "tools"));
     rewriteBootstrapDocs(dest);
@@ -339,10 +344,12 @@ export function stagePlugin(id, outPluginsDir) {
     if (id === "architect") {
       pkg.scripts = {
         "build-package": "node ./tools/build-architecture-package.mjs",
+        "emit-developer-handoff": "node ./tools/emit-developer-handoff.mjs",
         "session-bootstrap": "node ./tools/session-bootstrap.cjs",
       };
     } else {
       pkg.scripts = {
+        "accept-work-package": "node ./tools/accept-work-package.mjs",
         "final-arbiter": "node ./tools/final-arbiter.mjs",
         "run-work-package": "node ./tools/run-work-package.mjs",
         "session-bootstrap": "node ./tools/session-bootstrap.cjs",
@@ -366,7 +373,9 @@ export function stagePlugin(id, outPluginsDir) {
     ensureDir(join(dest, "tools"));
     for (const name of readdirSync(join(src, "tools"))) {
       if (name === "session-bootstrap.mjs") continue;
-      cpSync(join(src, "tools", name), join(dest, "tools", name));
+      cpSync(join(src, "tools", name), join(dest, "tools", name), {
+        recursive: true,
+      });
     }
     bundleSessionBootstrap(src, join(dest, "tools"));
     rewriteBootstrapDocs(dest);

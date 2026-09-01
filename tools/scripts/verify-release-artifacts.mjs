@@ -163,9 +163,23 @@ function smokePlugin(pluginId, installDir) {
         name: "build-architecture-package present",
         ok: existsSync(tool),
       });
+      results.push({
+        name: "emit-developer-handoff present",
+        ok: existsSync(join(installDir, "tools/emit-developer-handoff.mjs")),
+      });
+      results.push({
+        name: "architecture-package lib present",
+        ok: existsSync(
+          join(installDir, "tools/lib/architecture-package.mjs"),
+        ),
+      });
     }
     if (pluginId === "developer") {
-      for (const t of ["final-arbiter.mjs", "run-work-package.mjs"]) {
+      for (const t of [
+        "final-arbiter.mjs",
+        "run-work-package.mjs",
+        "accept-work-package.mjs",
+      ]) {
         results.push({
           name: `${t} present`,
           ok: existsSync(join(installDir, "tools", t)),

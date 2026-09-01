@@ -131,4 +131,55 @@ describe("pipeline handoffs BA → Arch → Dev → Quality", () => {
       expect(dq.verification.packageCriteria).toBe(true);
     },
   );
+
+  it(
+    "interactive-shaped machine handoff chain + Developer negatives",
+    { timeout: 120_000 },
+    () => {
+      const runner = join(root, "tools/scripts/machine-handoff-chain.mjs");
+      const r = spawnSync(process.execPath, [runner], {
+        encoding: "utf8",
+        cwd: root,
+      });
+      if (r.status !== 0) {
+        throw new Error(
+          `machine-handoff-chain failed:\n${r.stdout ?? ""}\n${r.stderr ?? ""}`,
+        );
+      }
+      const chunks = (r.stdout ?? "").split(/\n(?=\{)/);
+      let summary: {
+        ok: boolean;
+        accept: string;
+        baHandoffPath: string;
+        archHandoffPath: string;
+        negatives: string[];
+        baContract?: string;
+        archContract?: string;
+      } | null = null;
+      for (let i = chunks.length - 1; i >= 0; i--) {
+        try {
+          const j = JSON.parse(chunks[i]!);
+          if (j.ok && j.accept) {
+            summary = j;
+            break;
+          }
+        } catch {
+          /* continue */
+        }
+      }
+      expect(summary).toBeTruthy();
+      expect(summary!.accept).toBe("accepted");
+      expect(summary!.baContract).toBe("ba.architect.handoff");
+      expect(summary!.archContract).toBe("architect.developer.handoff");
+      expect(summary!.archHandoffPath).toMatch(/architect-developer\.handoff\.json$/);
+      expect(summary!.negatives).toEqual(
+        expect.arrayContaining([
+          "missing-handoff",
+          "missing-change-spec",
+          "readyForDev-false",
+          "invalid-contract",
+        ]),
+      );
+    },
+  );
 });

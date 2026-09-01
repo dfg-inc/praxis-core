@@ -285,6 +285,13 @@ const wpRaw = readFileSync(wpIndex, "utf8");
 assert(/status:\s*plan-approved/.test(wpRaw), "WP not plan-approved");
 assert(!wpRaw.includes("canon/epics"), "WP Scope must not duplicate canon/ prefix");
 
+const baHandoffPath = join(canon, "wp", wpId, "handoffs", "ba-architect.handoff.json");
+assert(existsSync(baHandoffPath), `BA machine handoff missing: ${baHandoffPath}`);
+const baHandoff = JSON.parse(readFileSync(baHandoffPath, "utf8"));
+assert(baHandoff.contract === "ba.architect.handoff", `bad BA contract: ${baHandoff.contract}`);
+assert(baHandoff.workPackageId === wpId, "BA handoff workPackageId mismatch");
+assert(Array.isArray(baHandoff.requirementIds) && baHandoff.requirementIds.length >= 2, "BA handoff requirementIds");
+
 // --- node_modules must not be traversed when validating the project root ---
 // Mirror the confirmed external trigger: installed Architect ships SKILL.md
 // under node_modules; `--repo .` must ignore it.
@@ -315,6 +322,8 @@ console.log(
       plugins: PLUGIN_IDS,
       wpId,
       frs: [fr1, fr2],
+      baHandoffPath,
+      baHandoffContract: baHandoff.contract,
       validate: lint.verdict,
       validateRepoDot: rootValidate.verdict,
       artifactsMetadata: "PASS",
