@@ -279,6 +279,23 @@ const dup = lint.checks.find((c) => c.name === "no-duplicate-frontmatter");
 assert(dup?.ok, `no-duplicate-frontmatter failed: ${dup?.reason}`);
 const nfrTrace = lint.checks.find((c) => c.name === "references-nfr-traceability");
 assert(nfrTrace?.ok, `references-nfr-traceability failed: ${nfrTrace?.reason}`);
+for (const name of [
+  "needs-clarification-committed",
+  "nfr-catalogue-refs",
+  "taxonomy-tags",
+  "child-status-vs-epic",
+  "markdown-links-resolve-semantic",
+]) {
+  assert(
+    lint.checks.some((c) => c.name === name),
+    `validate missing semantic check ${name}`,
+  );
+}
+assert(!existsSync(join(installed, "tools/lint.py")), "packaged BA must not ship tools/lint.py");
+assert(
+  !readdirSync(join(installed, "tools")).some((f) => f.endsWith(".py")),
+  "packaged BA tools/ must not contain Python files",
+);
 
 ba(cli, ["wp", "approve-plan", "--repo", canon, "--wp", wpId, "--plan", `wp/${wpId}/plan.md`], consumer);
 const wpRaw = readFileSync(wpIndex, "utf8");

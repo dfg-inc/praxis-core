@@ -150,6 +150,10 @@ function smokePlugin(pluginId, installDir) {
       ok: boot.ok || boot.stdout.length > 0,
       detail: (boot.stdout + boot.stderr).slice(0, 400),
     });
+    results.push({
+      name: "no Python lint.py in package",
+      ok: !existsSync(join(installDir, "tools/lint.py")),
+    });
   } else if (pluginId === "architect" || pluginId === "developer") {
     const boot = run("node ./tools/session-bootstrap.cjs", installDir);
     results.push({

@@ -303,6 +303,8 @@ export function stagePlugin(id, outPluginsDir) {
     ensureDir(join(dest, "tools"));
     for (const name of readdirSync(join(src, "tools"))) {
       if (name === "session-bootstrap.mjs") continue;
+      // Packaged BA is Node-only — never ship Python lint helpers.
+      if (name.endsWith(".py") || name.endsWith(".pyc")) continue;
       cpSync(join(src, "tools", name), join(dest, "tools", name), {
         recursive: true,
       });
