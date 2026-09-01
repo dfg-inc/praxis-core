@@ -182,4 +182,23 @@ describe("pipeline handoffs BA → Arch → Dev → Quality", () => {
       );
     },
   );
+
+  it(
+    "edit+create machine pipeline (create file + edit + npm test)",
+    { timeout: 120_000 },
+    () => {
+      const runner = join(root, "tools/scripts/machine-edit-create-pipeline.mjs");
+      const r = spawnSync(process.execPath, [runner], {
+        encoding: "utf8",
+        cwd: root,
+      });
+      if (r.status !== 0) {
+        throw new Error(
+          `edit-create pipeline failed:\n${r.stdout ?? ""}\n${r.stderr ?? ""}`,
+        );
+      }
+      expect(r.stdout).toMatch(/"ok": true/);
+      expect(r.stdout).toMatch(/edit\+create apply/);
+    },
+  );
 });

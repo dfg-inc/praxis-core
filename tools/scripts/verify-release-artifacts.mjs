@@ -44,16 +44,19 @@ function fail(msg) {
 }
 
 function run(cmd, cwd, opts = {}) {
+  const { isolateWorkspaces = false, env: envOverride, ...rest } = opts;
+  const env = { ...process.env, ...(envOverride ?? {}) };
+  // External pack/install only: avoid resolving against the Praxis monorepo.
+  // Never set this when invoking in-repo scripts that use `npm -w` (e.g. release:mirror).
+  if (isolateWorkspaces) {
+    env.npm_config_workspaces = "false";
+  }
   const r = spawnSync(cmd, {
     cwd,
     shell: true,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      // Prevent accidental workspace resolution against Praxis root.
-      npm_config_workspaces: "false",
-    },
-    ...opts,
+    env,
+    ...rest,
   });
   return {
     ok: (r.status ?? 1) === 0,
@@ -98,7 +101,9 @@ function externalPackDir(pluginId) {
 }
 
 function packDryRun(pluginDir) {
-  const r = run("npm pack --dry-run --json", pluginDir);
+  const r = run("npm pack --dry-run --json", pluginDir, {
+    isolateWorkspaces: true,
+  });
   if (!r.ok) {
     return { ok: false, error: r.stderr || r.stdout, files: [] };
   }
@@ -183,6 +188,7 @@ function smokePlugin(pluginId, installDir) {
         "final-arbiter.mjs",
         "run-work-package.mjs",
         "accept-work-package.mjs",
+        "lib/apply-change-spec.mjs",
       ]) {
         results.push({
           name: `${t} present`,
@@ -216,7 +222,7 @@ function installAndSmoke(pluginId) {
       );
     }
 
-    const pack = run("npm pack", dest);
+    const pack = run("npm pack", dest, { isolateWorkspaces: true });
     if (!pack.ok) fail(`${pluginId}: npm pack failed: ${pack.stderr}`);
     const tgz = readdirSync(dest).find((f) => f.endsWith(".tgz"));
     if (!tgz) fail(`${pluginId}: no tarball produced`);
@@ -227,7 +233,9 @@ function installAndSmoke(pluginId) {
       private: true,
       type: "module",
     });
-    const install = run(`npm install "${join(dest, tgz)}"`, consumer);
+    const install = run(`npm install "${join(dest, tgz)}"`, consumer, {
+      isolateWorkspaces: true,
+    });
     if (!install.ok) {
       fail(`${pluginId}: npm install into external consumer failed:\n${install.stderr}`);
     }

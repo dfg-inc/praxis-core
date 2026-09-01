@@ -3,6 +3,9 @@ import {
   BaToArchitectHandoffSchema,
   ArchitectToDeveloperHandoffSchema,
   DeveloperToQualityHandoffSchema,
+  ChangeSpecSchema,
+  ChangeSpecChangeSchema,
+  normalizeChange,
 } from "./index.js";
 
 describe("contracts", () => {
@@ -43,5 +46,33 @@ describe("contracts", () => {
       verification: { build: true, tests: true, lint: true, packageCriteria: true },
     });
     expect(parsed.verification.build).toBe(true);
+  });
+
+  it("accepts create + edit change-spec entries", () => {
+    const parsed = ChangeSpecSchema.parse({
+      changes: [
+        {
+          file: "src/a.js",
+          op: "edit",
+          match: "x",
+          replace: "y",
+        },
+        {
+          file: "test/a.test.js",
+          op: "create",
+          content: "export {};\n",
+        },
+      ],
+      features: [{ id: "F1", title: "t", readyForDev: true }],
+      acceptanceChecks: [{ type: "npm-test" }],
+    });
+    expect(parsed.changes).toHaveLength(2);
+    expect(normalizeChange(parsed.changes[1]!).op).toBe("create");
+  });
+
+  it("rejects edit without match/replace", () => {
+    expect(() =>
+      ChangeSpecChangeSchema.parse({ file: "a.js", op: "edit" }),
+    ).toThrow();
   });
 });

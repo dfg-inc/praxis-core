@@ -1,0 +1,76 @@
+{
+  "decisionIds": ["ADR-EDITCREATE-001"],
+  "requirementIds": ["E1-FR1"],
+  "requiredMachineFiles": [
+    "src/widget.js",
+    "package.json",
+    "test/widget.test.js"
+  ],
+  "researchGlobs": ["src/**/*.js", "test/**/*.js"],
+  "verificationPolicy": {
+    "requireTests": true
+  },
+  "design": {
+    "title": "Scale by factor + node:test suite",
+    "decision": "Use Node built-in node:test / node:assert; fix scale() and add automated tests.",
+    "machineRequirements": [
+      "src/widget.js",
+      "package.json",
+      "test/widget.test.js"
+    ],
+    "contextInScope": [
+      "`src/widget.js`",
+      "`package.json`",
+      "`test/widget.test.js`"
+    ],
+    "outOfScope": ["Unrelated products"],
+    "changeIntent": "Edit scale(), wire npm test, create widget tests."
+  },
+  "features": [
+    {
+      "id": "FEAT-SCALE-1",
+      "title": "Scale multiplies by factor",
+      "estimateHours": 1,
+      "readyForDev": true
+    }
+  ],
+  "changes": [
+    {
+      "file": "src/widget.js",
+      "op": "edit",
+      "description": "scale must multiply value by factor",
+      "match": "  return value;\n",
+      "replace": "  return value * factor;\n"
+    },
+    {
+      "file": "package.json",
+      "op": "edit",
+      "description": "wire npm test to node:test",
+      "match": "\"lint\": \"node -e \\\"process.exit(0)\\\"\"",
+      "replace": "\"test\": \"node --test test/widget.test.js\",\n    \"lint\": \"node -e \\\"process.exit(0)\\\"\""
+    },
+    {
+      "file": "test/widget.test.js",
+      "op": "create",
+      "description": "automated tests for scale()",
+      "content": "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { scale } from '../src/widget.js';\n\ntest('scale multiplies by default factor 2', () => {\n  assert.equal(scale(5), 10);\n});\n\ntest('scale multiplies by explicit factor', () => {\n  assert.equal(scale(5, 3), 15);\n});\n\ntest('scale preserves zero', () => {\n  assert.equal(scale(0, 4), 0);\n});\n"
+    }
+  ],
+  "acceptanceChecks": [
+    {
+      "file": "src/widget.js",
+      "contains": "return value * factor;"
+    },
+    {
+      "file": "package.json",
+      "contains": "node --test test/widget.test.js"
+    },
+    {
+      "file": "test/widget.test.js",
+      "contains": "assert.equal(scale(5), 10)"
+    },
+    {
+      "type": "npm-test"
+    }
+  ]
+}

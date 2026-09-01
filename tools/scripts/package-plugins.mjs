@@ -67,6 +67,7 @@ export const REQUIRED_PATHS = {
     "tools/final-arbiter.mjs",
     "tools/run-work-package.mjs",
     "tools/accept-work-package.mjs",
+    "tools/lib/apply-change-spec.mjs",
     "agents",
     "skills",
   ],
