@@ -189,6 +189,9 @@ function smokePlugin(pluginId, installDir) {
         "run-work-package.mjs",
         "accept-work-package.mjs",
         "lib/apply-change-spec.mjs",
+        "lib/frontmatter.mjs",
+        "lib/acceptance-journal.mjs",
+        "lib/readiness.mjs",
       ]) {
         results.push({
           name: `${t} present`,

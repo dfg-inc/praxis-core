@@ -18,12 +18,16 @@
       "package.json",
       "test/widget.test.js"
     ],
+    "nfrBudgets": [
+      "CTR-NFR-002 — automated tests cover public API (verify: npm test)"
+    ],
+    "contracts": [],
     "contextInScope": [
       "`src/widget.js`",
       "`package.json`",
       "`test/widget.test.js`"
     ],
-    "outOfScope": ["Unrelated products"],
+    "outOfScope": ["Unrelated products", "External test frameworks"],
     "changeIntent": "Edit scale(), wire npm test, create widget tests."
   },
   "features": [

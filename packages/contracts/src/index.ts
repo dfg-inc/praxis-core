@@ -157,25 +157,82 @@ export function normalizeChange(c: ChangeSpecChange): {
   };
 }
 
+/**
+ * One verification check result.
+ * Distinguishes executed pass/fail from skipped / not-required.
+ */
+export const VerificationCheckSchema = z.object({
+  status: z.enum(["passed", "failed", "skipped"]),
+  required: z.boolean(),
+});
+export type VerificationCheck = z.infer<typeof VerificationCheckSchema>;
+
+/** Structured verification block for Developer → Quality. */
+export const VerificationSchema = z.object({
+  build: VerificationCheckSchema,
+  tests: VerificationCheckSchema,
+  lint: VerificationCheckSchema,
+  packageCriteria: VerificationCheckSchema,
+});
+export type Verification = z.infer<typeof VerificationSchema>;
+
 /** Developer → Quality: merge request intent. */
 export const DeveloperToQualityHandoffSchema = ContractMetaSchema.extend({
   contract: z.literal("developer.quality.handoff"),
+  /** Work package this handoff claims to deliver (required identity). */
+  workPackageId: z.string().min(1),
   mergeRequestRef: z.string().min(1),
   intention: z.string().min(1),
   requirementIds: z.array(z.string()),
   decisionIds: z.array(z.string()),
-  verification: z.object({
-    build: z.boolean(),
-    tests: z.boolean(),
-    lint: z.boolean(),
-    packageCriteria: z.boolean(),
-  }),
+  verification: VerificationSchema,
   /** Optional machine AC checks Quality can execute against the product tree. */
   acceptanceChecks: z.array(AcceptanceCheckSchema).optional(),
 });
 export type DeveloperToQualityHandoff = z.infer<
   typeof DeveloperToQualityHandoffSchema
 >;
+
+/** True when every required check passed and no check failed. */
+export function verificationIsReady(v: Verification): boolean {
+  const checks = [v.build, v.tests, v.lint, v.packageCriteria];
+  for (const c of checks) {
+    if (c.status === "failed") return false;
+    if (c.required && c.status !== "passed") return false;
+  }
+  return true;
+}
+
+/**
+ * Map an arbiter step into a structured verification check.
+ * Skipped / missing steps are never reported as passed.
+ */
+export function verificationCheckFromArbiterStep(
+  step: { ok?: boolean; skipped?: boolean } | undefined,
+  required: boolean,
+): VerificationCheck {
+  if (!step || step.skipped) {
+    return { status: required ? "failed" : "skipped", required };
+  }
+  return { status: step.ok ? "passed" : "failed", required };
+}
+
+/** Compute packageCriteria from build/tests/lint structured checks. */
+export function computePackageCriteria(
+  build: VerificationCheck,
+  tests: VerificationCheck,
+  lint: VerificationCheck,
+): VerificationCheck {
+  const parts = [build, tests, lint];
+  const failed = parts.some((c) => c.status === "failed");
+  const requiredMissing = parts.some(
+    (c) => c.required && c.status !== "passed",
+  );
+  return {
+    status: failed || requiredMissing ? "failed" : "passed",
+    required: true,
+  };
+}
 
 export function parseContract<T extends z.ZodTypeAny>(
   schema: T,

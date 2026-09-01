@@ -6,7 +6,17 @@ import {
   ChangeSpecSchema,
   ChangeSpecChangeSchema,
   normalizeChange,
+  verificationCheckFromArbiterStep,
+  computePackageCriteria,
+  verificationIsReady,
 } from "./index.js";
+
+const structuredOk = {
+  build: { status: "skipped", required: false },
+  tests: { status: "passed", required: true },
+  lint: { status: "skipped", required: false },
+  packageCriteria: { status: "passed", required: true },
+};
 
 describe("contracts", () => {
   it("accepts BA→Architect handoff", () => {
@@ -35,17 +45,70 @@ describe("contracts", () => {
     expect(parsed.features).toHaveLength(1);
   });
 
-  it("accepts Developer→Quality handoff", () => {
+  it("accepts Developer→Quality handoff with workPackageId + structured verification", () => {
     const parsed = DeveloperToQualityHandoffSchema.parse({
       contract: "developer.quality.handoff",
       version: "1.0.0",
+      workPackageId: "WP-20260825-001",
       mergeRequestRef: "!42",
       intention: "Implement login feature per ADR-001",
       requirementIds: ["E1-FR1"],
       decisionIds: ["ADR-001"],
-      verification: { build: true, tests: true, lint: true, packageCriteria: true },
+      verification: structuredOk,
     });
-    expect(parsed.verification.build).toBe(true);
+    expect(parsed.workPackageId).toBe("WP-20260825-001");
+    expect(parsed.verification.tests.status).toBe("passed");
+    expect(parsed.verification.build.status).toBe("skipped");
+    expect(verificationIsReady(parsed.verification)).toBe(true);
+  });
+
+  it("rejects Developer→Quality handoff without workPackageId", () => {
+    expect(() =>
+      DeveloperToQualityHandoffSchema.parse({
+        contract: "developer.quality.handoff",
+        version: "1.0.0",
+        mergeRequestRef: "!42",
+        intention: "x",
+        requirementIds: [],
+        decisionIds: [],
+        verification: structuredOk,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects legacy boolean-only verification", () => {
+    expect(() =>
+      DeveloperToQualityHandoffSchema.parse({
+        contract: "developer.quality.handoff",
+        version: "1.0.0",
+        workPackageId: "WP-1",
+        mergeRequestRef: "!42",
+        intention: "x",
+        requirementIds: [],
+        decisionIds: [],
+        verification: {
+          build: true,
+          tests: true,
+          lint: true,
+          packageCriteria: true,
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("maps arbiter skipped vs passed correctly", () => {
+    expect(
+      verificationCheckFromArbiterStep({ ok: true, skipped: true }, false),
+    ).toEqual({ status: "skipped", required: false });
+    expect(
+      verificationCheckFromArbiterStep({ ok: true, skipped: false }, true),
+    ).toEqual({ status: "passed", required: true });
+    const pc = computePackageCriteria(
+      { status: "skipped", required: false },
+      { status: "passed", required: true },
+      { status: "skipped", required: false },
+    );
+    expect(pc).toEqual({ status: "passed", required: true });
   });
 
   it("accepts create + edit change-spec entries", () => {

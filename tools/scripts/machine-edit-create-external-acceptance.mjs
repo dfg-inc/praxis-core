@@ -135,15 +135,29 @@ const impl = run(
 if (!impl.ok) fail(`Developer failed:\n${impl.stderr}\n${impl.stdout}`);
 const implJson = parseLastJson(impl.stdout);
 if (!implJson.qualityHandoff?.verification?.tests) fail("tests not verified");
+if (implJson.qualityHandoff.verification.tests.status !== "passed") {
+  fail("tests.status must be passed");
+}
+if (implJson.qualityHandoff.workPackageId !== wpId) {
+  fail("quality handoff workPackageId mismatch");
+}
 if (!existsSync(join(product, "test/widget.test.js"))) fail("test file missing");
+if (!existsSync(join(archJson.designDir, "dev", "acceptance.md"))) {
+  fail("acceptance.md missing");
+}
+if (!existsSync(join(archJson.designDir, "dev", "quality-handoff.json"))) {
+  fail("dev/quality-handoff.json missing");
+}
 
 console.log(
   JSON.stringify(
     {
       ok: true,
       source: "external-tgz",
+      workPackageId: implJson.qualityHandoff.workPackageId,
       verification: implJson.qualityHandoff.verification,
       created: "test/widget.test.js",
+      qualityHandoffPath: implJson.qualityHandoffPath,
     },
     null,
     2,

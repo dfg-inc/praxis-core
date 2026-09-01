@@ -48,21 +48,24 @@ describe("pipeline handoffs BA → Arch → Dev → Quality", () => {
     const devToQuality = parseContract(DeveloperToQualityHandoffSchema, {
       contract: "developer.quality.handoff",
       version: "0.1.0",
+      workPackageId: baToArch.workPackageId,
       mergeRequestRef: "!42",
       intention: "Implement FEAT-1 per ADR-001",
       requirementIds: baToArch.requirementIds,
       decisionIds: archToDev.decisionIds,
       verification: {
-        build: true,
-        tests: true,
-        lint: true,
-        packageCriteria: true,
+        build: { status: "skipped", required: false },
+        tests: { status: "passed", required: true },
+        lint: { status: "skipped", required: false },
+        packageCriteria: { status: "passed", required: true },
       },
     });
 
     expect(archToDev.workPackageId).toBe(baToArch.workPackageId);
     expect(devToQuality.requirementIds).toEqual(["FR-1", "NFR-1"]);
-    expect(devToQuality.verification.tests).toBe(true);
+    expect(devToQuality.workPackageId).toBe(baToArch.workPackageId);
+    expect(devToQuality.verification.tests.status).toBe("passed");
+    expect(devToQuality.verification.build.status).toBe("skipped");
   });
 
   it("rejects broken BA handoff", () => {
@@ -127,8 +130,10 @@ describe("pipeline handoffs BA → Arch → Dev → Quality", () => {
       );
       expect(ba.workPackageId).toBe("WP-20260825-001");
       expect(arch.workPackageId).toBe(ba.workPackageId);
+      expect(dq.workPackageId).toBe(ba.workPackageId);
       expect(dq.decisionIds).toEqual(arch.decisionIds);
-      expect(dq.verification.packageCriteria).toBe(true);
+      expect(dq.verification.packageCriteria.status).toBe("passed");
+      expect(dq.verification.tests.status).toBe("passed");
     },
   );
 
@@ -199,6 +204,26 @@ describe("pipeline handoffs BA → Arch → Dev → Quality", () => {
       }
       expect(r.stdout).toMatch(/"ok": true/);
       expect(r.stdout).toMatch(/edit\+create apply/);
+    },
+  );
+
+  it(
+    "Developer→Quality handoff artifacts (workPackageId, verification, acceptance)",
+    { timeout: 120_000 },
+    () => {
+      const runner = join(root, "tools/scripts/machine-dq-quality-pipeline.mjs");
+      const r = spawnSync(process.execPath, [runner], {
+        encoding: "utf8",
+        cwd: root,
+      });
+      if (r.status !== 0) {
+        throw new Error(
+          `dq-quality pipeline failed:\n${r.stdout ?? ""}\n${r.stderr ?? ""}`,
+        );
+      }
+      expect(r.stdout).toMatch(/"ok": true/);
+      expect(r.stdout).toMatch(/A workPackageId/);
+      expect(r.stdout).toMatch(/C skipped/);
     },
   );
 });

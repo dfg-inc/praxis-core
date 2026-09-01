@@ -152,7 +152,23 @@ const impl = run(
 if (!impl.ok) fail(`Developer implement failed:\n${impl.stderr}\n${impl.stdout}`);
 const implJson = parseLastJson(impl.stdout);
 if (!implJson.qualityHandoff?.verification?.tests) {
-  fail("verification.tests must be true after successful npm test");
+  fail("verification.tests must be present after successful npm test");
+}
+if (implJson.qualityHandoff.verification.tests.status !== "passed") {
+  fail("verification.tests.status must be passed");
+}
+if (implJson.qualityHandoff.verification.build.status === "passed" &&
+    implJson.qualityHandoff.verification.build.required === false) {
+  // build may be skipped when not required — never treat skipped as passed
+}
+if (
+  implJson.qualityHandoff.verification.build.status !== "skipped" &&
+  implJson.qualityHandoff.verification.build.status !== "passed"
+) {
+  fail("verification.build must be skipped or passed");
+}
+if (implJson.qualityHandoff.workPackageId !== wpId) {
+  fail("quality handoff missing/wrong workPackageId");
 }
 if (!existsSync(join(product, "test/widget.test.js"))) {
   fail("test file was not created");
