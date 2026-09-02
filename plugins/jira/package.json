@@ -1,6 +1,6 @@
 {
   "name": "@praxis/jira",
-  "version": "0.1.0-alpha.11",
+  "version": "0.1.0-alpha.12",
   "private": true,
   "type": "module",
   "description": "Praxis Jira Server client with human-gated mutations (company infra)",
