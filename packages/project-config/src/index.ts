@@ -18,6 +18,10 @@ export const ProjectConfigSchema = z.object({
     .object({
       path: z.string().optional(),
       ref: z.string().default("main"),
+      /** Optional product id for product-level rule overrides (subdir under product/). */
+      product: z.string().optional(),
+      /** Optional service id for service-level rule overrides (subdir under service/). */
+      service: z.string().optional(),
     })
     .default({}),
   jira: z

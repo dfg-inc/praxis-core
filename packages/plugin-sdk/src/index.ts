@@ -1,6 +1,7 @@
 import { loadApplicableSlice } from "@praxis/knowledge";
 import { loadProjectConfig, type ProjectConfig } from "@praxis/project-config";
-
+import { isAbsolute, resolve } from "node:path";
+import { existsSync } from "node:fs";
 export type HumanGateDecision = "approved" | "rejected";
 
 export type HumanGateResult = {
@@ -72,10 +73,18 @@ export function bootstrapSession(opts: {
     };
   } else {
     try {
+      const knowledgeRoot = isAbsolute(config.knowledge.path)
+        ? config.knowledge.path
+        : resolve(opts.repoRoot, config.knowledge.path);
+      if (!existsSync(knowledgeRoot)) {
+        throw new Error(`path does not exist: ${knowledgeRoot}`);
+      }
       const slice = loadApplicableSlice({
-        knowledgeRoot: config.knowledge.path,
+        knowledgeRoot,
         role: opts.role,
         stage: opts.stage,
+        product: config.knowledge.product,
+        service: config.knowledge.service,
       });
       knowledge = {
         status: "loaded",
@@ -135,6 +144,9 @@ export function formatSessionBootstrap(boot: SessionBootstrap): string {
   }
   if (boot.knowledge.status === "loaded") {
     lines.push(`knowledge rules loaded: ${boot.knowledge.count}`);
+    if (boot.knowledge.ruleIds.length) {
+      lines.push(`knowledge rule ids: ${boot.knowledge.ruleIds.join(", ")}`);
+    }
   } else {
     lines.push(boot.knowledge.message);
   }

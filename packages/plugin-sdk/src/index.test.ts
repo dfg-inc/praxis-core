@@ -72,6 +72,75 @@ describe("bootstrapSession", () => {
       expect(boot.knowledge.count).toBe(1);
     }
     expect(formatSessionBootstrap(boot)).toMatch(/update available/);
+    expect(formatSessionBootstrap(boot)).toMatch(/ba-research/);
+  });
+
+  it("reports unavailable when knowledge.path does not exist", () => {
+    const dir = mkdtempSync(join(tmpdir(), "praxis-boot-miss-"));
+    writeFileSync(
+      join(dir, ".project"),
+      ["knowledge:", "  path: /no/such/knowledge/root", "stack: [node]"].join(
+        "\n",
+      ),
+    );
+    const boot = bootstrapSession({
+      repoRoot: dir,
+      role: "ba",
+      stage: "research",
+      pluginName: "praxis-ba",
+      pluginVersion: "0.4.0",
+    });
+    expect(boot.knowledge.status).toBe("unavailable");
+    expect(formatSessionBootstrap(boot)).toMatch(/knowledge unavailable:/);
+  });
+
+  it("applies product override when knowledge.product is set", () => {
+    const dir = mkdtempSync(join(tmpdir(), "praxis-boot-ov-"));
+    const knowledge = join(dir, "knowledge");
+    mkdirSync(join(knowledge, "company/rules"), { recursive: true });
+    mkdirSync(join(knowledge, "product/demo/rules"), { recursive: true });
+    const rule = (id: string, title: string) =>
+      [
+        "---",
+        `id: ${id}`,
+        "roles: [ba]",
+        "stages: [research]",
+        "severity: advisory",
+        "overridable: true",
+        `title: ${title}`,
+        "---",
+        "",
+        title,
+      ].join("\n");
+    writeFileSync(
+      join(knowledge, "company/rules/override-demo.md"),
+      rule("override-demo", "company"),
+    );
+    writeFileSync(
+      join(knowledge, "product/demo/rules/override-demo.md"),
+      rule("override-demo", "product"),
+    );
+    writeFileSync(
+      join(dir, ".project"),
+      [
+        "knowledge:",
+        `  path: ${knowledge}`,
+        "  product: demo",
+        "stack: [node]",
+      ].join("\n"),
+    );
+    const boot = bootstrapSession({
+      repoRoot: dir,
+      role: "ba",
+      stage: "research",
+      pluginName: "praxis-ba",
+      pluginVersion: "0.4.0",
+    });
+    expect(boot.knowledge.status).toBe("loaded");
+    if (boot.knowledge.status === "loaded") {
+      expect(boot.knowledge.ruleIds).toContain("override-demo");
+      expect(boot.knowledge.count).toBe(1);
+    }
   });
 });
 

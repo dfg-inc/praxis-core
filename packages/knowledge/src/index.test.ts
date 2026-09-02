@@ -37,6 +37,22 @@ describe("knowledge slice", () => {
     expect(slice.rules[0].level).toBe("product");
   });
 
+  it("returns service override over product", () => {
+    const root = mkdtempSync(join(tmpdir(), "praxis-knowledge-"));
+    writeRule(join(root, "company/rules"), "task-schema", ["ba"], ["plan"]);
+    writeRule(join(root, "product/gds/rules"), "task-schema", ["ba"], ["plan"]);
+    writeRule(join(root, "service/api/rules"), "task-schema", ["ba"], ["plan"]);
+    const slice = loadApplicableSlice({
+      knowledgeRoot: root,
+      role: "ba",
+      stage: "plan",
+      product: "gds",
+      service: "api",
+    });
+    expect(slice.rules).toHaveLength(1);
+    expect(slice.rules[0].level).toBe("service");
+  });
+
   it("filters by role and stage", () => {
     const root = mkdtempSync(join(tmpdir(), "praxis-knowledge-"));
     writeRule(join(root, "company/rules"), "ba-only", ["ba"], ["research"]);

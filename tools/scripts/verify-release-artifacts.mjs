@@ -159,6 +159,14 @@ function smokePlugin(pluginId, installDir) {
       name: "no Python lint.py in package",
       ok: !existsSync(join(installDir, "tools/lint.py")),
     });
+    results.push({
+      name: "hooks/session-start.md present",
+      ok: existsSync(join(installDir, "hooks/session-start.md")),
+    });
+    results.push({
+      name: "skills/session-start present",
+      ok: existsSync(join(installDir, "skills/session-start/SKILL.md")),
+    });
   } else if (pluginId === "architect" || pluginId === "developer") {
     const boot = run("node ./tools/session-bootstrap.cjs", installDir);
     results.push({
@@ -182,6 +190,14 @@ function smokePlugin(pluginId, installDir) {
           join(installDir, "tools/lib/architecture-package.mjs"),
         ),
       });
+      results.push({
+        name: "hooks/session-start.md present",
+        ok: existsSync(join(installDir, "hooks/session-start.md")),
+      });
+      results.push({
+        name: "skills/session-start present",
+        ok: existsSync(join(installDir, "skills/session-start/SKILL.md")),
+      });
     }
     if (pluginId === "developer") {
       for (const t of [
@@ -198,6 +214,14 @@ function smokePlugin(pluginId, installDir) {
           ok: existsSync(join(installDir, "tools", t)),
         });
       }
+      results.push({
+        name: "hooks/session-start.md present",
+        ok: existsSync(join(installDir, "hooks/session-start.md")),
+      });
+      results.push({
+        name: "skills/session-start present",
+        ok: existsSync(join(installDir, "skills/session-start/SKILL.md")),
+      });
     }
   } else if (pluginId === "jira") {
     const r = run(

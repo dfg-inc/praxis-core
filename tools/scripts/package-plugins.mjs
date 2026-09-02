@@ -54,6 +54,7 @@ export const REQUIRED_PATHS = {
     "tools/build-architecture-package.mjs",
     "tools/emit-developer-handoff.mjs",
     "tools/lib/architecture-package.mjs",
+    "hooks/session-start.md",
     "agents",
     "skills",
     "templates",
@@ -71,6 +72,7 @@ export const REQUIRED_PATHS = {
     "tools/lib/frontmatter.mjs",
     "tools/lib/acceptance-journal.mjs",
     "tools/lib/readiness.mjs",
+    "hooks/session-start.md",
     "agents",
     "skills",
   ],
@@ -332,6 +334,7 @@ export function stagePlugin(id, outPluginsDir) {
         ? [
             ".claude-plugin",
             "agents",
+            "hooks",
             "skills",
             "templates",
             "tools",
@@ -341,6 +344,7 @@ export function stagePlugin(id, outPluginsDir) {
         : [
             ".claude-plugin",
             "agents",
+            "hooks",
             "skills",
             "tools",
             "LICENSE",
@@ -372,8 +376,8 @@ export function stagePlugin(id, outPluginsDir) {
       copyIfExists(join(src, f), join(dest, f));
     }
     for (const dir of id === "architect"
-      ? ["agents", "skills", "templates"]
-      : ["agents", "skills"]) {
+      ? ["agents", "hooks", "skills", "templates"]
+      : ["agents", "hooks", "skills"]) {
       copyIfExists(join(src, dir), join(dest, dir));
     }
     ensureDir(join(dest, "tools"));

@@ -37,6 +37,26 @@ describe("loadProjectConfig", () => {
     expect(result.unset).toEqual([]);
   });
 
+  it("loads optional knowledge.product and knowledge.service", () => {
+    const dir = mkdtempSync(join(tmpdir(), "praxis-project-"));
+    writeFileSync(
+      join(dir, ".project"),
+      [
+        "stack: [node]",
+        "requirementsFormat: user-story-gherkin",
+        "knowledge:",
+        "  path: ./knowledge",
+        "  product: demo",
+        "  service: api",
+      ].join("\n"),
+    );
+    const result = loadProjectConfig(dir);
+    expect(result.status).toBe("loaded");
+    if (result.status !== "loaded") return;
+    expect(result.config.knowledge.product).toBe("demo");
+    expect(result.config.knowledge.service).toBe("api");
+  });
+
   it("reports invalid yaml/schema", () => {
     const dir = mkdtempSync(join(tmpdir(), "praxis-project-"));
     writeFileSync(join(dir, ".project"), "requirementsFormat: not-a-real-format\n");
