@@ -3,10 +3,12 @@ import {
   loadApplicableSlice,
   loadFindingStore,
   prepareFindingProposal,
+  prepareSuccessfulOverrideFinding,
   rejectFindingProposal,
   acceptFindingProposal,
   saveFindingStore,
   parsePrecedent,
+  ruleRequiresObsoleteToolReview,
 } from "../dist/index.js";
 
 function usage() {
@@ -14,6 +16,7 @@ function usage() {
   praxis-knowledge slice --root <path> --role <role> --stage <stage> [--product <id>] [--service <id>]
   praxis-knowledge precedent --path <file.md>
   praxis-knowledge finding propose --store <path> --kind <kind> --id <ruleId> --title <t> --body <b> --ref <r> [--ref <r>...]
+  praxis-knowledge finding successful-override --store <path> --original-rule <id> --override-level <product|service> --override-source <id> [--ref <r>...]
   praxis-knowledge finding reject --store <path> --id <ruleId> --reason <text>
   praxis-knowledge finding accept --store <path> --id <ruleId>
   praxis-knowledge finding list --store <path>`);
@@ -54,16 +57,30 @@ if (cmd === "slice") {
     service: flag("--service"),
   });
   for (const err of result.errors) console.error(`error: ${err}`);
-  if (result.emptyMessage) {
-    console.log(result.emptyMessage);
-    process.exit(0);
+  if (result.rules.length === 0) {
+    console.log(result.emptyMessage ?? "applicable rules: none");
+  } else {
+    console.log(`applicable rules: ${result.rules.length}`);
+    for (const rule of result.rules) {
+      const ov = rule.overriddenBy ? ` (overrides prior level)` : "";
+      const review = ruleRequiresObsoleteToolReview(rule)
+        ? ` [obsolete-tool-review:${rule.frontmatter.obsoleteToolBinding.toolId}]`
+        : "";
+      console.log(
+        `- ${rule.frontmatter.id} [${rule.level}/${rule.frontmatter.severity}]${ov}${review}`,
+      );
+      if (rule.frontmatter.sourceDoc) {
+        console.log(
+          `  source: ${rule.frontmatter.sourceDoc}@${rule.frontmatter.sourceVersion ?? "?"}`,
+        );
+      }
+    }
   }
-  console.log(`applicable rules: ${result.rules.length}`);
-  for (const rule of result.rules) {
-    const ov = rule.overriddenBy ? ` (overrides prior level)` : "";
-    console.log(
-      `- ${rule.frontmatter.id} [${rule.level}/${rule.frontmatter.severity}]${ov}`,
-    );
+  if (result.precedents.length) {
+    console.log(`applicable precedents: ${result.precedents.length}`);
+    for (const p of result.precedents) {
+      console.log(`- ${p.frontmatter.id} [${p.level}]`);
+    }
   }
   process.exit(0);
 }
@@ -89,6 +106,28 @@ if (cmd === "finding") {
       proposedRuleId: id,
       title,
       body,
+      sourceRefs: refs,
+    });
+    saveFindingStore(storePath, store);
+    console.log(JSON.stringify(result, null, 2));
+    process.exit(result.status === "proposed" ? 0 : 1);
+  }
+  if (sub === "successful-override") {
+    const originalRule = flag("--original-rule");
+    const overrideLevel = flag("--override-level");
+    const overrideSource = flag("--override-source");
+    const refs = flags("--ref");
+    if (
+      !originalRule ||
+      (overrideLevel !== "product" && overrideLevel !== "service") ||
+      !overrideSource
+    ) {
+      usage();
+    }
+    const result = prepareSuccessfulOverrideFinding(store, {
+      originalRuleId: originalRule,
+      overrideLevel,
+      overrideSource,
       sourceRefs: refs,
     });
     saveFindingStore(storePath, store);

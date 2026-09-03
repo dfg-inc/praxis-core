@@ -311,6 +311,10 @@ writeProject();
   );
   if (!propose.ok) fail(`propose failed:\n${propose.stderr}\n${propose.stdout}`);
   if (!/"status": "proposed"/.test(propose.stdout)) fail(`propose not proposed:\n${propose.stdout}`);
+  // 2.5.1 — architecture-decision accepts multiple product source refs
+  if (!/"ADR-1"/.test(propose.stdout) || !/"ADR-2"/.test(propose.stdout)) {
+    fail(`expected multiple source refs:\n${propose.stdout}`);
+  }
 
   const reject = run(
     `node "${knowledgeCli}" finding reject --store "${storePath}" --id async-queue --reason "too narrow"`,
@@ -353,6 +357,184 @@ writeProject();
   }
 }
 
+// --- WBS Epic 2 remaining coverage (CLI / dataset / findings) ---
+
+const dataset = join(root, "packages/knowledge/dataset");
+
+// 2.2.1 — one rule, multiple roles (no duplicate files)
+{
+  const ba = run(
+    `node "${knowledgeCli}" slice --root "${dataset}" --role ba --stage research`,
+    root,
+  );
+  const arch = run(
+    `node "${knowledgeCli}" slice --root "${dataset}" --role architect --stage plan`,
+    root,
+  );
+  if (!ba.ok || !arch.ok) fail(`multi-role slice failed:\n${ba.stderr}\n${arch.stderr}`);
+  if (!/task-schema/.test(ba.stdout) || !/task-schema/.test(arch.stdout)) {
+    fail(`task-schema must apply to ba and architect:\n${ba.stdout}\n${arch.stdout}`);
+  }
+}
+
+// 2.2.2 — malformed frontmatter reports missing/invalid fields
+{
+  const badRoot = mkdtempSync(join(tmpdir(), "praxis-know-bad-fm-"));
+  write(
+    join(badRoot, "company/rules/broken.md"),
+    ["---", "title: no-id-or-roles", "---", "", "x", ""].join("\n"),
+  );
+  const slice = run(
+    `node "${knowledgeCli}" slice --root "${badRoot}" --role ba --stage research`,
+    root,
+  );
+  if (!/missing\/invalid frontmatter/.test(slice.stderr)) {
+    fail(`expected frontmatter error on stderr:\n${slice.stderr}\n${slice.stdout}`);
+  }
+  rmSync(badRoot, { recursive: true, force: true });
+}
+
+// 2.3.2 — unmatched role/stage → empty + explicit message
+{
+  const emptyRoot = mkdtempSync(join(tmpdir(), "praxis-know-empty-"));
+  mkdirSync(join(emptyRoot, "company/rules"), { recursive: true });
+  writeRule(join(emptyRoot, "company/rules"), "ba-only", ["ba"], ["research"]);
+  const slice = run(
+    `node "${knowledgeCli}" slice --root "${emptyRoot}" --role quality --stage verify`,
+    root,
+  );
+  if (!/applicable rules: none/.test(slice.stdout)) {
+    fail(`expected empty slice message:\n${slice.stdout}`);
+  }
+  rmSync(emptyRoot, { recursive: true, force: true });
+}
+
+// 2.4 / 2.4.1 — scoped precedents in slice; unrelated excluded; four fields; malformed error
+{
+  const demo = run(
+    `node "${knowledgeCli}" slice --root "${dataset}" --role architect --stage plan --product demo`,
+    root,
+  );
+  if (!demo.ok) fail(`precedent slice failed:\n${demo.stderr}`);
+  if (!/applicable precedents:/.test(demo.stdout)) {
+    fail(`expected precedents in slice:\n${demo.stdout}`);
+  }
+  if (!/PREC-async-queue-gds/.test(demo.stdout)) {
+    fail(`expected product demo precedent:\n${demo.stdout}`);
+  }
+  if (!/PREC-company-sync-default/.test(demo.stdout)) {
+    fail(`expected company precedent in company+product slice:\n${demo.stdout}`);
+  }
+
+  const noProduct = run(
+    `node "${knowledgeCli}" slice --root "${dataset}" --role architect --stage plan`,
+    root,
+  );
+  if (/PREC-async-queue-gds/.test(noProduct.stdout)) {
+    fail(`product precedent must not appear without product scope:\n${noProduct.stdout}`);
+  }
+
+  const parsed = run(
+    `node "${knowledgeCli}" precedent --path "${join(dataset, "product/demo/precedents/async-queue-gds.md")}"`,
+    root,
+  );
+  if (!parsed.ok) fail(`precedent parse failed:\n${parsed.stderr}`);
+  const prec = JSON.parse(parsed.stdout);
+  for (const k of ["circumstances", "chosen", "rejected", "why"]) {
+    if (!prec[k] || !String(prec[k]).trim()) fail(`precedent missing ${k}`);
+  }
+
+  const malRoot = mkdtempSync(join(tmpdir(), "praxis-know-mal-prec-"));
+  write(
+    join(malRoot, "company/precedents/broken.md"),
+    [
+      "---",
+      "id: PREC-broken",
+      "roles: [architect]",
+      "stages: [plan]",
+      "---",
+      "",
+      "## Circumstances",
+      "Only one section.",
+      "",
+    ].join("\n"),
+  );
+  const mal = run(
+    `node "${knowledgeCli}" slice --root "${malRoot}" --role architect --stage plan`,
+    root,
+  );
+  if (!/missing required sections/.test(mal.stderr)) {
+    fail(`expected malformed precedent error:\n${mal.stderr}`);
+  }
+  rmSync(malRoot, { recursive: true, force: true });
+}
+
+// 2.5.2 — successful-override finding workflow
+{
+  const storePath = join(project, "findings-override.json");
+  const ov = run(
+    `node "${knowledgeCli}" finding successful-override --store "${storePath}" --original-rule override-demo --override-level product --override-source demo --ref demo/ADR-9`,
+    root,
+  );
+  if (!ov.ok) fail(`successful-override failed:\n${ov.stderr}\n${ov.stdout}`);
+  const ovJson = JSON.parse(ov.stdout);
+  if (ovJson.status !== "proposed") fail(`expected proposed:\n${ov.stdout}`);
+  if (ovJson.proposal?.kind !== "successful-override") fail("kind must be successful-override");
+  if (ovJson.proposal?.proposedRuleId !== "override-demo") {
+    fail("proposedRuleId must be original company rule");
+  }
+  const refs = ovJson.proposal?.sourceRefs ?? [];
+  if (!refs.includes("original-rule:override-demo")) fail("missing original-rule ref");
+  if (!refs.includes("override:product/demo")) fail("missing override source ref");
+  if (!refs.includes("demo/ADR-9")) fail("missing ADR source ref");
+  if (!/reconsider|review/i.test(ovJson.proposal?.body ?? "")) {
+    fail("body must recommend reconsidering parent norm");
+  }
+  // human reject still works; no corpus auto-promotion (store-only)
+  const rej = run(
+    `node "${knowledgeCli}" finding reject --store "${storePath}" --id override-demo --reason "keep company norm"`,
+    root,
+  );
+  if (!rej.ok) fail(`reject successful-override failed:\n${rej.stderr}`);
+  if (existsSync(join(knowledge, "company/rules/override-demo-promoted.md"))) {
+    fail("must not auto-promote into corpus");
+  }
+}
+
+// 2.6.1 — migrated rules expose sourceDoc + sourceVersion
+{
+  const slice = run(
+    `node "${knowledgeCli}" slice --root "${dataset}" --role ba --stage research`,
+    root,
+  );
+  if (!/source: corp-engineering-handbook@1\.0\.0/.test(slice.stdout)) {
+    fail(`expected sourceDoc@version on migrated rules:\n${slice.stdout}`);
+  }
+}
+
+// 2.6.2 — obsolete tool binding requires review; procedural body preserved
+{
+  const slice = run(
+    `node "${knowledgeCli}" slice --root "${dataset}" --role ba --stage research`,
+    root,
+  );
+  if (!/tracker-workflow/.test(slice.stdout)) {
+    fail(`tracker-workflow missing from slice:\n${slice.stdout}`);
+  }
+  if (!/obsolete-tool-review:legacy-jira-server/.test(slice.stdout)) {
+    fail(`expected obsolete tool review marker:\n${slice.stdout}`);
+  }
+  const body = run(
+    `node --input-type=module -e "import { loadApplicableSlice, ruleRequiresObsoleteToolReview } from '${join(root, "packages/knowledge/dist/index.js")}'; const s=loadApplicableSlice({knowledgeRoot:'${dataset}',role:'ba',stage:'research'}); const r=s.rules.find(x=>x.frontmatter.id==='tracker-workflow'); if(!r) process.exit(2); if(!ruleRequiresObsoleteToolReview(r)) process.exit(3); if(!/Procedural gates/.test(r.body)) process.exit(4); console.log(JSON.stringify({toolId:r.frontmatter.obsoleteToolBinding.toolId,procedural:r.frontmatter.obsoleteToolBinding.proceduralContentApplicable}));"`,
+    root,
+  );
+  if (!body.ok) fail(`obsolete binding API check failed:\n${body.stderr}\n${body.stdout}`);
+  const meta = JSON.parse(body.stdout);
+  if (meta.toolId !== "legacy-jira-server" || meta.procedural !== true) {
+    fail(`unexpected obsolete binding meta:\n${body.stdout}`);
+  }
+}
+
 console.log(
   JSON.stringify(
     {
@@ -366,6 +548,14 @@ console.log(
         "unset knowledge.path skipped",
         "invalid knowledge.path unavailable",
         "finding propose/reject/suppress/accept + disk persist",
+        "2.2.1 multi-role single rule file",
+        "2.2.2 malformed frontmatter errors",
+        "2.3.2 empty slice message",
+        "2.4.1 scoped precedents + malformed error",
+        "2.5.1 multi source refs on architecture-decision",
+        "2.5.2 successful-override finding",
+        "2.6.1 sourceDoc/sourceVersion",
+        "2.6.2 obsolete tool binding review",
       ],
     },
     null,

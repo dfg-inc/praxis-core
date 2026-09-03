@@ -1,20 +1,22 @@
 ---
 id: PREC-XXX
 title: ""
+roles: [architect]
+stages: [plan]
 ---
 
-# Circumstances
+## Circumstances
 
 What situation forced a choice?
 
-# Chosen
+## Chosen
 
 What was selected.
 
-# Rejected
+## Rejected
 
 What was not selected.
 
-# Why
+## Why
 
 Why the chosen option won.
