@@ -7,19 +7,19 @@
     {
       "name": "praxis-ba",
       "package": "@praxis/ba",
-      "version": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14",
       "license": "Apache-2.0"
     },
     {
       "name": "praxis-architect",
       "package": "@praxis/architect",
-      "version": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14",
       "license": "Apache-2.0"
     },
     {
       "name": "praxis-developer",
       "package": "@praxis/developer",
-      "version": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14",
       "license": "Apache-2.0"
     }
   ]
