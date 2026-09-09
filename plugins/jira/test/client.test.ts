@@ -61,11 +61,19 @@ describe("JiraClient human gate", () => {
           status: 200,
         });
       },
+      async (url) => {
+        expect(url).toBe("https://jira.example.com/rest/api/2/serverInfo");
+        return new Response(JSON.stringify({ version: "9.12.0" }), {
+          status: 200,
+        });
+      },
     ]);
     const client = new JiraClient({ config: baseConfig, fetchImpl });
     await expect(client.verifyConnection()).resolves.toEqual({
       ok: true,
       displayName: "Ada",
+      version: "9.12.0",
+      patSupported: true,
     });
   });
 
@@ -170,5 +178,33 @@ describe("JiraClient human gate", () => {
     expect(String((preview.body as { body: string }).body)).toContain(
       "https://git.example/blob/abc123/architecture/ADR-1.md",
     );
+  });
+
+  it("refuses stories estimated over 8 hours (WBS 3.3.2)", () => {
+    const client = new JiraClient({
+      config: baseConfig,
+      fetchImpl: mockFetchSequence([]),
+    });
+    expect(() =>
+      client.createStoryPreview({
+        summary: "Too big",
+        acceptanceCriteria: "given a when b then c",
+        estimateHours: 9,
+      }),
+    ).toThrow(/8h ceiling/);
+  });
+
+  it("reports PAT-unsupported Jira versions without writing (WBS 3.1.2)", async () => {
+    const fetchImpl = mockFetchSequence([
+      async () =>
+        new Response(JSON.stringify({ displayName: "Ada" }), { status: 200 }),
+      async () =>
+        new Response(JSON.stringify({ version: "8.5.1" }), { status: 200 }),
+    ]);
+    const client = new JiraClient({ config: baseConfig, fetchImpl });
+    const r = await client.verifyConnection();
+    expect(r.ok).toBe(false);
+    expect(r.patSupported).toBe(false);
+    expect(r.guidance).toMatch(/application link/i);
   });
 });

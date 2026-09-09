@@ -12,7 +12,10 @@ export type CatalogPlugin = {
 export type Catalog = {
   schemaVersion: number;
   updated: string;
+  channel?: string;
+  channelNote?: string;
   plugins: CatalogPlugin[];
+  unpublished?: Array<{ name: string; reason: string }>;
 };
 
 const here = dirname(fileURLToPath(import.meta.url));

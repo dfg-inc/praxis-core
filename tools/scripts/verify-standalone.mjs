@@ -40,6 +40,8 @@ try {
         "skills/session-start/SKILL.md",
         "LICENSE",
         "vendor",
+        "PUBLICATION.md",
+        ".github/workflows/ci.yml",
       ],
     },
     {
@@ -54,6 +56,8 @@ try {
         "skills/session-start/SKILL.md",
         "LICENSE",
         "vendor",
+        "PUBLICATION.md",
+        ".github/workflows/ci.yml",
       ],
     },
   ]) {

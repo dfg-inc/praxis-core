@@ -12,6 +12,10 @@ describe("catalog", () => {
       "praxis-ba",
       "praxis-developer",
     ]);
+    expect(cat.unpublished?.map((p) => p.name).sort()).toEqual([
+      "praxis-jira",
+      "praxis-quality",
+    ]);
 
     for (const plugin of cat.plugins) {
       expect(plugin.version).toMatch(SEMVER_RE);

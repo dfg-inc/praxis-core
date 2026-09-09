@@ -1,4 +1,8 @@
-import { loadJiraConfig, type JiraConfig } from "./config.js";
+import {
+  loadJiraConfig,
+  patSupportedForVersion,
+  type JiraConfig,
+} from "./config.js";
 import type {
   AttachDecisionLinkInput,
   Confirmer,
@@ -12,7 +16,7 @@ import type {
 } from "./types.js";
 
 export type { JiraConfig } from "./config.js";
-export { loadJiraConfig } from "./config.js";
+export { loadJiraConfig, patSupportedForVersion, parseJiraVersion } from "./config.js";
 export type * from "./types.js";
 
 let previewSeq = 0;
@@ -47,16 +51,53 @@ export class JiraClient {
     return `${this.config.baseUrl}${path}`;
   }
 
-  async verifyConnection(): Promise<{ ok: true; displayName?: string }> {
-    const res = await this.fetchImpl(this.url("/rest/api/2/myself"), {
+  async verifyConnection(): Promise<{
+    ok: boolean;
+    displayName?: string;
+    version?: string;
+    patSupported: boolean;
+    guidance?: string;
+  }> {
+    const meRes = await this.fetchImpl(this.url("/rest/api/2/myself"), {
       method: "GET",
       headers: this.headers(),
     });
-    if (!res.ok) {
-      throw new Error(`Jira verifyConnection failed: HTTP ${res.status}`);
+    if (!meRes.ok) {
+      throw new Error(`Jira verifyConnection failed: HTTP ${meRes.status}`);
     }
-    const body = (await res.json()) as { displayName?: string };
-    return { ok: true, displayName: body.displayName };
+    const me = (await meRes.json()) as { displayName?: string };
+    const infoRes = await this.fetchImpl(this.url("/rest/api/2/serverInfo"), {
+      method: "GET",
+      headers: this.headers(),
+    });
+    let version: string | undefined;
+    if (infoRes.ok) {
+      const info = (await infoRes.json()) as { version?: string };
+      version = info.version;
+    }
+    if (version) {
+      const pat = patSupportedForVersion(version);
+      if (!pat.supported) {
+        return {
+          ok: false,
+          displayName: me.displayName,
+          version,
+          patSupported: false,
+          guidance: pat.guidance,
+        };
+      }
+      return {
+        ok: true,
+        displayName: me.displayName,
+        version,
+        patSupported: true,
+      };
+    }
+    return {
+      ok: true,
+      displayName: me.displayName,
+      patSupported: true,
+    };
   }
 
   /** Build a mutation preview; does not write. */
@@ -138,6 +179,11 @@ export class JiraClient {
   }
 
   createStoryPreview(input: CreateStoryInput): MutationPreview {
+    if (typeof input.estimateHours === "number" && input.estimateHours > 8) {
+      throw new Error(
+        `story estimate ${input.estimateHours}h exceeds 8h ceiling — split the scenario before creating a Story`,
+      );
+    }
     const description = `Acceptance Criteria:\n\n${input.acceptanceCriteria}`;
     const body = {
       fields: {

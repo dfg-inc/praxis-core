@@ -21,6 +21,8 @@ export type CreateStoryInput = {
   acceptanceCriteria: string;
   parentKey?: string;
   issueType?: string;
+  /** Original estimate in hours. Stories above 8h are refused (WBS 3.3.2). */
+  estimateHours?: number;
 };
 
 export type LinkIssuesInput = {

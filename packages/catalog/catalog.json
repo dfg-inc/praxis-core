@@ -22,5 +22,15 @@
       "version": "0.1.0-alpha.19",
       "license": "Apache-2.0"
     }
+  ],
+  "unpublished": [
+    {
+      "name": "praxis-quality",
+      "reason": "company-only quality-service — not in public lineup"
+    },
+    {
+      "name": "praxis-jira",
+      "reason": "company-only Jira mediator — UNLICENSED, not published"
+    }
   ]
 }

@@ -11,6 +11,8 @@ import {
   verificationIsReady,
   QualityMrContextSchema,
   QualityRollbackEventSchema,
+  buildCreateMergeRequestRequest,
+  qualityServiceUnavailableStep,
 } from "./index.js";
 
 const structuredOk = {
@@ -170,5 +172,33 @@ describe("contracts", () => {
       evidence: "log",
     });
     expect(rb.projectId).toBe("p");
+  });
+
+  it("builds GitLab/GitHub MR preview without writing", () => {
+    const gl = buildCreateMergeRequestRequest({
+      provider: "gitlab",
+      baseUrl: "https://gitlab.example.com",
+      projectPath: "group/app",
+      title: "WP-1",
+      description: "intention",
+      sourceBranch: "feat",
+      targetBranch: "main",
+    });
+    expect(gl.wouldWrite).toBe(false);
+    expect(gl.missingCredentials).toBe(true);
+    expect(gl.url).toContain("/api/v4/projects/");
+    const gh = buildCreateMergeRequestRequest({
+      provider: "github",
+      baseUrl: "https://api.github.com",
+      token: "t",
+      projectPath: "org/app",
+      title: "WP-1",
+      description: "intention",
+      sourceBranch: "feat",
+      targetBranch: "main",
+    });
+    expect(gh.url).toBe("https://api.github.com/repos/org/app/pulls");
+    expect(gh.wouldWrite).toBe(false);
+    expect(qualityServiceUnavailableStep().postedToMergeRequest).toBe(false);
   });
 });

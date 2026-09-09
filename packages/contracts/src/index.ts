@@ -351,3 +351,18 @@ export function parseContract<T extends z.ZodTypeAny>(
 ): z.infer<T> {
   return schema.parse(data);
 }
+
+export {
+  GitHostProviderSchema,
+  CreateMergeRequestRequestSchema,
+  CiProviderPreviewSchema,
+  validateGitHostConfig,
+  buildCreateMergeRequestRequest,
+  buildCiContextRequest,
+  qualityServiceUnavailableStep,
+} from "./git-host.js";
+export type {
+  GitHostProvider,
+  CreateMergeRequestRequest,
+  CiProviderPreview,
+} from "./git-host.js";

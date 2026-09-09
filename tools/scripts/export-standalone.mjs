@@ -370,6 +370,53 @@ export function exportStandalone(component, outDir) {
     join(dest, ".gitignore"),
     "node_modules/\ncanon-graph/dist/\n*.log\n",
   );
+  writeFileSync(
+    join(dest, "PUBLICATION.md"),
+    `# Remote publication (dry-run first)
+
+Canonical name: praxis-${component}
+Version: ${version} (unified with Praxis release)
+Source of truth: Praxis monorepo \`npm run export:standalone -- ${component} <dir>\`
+
+Do not create GitLab/GitHub repositories from this file automatically.
+
+Dry-run from the monorepo:
+
+\`\`\`bash
+npm run publish:standalone-remote -- --component ${component} --dry-run
+\`\`\`
+
+Required before a real push (operator-owned):
+
+1. Create empty remote \`praxis-${component}\` (explicit human permission).
+2. Re-export this tree.
+3. \`git remote add origin <url>\` && \`git push -u origin HEAD:main\`
+4. Tag \`v${version}\` to match the monorepo release.
+
+CI in this tree runs \`npm ci && npm test && npm pack\` only.
+`,
+  );
+  mkdirSync(join(dest, ".github/workflows"), { recursive: true });
+  writeFileSync(
+    join(dest, ".github/workflows/ci.yml"),
+    `name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm pack
+`,
+  );
 
   const pluginJson = join(dest, ".claude-plugin/plugin.json");
   if (existsSync(pluginJson)) {

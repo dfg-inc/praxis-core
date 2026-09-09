@@ -40,7 +40,18 @@ async function main() {
 
   // 1) connect
   const me = await client.verifyConnection();
-  steps.push({ step: "connect", ok: true, displayName: me.displayName });
+  steps.push({
+    step: "connect",
+    ok: me.ok !== false,
+    displayName: me.displayName,
+    version: me.version,
+    patSupported: me.patSupported,
+    guidance: me.guidance,
+  });
+  if (me.ok === false) {
+    console.log(JSON.stringify({ ok: false, mode: "unsupported-pat", steps }, null, 2));
+    process.exit(1);
+  }
 
   // 2) read (optional existing feature, or search project via myself only)
   const featureKey =
