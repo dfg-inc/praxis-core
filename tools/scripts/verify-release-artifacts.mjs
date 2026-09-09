@@ -204,6 +204,8 @@ function smokePlugin(pluginId, installDir) {
         "final-arbiter.mjs",
         "run-work-package.mjs",
         "accept-work-package.mjs",
+        "developer-governance.mjs",
+        "lib/developer-governance.mjs",
         "lib/apply-change-spec.mjs",
         "lib/frontmatter.mjs",
         "lib/acceptance-journal.mjs",

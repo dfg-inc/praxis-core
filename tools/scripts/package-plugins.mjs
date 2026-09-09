@@ -71,6 +71,8 @@ export const REQUIRED_PATHS = {
     "tools/run-work-package.mjs",
     "tools/accept-work-package.mjs",
     "tools/request-architecture-deviation.mjs",
+    "tools/developer-governance.mjs",
+    "tools/lib/developer-governance.mjs",
     "tools/lib/apply-change-spec.mjs",
     "tools/lib/frontmatter.mjs",
     "tools/lib/acceptance-journal.mjs",
@@ -363,7 +365,9 @@ export function stagePlugin(id, outPluginsDir) {
     } else {
       pkg.scripts = {
         "accept-work-package": "node ./tools/accept-work-package.mjs",
+        "developer-governance": "node ./tools/developer-governance.mjs",
         "final-arbiter": "node ./tools/final-arbiter.mjs",
+        "request-architecture-deviation": "node ./tools/request-architecture-deviation.mjs",
         "run-work-package": "node ./tools/run-work-package.mjs",
         "session-bootstrap": "node ./tools/session-bootstrap.cjs",
       };
