@@ -35,9 +35,12 @@ export const ArchitectToDeveloperHandoffSchema = ContractMetaSchema.extend({
       id: z.string(),
       title: z.string(),
       estimateHours: z.number().nonnegative().optional(),
+      dependsOn: z.array(z.string()).optional(),
       readyForDev: z.boolean(),
     }),
   ),
+  /** Platform/interface contract ids visible to Developer (WBS 4.9). */
+  platformContractIds: z.array(z.string()).optional(),
 });
 export type ArchitectToDeveloperHandoff = z.infer<
   typeof ArchitectToDeveloperHandoffSchema
@@ -111,6 +114,7 @@ export const ChangeSpecSchema = z.object({
         id: z.string(),
         title: z.string(),
         estimateHours: z.number().nonnegative().optional(),
+        dependsOn: z.array(z.string()).optional(),
         readyForDev: z.boolean(),
       }),
     )

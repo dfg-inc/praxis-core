@@ -6,8 +6,34 @@ import {
   bootstrapSession,
   checkPluginVersion,
   formatSessionBootstrap,
+  parseSessionBootstrapArgs,
   recordHumanGate,
 } from "./index.js";
+
+describe("parseSessionBootstrapArgs", () => {
+  it("uses positional repo root over CWD", () => {
+    const r = parseSessionBootstrapArgs(["/abs/product"], "/tmp/caller");
+    expect(r.repoRoot).toBe("/abs/product");
+  });
+
+  it("falls back to CWD when argv is empty", () => {
+    const r = parseSessionBootstrapArgs([], "/tmp/caller");
+    expect(r.repoRoot).toBe("/tmp/caller");
+  });
+
+  it("uses --repo when no positional is given", () => {
+    const r = parseSessionBootstrapArgs(["--repo", "/abs/via-flag"], "/tmp/caller");
+    expect(r.repoRoot).toBe("/abs/via-flag");
+  });
+
+  it("lets positional win over --repo", () => {
+    const r = parseSessionBootstrapArgs(
+      ["/abs/positional", "--repo", "/abs/flag"],
+      "/tmp/caller",
+    );
+    expect(r.repoRoot).toBe("/abs/positional");
+  });
+});
 
 describe("human gate", () => {
   it("records approval", () => {

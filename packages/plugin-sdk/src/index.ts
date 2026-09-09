@@ -2,6 +2,54 @@ import { loadApplicableSlice } from "@praxis/knowledge";
 import { loadProjectConfig, type ProjectConfig } from "@praxis/project-config";
 import { isAbsolute, resolve } from "node:path";
 import { existsSync } from "node:fs";
+
+const SESSION_BOOTSTRAP_VALUE_FLAGS = new Set(["--repo", "--stage", "--latest"]);
+
+export type SessionBootstrapArgs = {
+  repoRoot: string;
+  stage?: string;
+  latest?: string;
+};
+
+/**
+ * Shared SessionStart argv contract for BA / Architect / Developer.
+ * `session-bootstrap.cjs [repo-root]` — positional repo root wins over CWD;
+ * `--repo` is accepted when no positional is given (existing Architect/Developer hooks).
+ */
+export function parseSessionBootstrapArgs(
+  argv: readonly string[],
+  cwd: string = process.cwd(),
+): SessionBootstrapArgs {
+  const flags: Record<string, string> = {};
+  const positionals: string[] = [];
+  const args = [...argv];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (SESSION_BOOTSTRAP_VALUE_FLAGS.has(a)) {
+      const v = args[i + 1];
+      if (v !== undefined && !v.startsWith("-")) {
+        flags[a.slice(2)] = v;
+        i += 1;
+      }
+      continue;
+    }
+    if (a.startsWith("-")) continue;
+    positionals.push(a);
+  }
+  const raw = positionals[0] ?? flags.repo ?? cwd;
+  return {
+    repoRoot: resolve(cwd, raw),
+    stage: flags.stage,
+    latest: flags.latest,
+  };
+}
+
+export function resolveSessionRepoRoot(
+  argv: readonly string[],
+  cwd: string = process.cwd(),
+): string {
+  return parseSessionBootstrapArgs(argv, cwd).repoRoot;
+}
 export type HumanGateDecision = "approved" | "rejected";
 
 export type HumanGateResult = {
