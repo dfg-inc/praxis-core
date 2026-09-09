@@ -9,6 +9,8 @@ import {
   verificationCheckFromArbiterStep,
   computePackageCriteria,
   verificationIsReady,
+  QualityMrContextSchema,
+  QualityRollbackEventSchema,
 } from "./index.js";
 
 const structuredOk = {
@@ -137,5 +139,36 @@ describe("contracts", () => {
     expect(() =>
       ChangeSpecChangeSchema.parse({ file: "a.js", op: "edit" }),
     ).toThrow();
+  });
+
+  it("accepts quality.mr.context and rollback/return contracts", () => {
+    const ctx = QualityMrContextSchema.parse({
+      contract: "quality.mr.context",
+      version: "0.1.0",
+      projectId: "p",
+      workPackageId: "WP-1",
+      mergeRequestRef: "local/WP-1",
+      repositoryPath: "/tmp/repo",
+      baseBranch: "main",
+      headBranch: "feat",
+      baseSha: "a".repeat(40),
+      headSha: "b".repeat(40),
+      changedFiles: ["src/a.js"],
+      requirementIds: ["FR-1"],
+      decisionIds: ["ADR-1"],
+    });
+    expect(ctx.mergeRequestRef).toBe("local/WP-1");
+    const rb = QualityRollbackEventSchema.parse({
+      contract: "quality.rollback.event",
+      version: "0.1.0",
+      projectId: "p",
+      mergeRequestRef: "local/WP-1",
+      affectedRef: "abc",
+      reason: "incident",
+      trigger: "ops",
+      status: "recorded",
+      evidence: "log",
+    });
+    expect(rb.projectId).toBe("p");
   });
 });

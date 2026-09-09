@@ -197,6 +197,113 @@ export type DeveloperToQualityHandoff = z.infer<
   typeof DeveloperToQualityHandoffSchema
 >;
 
+/** Quality ← local CI / Developer MR payload (WBS 6.2). Live remote provider is out of band. */
+export const QualityMrContextSchema = ContractMetaSchema.extend({
+  contract: z.literal("quality.mr.context"),
+  projectId: z.string().min(1),
+  workPackageId: z.string().min(1),
+  mergeRequestRef: z.string().min(1),
+  repositoryPath: z.string().min(1),
+  baseBranch: z.string().min(1),
+  headBranch: z.string().min(1),
+  baseSha: z.string().min(1),
+  headSha: z.string().min(1),
+  changedFiles: z.array(z.string()),
+  requirementIds: z.array(z.string()),
+  decisionIds: z.array(z.string()),
+  verification: VerificationSchema.optional(),
+  qualityHandoff: DeveloperToQualityHandoffSchema.optional(),
+});
+export type QualityMrContext = z.infer<typeof QualityMrContextSchema>;
+
+export const QualityAuditReportSchema = ContractMetaSchema.extend({
+  contract: z.literal("quality.audit.report"),
+  auditId: z.number().int().nonnegative(),
+  projectId: z.string().min(1),
+  auditedPath: z.string().min(1),
+  timestamp: z.string().min(1),
+  scope: z.string().min(1),
+  checksPerformed: z.array(z.string()),
+  findings: z.array(z.unknown()),
+  findingsBySeverity: z.record(z.number()),
+  findingsByCategory: z.record(z.number()),
+  evidence: z.array(z.string()),
+  summary: z.object({
+    total: z.number(),
+    blocking: z.number(),
+    warnings: z.number(),
+  }),
+  verdict: z.enum(["pass", "fail"]),
+  remediation: z.array(z.string()),
+  unresolvedHighRisk: z.array(z.unknown()),
+  tool: z.object({
+    name: z.string(),
+    version: z.string(),
+  }),
+});
+export type QualityAuditReport = z.infer<typeof QualityAuditReportSchema>;
+
+export const QualityRollbackEventSchema = ContractMetaSchema.extend({
+  contract: z.literal("quality.rollback.event"),
+  projectId: z.string().min(1),
+  workPackageId: z.string().optional(),
+  mergeRequestRef: z.string().min(1),
+  affectedRef: z.string().min(1),
+  reason: z.string().min(1),
+  trigger: z.string().min(1),
+  timestamp: z.string().optional(),
+  reviewId: z.number().int().positive().optional(),
+  findingIds: z.array(z.string()).optional(),
+  status: z.string().min(1),
+  evidence: z.string().min(1),
+});
+export type QualityRollbackEvent = z.infer<typeof QualityRollbackEventSchema>;
+
+export const QualityHotfixEventSchema = ContractMetaSchema.extend({
+  contract: z.literal("quality.hotfix.event"),
+  projectId: z.string().min(1),
+  rollbackId: z.number().int().positive(),
+  hotfixRef: z.string().min(1),
+  reason: z.string().min(1),
+  workPackageId: z.string().optional(),
+  reviewId: z.number().int().positive().optional(),
+  verification: z.string().min(1),
+  timestamp: z.string().optional(),
+});
+export type QualityHotfixEvent = z.infer<typeof QualityHotfixEventSchema>;
+
+export const QualityReturnEventSchema = ContractMetaSchema.extend({
+  contract: z.literal("quality.return.event"),
+  projectId: z.string().min(1),
+  workPackageId: z.string().min(1),
+  mergeRequestRef: z.string().min(1),
+  reviewId: z.number().int().positive(),
+  targetRole: z.literal("developer"),
+  blockingFindingIds: z.array(z.string()).min(1),
+  reason: z.string().min(1),
+  source: z.enum(["qa", "code-review"]),
+  status: z.enum(["open", "resolved"]),
+  returnedAt: z.string().optional(),
+  resolvedAt: z.string().optional(),
+  followUpReviewId: z.number().int().positive().optional(),
+});
+export type QualityReturnEvent = z.infer<typeof QualityReturnEventSchema>;
+
+export const QualityNormProposalSchema = ContractMetaSchema.extend({
+  contract: z.literal("quality.norm.proposal"),
+  fingerprint: z.string().min(1),
+  occurrenceCount: z.number().int().positive(),
+  sourceIds: z.array(z.string()).min(1),
+  evidence: z.string().min(1),
+  proposedRuleId: z.string().min(1),
+  topic: z.string().min(1),
+  projectId: z.string().min(1),
+  status: z.literal("proposed"),
+  createdBy: z.literal("quality"),
+  binding: z.literal(false),
+});
+export type QualityNormProposal = z.infer<typeof QualityNormProposalSchema>;
+
 /** True when every required check passed and no check failed. */
 export function verificationIsReady(v: Verification): boolean {
   const checks = [v.build, v.tests, v.lint, v.packageCriteria];
