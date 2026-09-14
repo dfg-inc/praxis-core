@@ -1,6 +1,6 @@
 {
   "name": "@praxis/knowledge",
-  "version": "0.1.0-alpha.22",
+  "version": "0.1.0-alpha.23",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -23,7 +23,10 @@
     "gray-matter": "^4.0.3",
     "zod": "^3.25.76"
   },
-  "files": ["dist", "bin"],
+  "files": [
+    "dist",
+    "bin"
+  ],
   "devDependencies": {
     "@types/node": "^22.20.0",
     "typescript": "~5.8.3",
