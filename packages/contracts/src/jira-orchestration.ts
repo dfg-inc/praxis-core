@@ -132,7 +132,10 @@ export type PraxisWorkPackage = z.infer<typeof PraxisWorkPackageSchema>;
 export const JiraBaHandoffSchema = ContractMeta.extend({
   contract: z.literal("jira.ba.architect.handoff"),
   epicKey: z.string().min(1),
+  /** Canonical active stories only (legacy field; same as canonicalStoryKeys). */
   storyKeys: z.array(z.string()),
+  canonicalStoryKeys: z.array(z.string()),
+  supersededStoryKeys: z.array(z.string()),
   requirementIds: z.array(z.string()),
   baArtifacts: z.array(z.string()),
   openQuestions: z.array(z.string()),
@@ -144,6 +147,31 @@ export const JiraBaHandoffSchema = ContractMeta.extend({
   readyForArchitecture: z.boolean(),
 });
 export type JiraBaHandoff = z.infer<typeof JiraBaHandoffSchema>;
+
+export const JiraWriteOpStateSchema = z.enum([
+  "planned",
+  "creating",
+  "created",
+  "verified",
+  "committed",
+]);
+export type JiraWriteOpState = z.infer<typeof JiraWriteOpStateSchema>;
+
+export const JiraWriteJournalEntrySchema = z.object({
+  operationId: z.string().min(1),
+  role: PraxisRoleSchema,
+  operationType: z.string().min(1),
+  artifactId: z.string().min(1),
+  epicKey: z.string().optional(),
+  jiraIssueKey: z.string().optional(),
+  state: JiraWriteOpStateSchema,
+  provider: z.enum(["cloud", "datacenter"]),
+  projectKey: z.string().min(1),
+  startedAt: z.string().min(1),
+  completedAt: z.string().optional(),
+  detail: z.string().optional(),
+});
+export type JiraWriteJournalEntry = z.infer<typeof JiraWriteJournalEntrySchema>;
 
 export const JiraOperationJournalEntrySchema = z.object({
   operationId: z.string().min(1),
@@ -158,6 +186,23 @@ export const JiraOperationJournalEntrySchema = z.object({
 export type JiraOperationJournalEntry = z.infer<
   typeof JiraOperationJournalEntrySchema
 >;
+
+export const BaJiraWriteActionSchema = z.enum([
+  "CREATE",
+  "UPDATE",
+  "UNCHANGED",
+  "SUPERSEDED",
+]);
+export type BaJiraWriteAction = z.infer<typeof BaJiraWriteActionSchema>;
+
+export const BaJiraWritePlanItemSchema = z.object({
+  action: BaJiraWriteActionSchema,
+  artifactId: z.string().min(1),
+  jiraIssueKey: z.string().optional(),
+  supersededBy: z.string().optional(),
+  summary: z.string().optional(),
+});
+export type BaJiraWritePlanItem = z.infer<typeof BaJiraWritePlanItemSchema>;
 
 export const QualityWpReportSchema = ContractMeta.extend({
   contract: z.literal("quality.work-package.report"),

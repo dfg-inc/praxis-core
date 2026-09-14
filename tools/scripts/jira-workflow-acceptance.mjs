@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { dirname, resolve, join } from "node:path";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+import {
+  expectedTarballNames,
+  installTest,
+  localPackagesDir,
+  packReleaseLocal,
+} from "./local-packages.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 
 function fail(msg) {
   console.error(`FAIL: ${msg}`);
@@ -23,6 +31,13 @@ run("npm test -w @praxis/jira");
 run("make -n verify");
 run("make help");
 
+const dest = localPackagesDir(root, version);
+const missing = expectedTarballNames(version).filter((n) => !existsSync(join(dest, n)));
+if (missing.length) packReleaseLocal(root, version);
+
+const consumer = mkdtempSync(join(tmpdir(), "praxis-jira-ext-"));
+installTest({ root, version, testRepo: consumer });
+
 const packDir = join(root, "dist", "jira-workflow-accept");
 mkdirSync(packDir, { recursive: true });
 run(`npm pack -w @praxis/jira --pack-destination ${JSON.stringify(packDir)}`);
@@ -38,19 +53,23 @@ console.log(
       proven: [
         "jira cloud provider contract",
         "jira datacenter provider contract",
-        "BA epic to stories",
-        "Architect stories to work packages",
-        "Developer work package claim",
-        "Developer package implementation lifecycle",
-        "Quality work package verification",
-        "Quality blocking bug lifecycle",
-        "one-line command wrappers",
+        "BA epic analysis contract",
+        "BA remote-write idempotency",
+        "BA crash/resume",
+        "duplicate recovery",
+        "canonical/superseded downstream filtering",
+        "Architect Work Package generation",
+        "Developer claim",
+        "QA bug/block lifecycle",
+        "external package install works from tgz",
+        "no public registry dependency for internal @praxis runtime",
       ],
       pending: [
-        "live Jira Cloud acceptance",
+        "live Jira Cloud full E2E",
         "live Jira Data Center acceptance",
       ],
       packed: tgz,
+      localPackages: expectedTarballNames(version),
     },
     null,
     2,

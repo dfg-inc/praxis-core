@@ -5,7 +5,10 @@ description: Preview and create a Story with acceptance-criteria body on Jira Se
 
 # create-story
 
-Create a **Story** via `JiraClient.createStory`. Acceptance criteria are placed in the description body. Writes only after human confirm on the full preview package.
+Create a **Story** via `JiraClient.createStory` **only** for legacy Server packages that are not the BA Epic orchestration.
+
+For Epic → Stories (Cloud or DC) use BA skill `jira-analyze-epic` / `baAnalyzeEpic`. Raw `createStory` does **not** write `praxis.artifactId` before/with create and will duplicate if mixed with BA apply.
+
 
 ## When to use
 

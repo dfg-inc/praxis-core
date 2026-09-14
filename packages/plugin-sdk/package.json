@@ -23,6 +23,7 @@
     "@praxis/knowledge": "*",
     "@praxis/project-config": "*"
   },
+  "files": ["dist", "bin"],
   "devDependencies": {
     "@types/node": "^22.20.0",
     "typescript": "~5.8.3",

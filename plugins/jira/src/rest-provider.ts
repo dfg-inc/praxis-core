@@ -21,6 +21,7 @@ type StoredIssue = JiraIssueLite & {
 
 export type MockJiraState = {
   nextId: number;
+  createIssueCount: number;
   issues: Map<string, StoredIssue>;
   links: JiraLink[];
   versions: { id: string; name: string }[];
@@ -30,6 +31,7 @@ export type MockJiraState = {
 export function createMockJiraState(): MockJiraState {
   return {
     nextId: 1,
+    createIssueCount: 0,
     issues: new Map(),
     links: [],
     versions: [],
@@ -142,6 +144,7 @@ export function createMockFetch(
     }
 
     if (method === "POST" && /\/issue$/.test(path)) {
+      state.createIssueCount += 1;
       const keyNew = `${opts.projectKey}-${state.nextId++}`;
       const fields = body.fields ?? {};
       const stored: StoredIssue = {

@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type {
+  BaJiraWritePlanItem,
   JiraBaHandoff,
   JiraOperationJournalEntry,
   PraxisWorkPackage,
@@ -17,6 +18,15 @@ import type { JiraProvider } from "./provider.js";
 import { assertRole } from "./role-policy.js";
 import { spawnSync } from "node:child_process";
 import { headingParagraphs, textDocument } from "./rich-text.js";
+import { planAndApplyBaStories, type BaStorySpec, type BaWriteHooks } from "./ba-write.js";
+import {
+  ARTIFACT_PROP,
+  assertCanonicalMembers,
+  canonicalStoryKeysFromFlags,
+  isSupersededFlags,
+  loadEpicIssueFlags,
+  supersededPairs,
+} from "./managed-scope.js";
 
 function loadQualityCommands(repo: string): {
   build?: string;
@@ -91,36 +101,25 @@ export function alreadyDone(repo: string, operationId: string): boolean {
   );
 }
 
-const ARTIFACT_PROP = "praxis.artifactId";
-
 export async function baAnalyzeEpic(opts: {
   provider: JiraProvider;
   epicKey: string;
   repo: string;
-  stories?: Array<{
-    artifactId: string;
-    summary: string;
-    userStory: string;
-    acceptanceCriteria: string;
-    businessContext?: string;
-    requirementIds: string[];
-    outOfScope?: string;
-    dependencies?: string[];
-  }>;
+  stories?: BaStorySpec[];
   dryRun?: boolean;
+  hooks?: BaWriteHooks;
 }): Promise<{
   handoff: JiraBaHandoff;
   storyKeys: string[];
   created: string[];
+  plan: BaJiraWritePlanItem[];
+  planText: string;
 }> {
   assertRole("ba", "read-epic");
   const epic = await opts.provider.getIssue(opts.epicKey);
-  const existing = await opts.provider.getChildren(opts.epicKey);
-  const created: string[] = [];
-  const storyKeys: string[] = [];
-  const specs = opts.stories ?? [
+  const specs: BaStorySpec[] = opts.stories ?? [
     {
-      artifactId: `story:${opts.epicKey}:core`,
+      logicalId: `REQ-${opts.epicKey}-1`,
       summary: `${epic.summary} — core story`,
       userStory: `As a user\n I want ${epic.summary}\n So that the epic is delivered`,
       acceptanceCriteria:
@@ -130,94 +129,33 @@ export async function baAnalyzeEpic(opts: {
       dependencies: [],
     },
   ];
-
-  for (const spec of specs) {
-    assertRole("ba", "create-story");
-    const opId = `ba-story:${spec.artifactId}`;
-    let foundKey: string | undefined;
-    for (const child of existing) {
-      const aid = await opts.provider.getIssueProperty<string>(
-        child.key,
-        ARTIFACT_PROP,
-      );
-      if (aid === spec.artifactId) {
-        foundKey = child.key;
-        break;
-      }
-    }
-    if (foundKey) {
-      storyKeys.push(foundKey);
-      record(opts.repo, {
-        operationId: opId,
-        artifactId: spec.artifactId,
-        jiraIssueKey: foundKey,
-        result: "skipped",
-        provider: opts.provider.flavor,
-        kind: "create-story",
-        detail: "idempotent",
-      });
-      continue;
-    }
-    if (opts.dryRun) continue;
-    const description = opts.provider.renderDescription(
-      headingParagraphs([
-        { heading: "User Story", body: spec.userStory },
-        { heading: "Business context", body: spec.businessContext ?? "" },
-        { heading: "Acceptance Criteria", body: spec.acceptanceCriteria },
-        { heading: "Out of scope", body: spec.outOfScope ?? "None" },
-        {
-          heading: "Dependencies",
-          body: (spec.dependencies ?? []).join(", ") || "None",
-        },
-        {
-          heading: "Requirement IDs",
-          body: spec.requirementIds.join(", "),
-        },
-        { heading: "Parent Epic", body: opts.epicKey },
-        { heading: "Source", body: "Praxis BA" },
-      ]),
-    );
-    const createdIssue = await opts.provider.createIssue({
-      summary: spec.summary,
-      issueType: opts.provider.config.storyType,
-      description,
-      parentKey: opts.epicKey,
-      labels: ["praxis-managed"],
-    });
-    await opts.provider.setIssueProperty(createdIssue.key, ARTIFACT_PROP, spec.artifactId);
-    await opts.provider.setIssueProperty(createdIssue.key, "praxis.managed", true);
-    await opts.provider.setIssueProperty(createdIssue.key, "praxis.role", "ba");
-    await opts.provider.setIssueProperty(
-      createdIssue.key,
-      "praxis.requirementIds",
-      spec.requirementIds,
-    );
-    await opts.provider.setIssueProperty(
-      createdIssue.key,
-      "praxis.sourceEpic",
-      opts.epicKey,
-    );
-    await opts.provider.writePraxisState(createdIssue.key, {
-      lifecycle: "ready-for-architecture",
-    });
-    storyKeys.push(createdIssue.key);
-    created.push(createdIssue.key);
-    record(opts.repo, {
-      operationId: opId,
-      artifactId: spec.artifactId,
-      jiraIssueKey: createdIssue.key,
-      result: "ok",
-      provider: opts.provider.flavor,
-      kind: "create-story",
-    });
-  }
-
+  if (!opts.dryRun) assertRole("ba", "create-story");
+  const result = await planAndApplyBaStories({
+    provider: opts.provider,
+    epicKey: opts.epicKey,
+    repo: opts.repo,
+    specs,
+    dryRun: opts.dryRun,
+    hooks: opts.hooks,
+  });
+  const canonical = result.applied
+    .filter((a) => a.action !== "SUPERSEDED" && a.jiraIssueKey)
+    .map((a) => a.jiraIssueKey!)
+    .filter((k, i, arr) => arr.indexOf(k) === i);
+  const created = result.applied
+    .filter((a) => a.action === "CREATE" && a.jiraIssueKey)
+    .map((a) => a.jiraIssueKey!);
+  const superseded = result.plan
+    .filter((p) => p.action === "SUPERSEDED" && p.jiraIssueKey)
+    .map((p) => p.jiraIssueKey!);
   const reqIds = specs.flatMap((s) => s.requirementIds);
   const handoff: JiraBaHandoff = {
     contract: "jira.ba.architect.handoff",
     version: "1.0.0",
     epicKey: opts.epicKey,
-    storyKeys,
+    storyKeys: canonical,
+    canonicalStoryKeys: canonical,
+    supersededStoryKeys: superseded,
     requirementIds: reqIds,
     baArtifacts: [join(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
     openQuestions: [],
@@ -226,7 +164,7 @@ export async function baAnalyzeEpic(opts: {
     constraints: [],
     acceptanceSummary: specs.map((s) => s.acceptanceCriteria).join("\n"),
     dependencies: [],
-    readyForArchitecture: storyKeys.length > 0,
+    readyForArchitecture: canonical.length > 0 || Boolean(opts.dryRun),
   };
   const handoffPath = join(
     opts.repo,
@@ -236,6 +174,10 @@ export async function baAnalyzeEpic(opts: {
   );
   mkdirSync(dirname(handoffPath), { recursive: true });
   writeFileSync(handoffPath, `${JSON.stringify(handoff, null, 2)}\n`);
+  writeFileSync(
+    join(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`),
+    `${result.planText}\n`,
+  );
   if (!opts.dryRun) {
     assertRole("ba", "ba-handoff");
     await opts.provider.setIssueProperty(
@@ -246,12 +188,32 @@ export async function baAnalyzeEpic(opts: {
     await opts.provider.addComment(
       opts.epicKey,
       opts.provider.renderDescription(
-        textDocument(`Praxis BA handoff ready. Stories: ${storyKeys.join(", ")}`),
+        textDocument(
+          `Praxis BA handoff ready. Canonical stories: ${canonical.join(", ") || "none"}`,
+        ),
       ),
     );
     await opts.provider.writePraxisState(opts.epicKey, { lifecycle: "architecture" });
+    for (const a of result.applied) {
+      if (!a.jiraIssueKey) continue;
+      record(opts.repo, {
+        operationId: `ba-story:${a.artifactId}`,
+        artifactId: a.artifactId,
+        jiraIssueKey: a.jiraIssueKey,
+        result: a.action === "CREATE" ? "ok" : "skipped",
+        provider: opts.provider.flavor,
+        kind: "create-story",
+        detail: a.action,
+      });
+    }
   }
-  return { handoff, storyKeys, created };
+  return {
+    handoff,
+    storyKeys: canonical,
+    created,
+    plan: result.plan,
+    planText: result.planText,
+  };
 }
 
 export async function architectPlanEpic(opts: {
@@ -279,11 +241,20 @@ export async function architectPlanEpic(opts: {
   if (!handoff?.readyForArchitecture) {
     throw new Error(`BA handoff not ready for ${opts.epicKey}`);
   }
+  const flags = await loadEpicIssueFlags(opts.provider, opts.epicKey);
+  const fromHandoff =
+    handoff.canonicalStoryKeys?.length
+      ? handoff.canonicalStoryKeys
+      : handoff.storyKeys;
+  const storyKeys = fromHandoff.filter((key) => {
+    const f = flags.find((x) => x.key === key);
+    return !f || !isSupersededFlags(f);
+  });
   const taskKeys: string[] = [];
   const packages: PraxisWorkPackage[] = [];
   const hoursCap = opts.provider.config.workPackageMaxHours;
 
-  for (const storyKey of handoff.storyKeys) {
+  for (const storyKey of storyKeys) {
     assertRole("architect", "create-architecture");
     const story = await opts.provider.getIssue(storyKey);
     const arch = {
@@ -390,12 +361,18 @@ export async function architectPlanEpic(opts: {
       await opts.provider.createIssueLink(created.key, storyKey, "Relates");
     }
     if (!wpKey) continue;
+    const storyKeys = await assertCanonicalMembers(opts.provider, [storyKey]);
+    if (storyKeys.length !== 1) {
+      throw new Error(
+        `work package member ${storyKey} is superseded; Architect scope is canonical-only`,
+      );
+    }
     const wp: PraxisWorkPackage = {
       id: wpArtifact,
       jiraIssueKey: wpKey,
       epicKey: opts.epicKey,
       title: `WP: ${story.summary}`,
-      storyKeys: [storyKey],
+      storyKeys,
       taskKeys: taskKey ? [taskKey] : [],
       dependencyWorkPackages: [],
       estimatedHours: Math.min(8, hoursCap),
@@ -446,10 +423,35 @@ export async function claimWorkPackage(opts: {
       opts.wpKey,
       "praxis.workPackageManifest",
     )) ?? null;
-  const member = [
+  const member = await assertCanonicalMembers(opts.provider, [
     ...(manifest?.storyKeys ?? []),
     ...(manifest?.taskKeys ?? []),
-  ];
+  ]);
+  if (member.length === 0) {
+    throw new Error(
+      `work package ${opts.wpKey} has no canonical members after Jira reread (superseded-only or empty)`,
+    );
+  }
+  if (manifest) {
+    const repaired: PraxisWorkPackage = {
+      ...manifest,
+      storyKeys: await assertCanonicalMembers(
+        opts.provider,
+        manifest.storyKeys,
+      ),
+      taskKeys: await assertCanonicalMembers(opts.provider, manifest.taskKeys),
+    };
+    if (
+      repaired.storyKeys.length !== manifest.storyKeys.length ||
+      repaired.taskKeys.length !== manifest.taskKeys.length
+    ) {
+      await opts.provider.setIssueProperty(
+        opts.wpKey,
+        "praxis.workPackageManifest",
+        repaired,
+      );
+    }
+  }
   const claim: WorkPackageClaim = {
     workPackageId: manifest?.id ?? opts.wpKey,
     jiraWorkPackageKey: opts.wpKey,
@@ -539,7 +541,10 @@ export async function developerCompleteWp(opts: {
     "praxis.workPackageManifest",
   );
   if (!manifest) throw new Error(`missing work package manifest on ${opts.wpKey}`);
-  const required = [...manifest.storyKeys, ...manifest.taskKeys];
+  const required = await assertCanonicalMembers(opts.provider, [
+    ...manifest.storyKeys,
+    ...manifest.taskKeys,
+  ]);
   if (required.length === 0) {
     throw new Error("work package has no member issues");
   }
@@ -658,6 +663,10 @@ export async function qaVerifyWorkPackage(opts: {
     opts.wpKey,
     "praxis.workPackageManifest",
   );
+  const canonicalStories = await assertCanonicalMembers(
+    opts.provider,
+    manifest?.storyKeys ?? [],
+  );
   const findings = opts.findings ?? [];
   const blocking = findings.filter((f) => f.blocking);
   for (const f of blocking) {
@@ -691,8 +700,8 @@ export async function qaVerifyWorkPackage(opts: {
       await opts.provider.setIssueProperty(created.key, "praxis.role", "qa");
       await opts.provider.setIssueProperty(created.key, "praxis.blocking", true);
       await opts.provider.createIssueLink(opts.wpKey, created.key, "Relates");
-      if (manifest?.storyKeys[0]) {
-        await opts.provider.createIssueLink(manifest.storyKeys[0], created.key, "Relates");
+      if (canonicalStories[0]) {
+        await opts.provider.createIssueLink(canonicalStories[0], created.key, "Relates");
       }
     }
   }
@@ -717,7 +726,7 @@ export async function qaVerifyWorkPackage(opts: {
     version: "1.0.0",
     workPackageId: manifest?.id ?? opts.wpKey,
     jiraWorkPackageKey: opts.wpKey,
-    memberIssueResults: (manifest?.storyKeys ?? []).map((k) => ({
+    memberIssueResults: canonicalStories.map((k) => ({
       jiraIssueKey: k,
       acceptanceCriteria: [],
       coveredBy: q.test ? [q.test] : [],
@@ -770,4 +779,45 @@ export async function simulateClaimRace(opts: {
     jiraAccountId: "other",
   });
   return "blocked";
+}
+
+export async function collectEpicStatus(
+  provider: JiraProvider,
+  epicKey: string,
+): Promise<{
+  epic: { key: string; summary: string };
+  canonicalStories: string[];
+  superseded: Array<{ from: string; to: string }>;
+  workPackages: Array<{ key: string; title: string }>;
+  claims: unknown[];
+  quality: unknown[];
+  bugs: string[];
+}> {
+  const epic = await provider.getIssue(epicKey);
+  const flags = await loadEpicIssueFlags(provider, epicKey);
+  const stories = canonicalStoryKeysFromFlags(flags);
+  const superseded = supersededPairs(flags);
+  const workPackages: Array<{ key: string; title: string }> = [];
+  const claims: unknown[] = [];
+  const quality: unknown[] = [];
+  for (const f of flags) {
+    const wp = await provider.getIssueProperty(f.key, "praxis.workPackage");
+    if (wp) {
+      workPackages.push({ key: f.key, title: f.summary });
+      const claim = await provider.getIssueProperty(f.key, "praxis.claim");
+      if (claim) claims.push(claim);
+      const q = await provider.getIssueProperty(f.key, "praxis.qualityReport");
+      if (q) quality.push(q);
+    }
+  }
+  const bugs = flags.filter((f) => f.issueType.toLowerCase() === "bug").map((f) => f.key);
+  return {
+    epic: { key: epic.key, summary: epic.summary },
+    canonicalStories: stories,
+    superseded,
+    workPackages,
+    claims,
+    quality,
+    bugs,
+  };
 }

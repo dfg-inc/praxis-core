@@ -27,6 +27,13 @@
   "dependencies": {
     "@praxis/contracts": "*"
   },
+  "files": [
+    "dist",
+    "tools",
+    "skills",
+    ".claude-plugin",
+    "README.md"
+  ],
   "devDependencies": {
     "@types/node": "^22.20.0",
     "typescript": "~5.8.3",

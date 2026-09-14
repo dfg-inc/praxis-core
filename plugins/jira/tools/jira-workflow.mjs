@@ -1,13 +1,22 @@
 #!/usr/bin/env node
 import { loadJiraConfig } from "../dist/config.js";
 import { createJiraProvider } from "../dist/rest-provider.js";
-import { baAnalyzeEpic, architectPlanEpic } from "../dist/workflows.js";
+import {
+  architectPlanEpic,
+  baAnalyzeEpic,
+  collectEpicStatus,
+} from "../dist/workflows.js";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 function flag(name) {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
+}
+
+if (!cmd) {
+  console.error("usage: jira-workflow.mjs smoke|epic|preview|status");
+  process.exit(2);
 }
 
 const provider = createJiraProvider({ config: loadJiraConfig() });
@@ -36,22 +45,40 @@ if (cmd === "preview") {
     repo,
     dryRun: true,
   }).catch((e) => ({ error: String(e) }));
+  console.log(ba.planText);
   console.log(JSON.stringify({ dryRun: true, ba, arch }, null, 2));
   process.exit(0);
 }
 
 if (cmd === "status") {
   const epic = flag("--epic");
-  const issue = await provider.getIssue(epic);
-  const children = await provider.getChildren(epic);
-  const claim = await provider.getIssueProperty(epic, "praxis.claim");
+  const status = await collectEpicStatus(provider, epic);
   console.log(
-    JSON.stringify(
-      { epic: issue, children, claim, state: await provider.readPraxisState(epic) },
-      null,
-      2,
-    ),
+    [
+      `Epic:`,
+      `  ${status.epic.key}  ${status.epic.summary}`,
+      ``,
+      `Canonical Stories:`,
+      ...(status.canonicalStories.length
+        ? status.canonicalStories.map((k) => `  ${k}`)
+        : ["  none"]),
+      ``,
+      `Superseded:`,
+      ...(status.superseded.length
+        ? status.superseded.map((s) => `  ${s.from} -> ${s.to}`)
+        : ["  none"]),
+      ``,
+      `Work Packages:`,
+      ...(status.workPackages.length
+        ? status.workPackages.map((w) => `  ${w.key}  ${w.title}`)
+        : ["  none"]),
+      ``,
+      `Claims: ${status.claims.length}`,
+      `Quality: ${status.quality.length}`,
+      `Bugs: ${status.bugs.join(", ") || "none"}`,
+    ].join("\n"),
   );
+  console.log(JSON.stringify(status, null, 2));
   process.exit(0);
 }
 

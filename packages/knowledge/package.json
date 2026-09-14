@@ -23,6 +23,7 @@
     "gray-matter": "^4.0.3",
     "zod": "^3.25.76"
   },
+  "files": ["dist", "bin"],
   "devDependencies": {
     "@types/node": "^22.20.0",
     "typescript": "~5.8.3",

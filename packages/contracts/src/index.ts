@@ -376,7 +376,9 @@ export {
   WorkPackageClaimSchema,
   PraxisWorkPackageSchema,
   JiraBaHandoffSchema,
+  JiraWriteJournalEntrySchema,
   JiraOperationJournalEntrySchema,
+  BaJiraWritePlanItemSchema,
   QualityWpReportSchema,
 } from "./jira-orchestration.js";
 export type {
@@ -390,6 +392,10 @@ export type {
   WorkPackageClaim,
   PraxisWorkPackage,
   JiraBaHandoff,
+  JiraWriteJournalEntry,
+  JiraWriteOpState,
   JiraOperationJournalEntry,
+  BaJiraWriteAction,
+  BaJiraWritePlanItem,
   QualityWpReport,
 } from "./jira-orchestration.js";
