@@ -396,3 +396,12 @@ export class JiraClient {
     );
   }
 }
+
+export {
+  createJiraProvider,
+  RestJiraProvider,
+  createMockFetch,
+  createMockJiraState,
+} from "./rest-provider.js";
+export { detectJiraMode } from "./config.js";
+export type { JiraProvider } from "./provider.js";

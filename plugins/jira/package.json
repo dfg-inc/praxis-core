@@ -3,7 +3,7 @@
   "version": "0.1.0-alpha.21",
   "private": true,
   "type": "module",
-  "description": "Praxis Jira Server client with human-gated mutations (company infra)",
+  "description": "Praxis Jira Cloud and Data Center orchestration (company infra)",
   "license": "UNLICENSED",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,13 +11,21 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./workflow": {
+      "types": "./dist/workflows.d.ts",
+      "default": "./dist/workflows.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "live-smoke": "node ./tools/live-smoke.mjs"
+    "live-smoke": "node ./tools/live-smoke.mjs",
+    "jira-workflow": "node ./tools/jira-workflow.mjs"
+  },
+  "dependencies": {
+    "@praxis/contracts": "*"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",

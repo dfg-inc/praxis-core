@@ -366,3 +366,30 @@ export type {
   CreateMergeRequestRequest,
   CiProviderPreview,
 } from "./git-host.js";
+
+export {
+  PraxisRoleSchema,
+  PraxisRichTextDocumentSchema,
+  EpicLifecycleSchema,
+  TicketLifecycleSchema,
+  WorkPackageLifecycleSchema,
+  WorkPackageClaimSchema,
+  PraxisWorkPackageSchema,
+  JiraBaHandoffSchema,
+  JiraOperationJournalEntrySchema,
+  QualityWpReportSchema,
+} from "./jira-orchestration.js";
+export type {
+  PraxisRole,
+  RichTextInline,
+  RichTextBlock,
+  PraxisRichTextDocument,
+  EpicLifecycle,
+  TicketLifecycle,
+  WorkPackageLifecycle,
+  WorkPackageClaim,
+  PraxisWorkPackage,
+  JiraBaHandoff,
+  JiraOperationJournalEntry,
+  QualityWpReport,
+} from "./jira-orchestration.js";

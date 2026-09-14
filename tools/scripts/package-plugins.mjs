@@ -26,7 +26,7 @@ import * as esbuild from "esbuild";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-export const PLUGIN_IDS = ["ba", "architect", "developer", "jira"];
+export const PLUGIN_IDS = ["ba", "architect", "developer", "jira", "quality"];
 
 /** Paths that must exist inside each staged artifact (relative). */
 export const REQUIRED_PATHS = {
@@ -87,6 +87,15 @@ export const REQUIRED_PATHS = {
     "README.md",
     "dist/index.js",
     "dist/index.d.ts",
+    "skills",
+  ],
+  quality: [
+    ".claude-plugin/plugin.json",
+    "package.json",
+    "README.md",
+    "tools/session-bootstrap.cjs",
+    "tools/qa-verify.cjs",
+    "hooks/session-start.md",
     "skills",
   ],
 };
@@ -332,6 +341,36 @@ export function stagePlugin(id, outPluginsDir) {
     return dest;
   }
 
+  if (id === "quality") {
+    assertBuilt("plugins/jira/dist/index.js");
+    const pkg = stripWorkspaceDeps(readJson(join(src, "package.json")));
+    pkg.files = [".claude-plugin", "hooks", "skills", "tools", "README.md"];
+    pkg.scripts = {
+      "session-bootstrap": "node ./tools/session-bootstrap.cjs",
+      "qa-verify": "node ./tools/qa-verify.cjs",
+    };
+    writeJson(join(dest, "package.json"), pkg);
+    for (const f of [
+      "README.md",
+      ".claude-plugin/plugin.json",
+      ".claude-plugin/marketplace.json",
+    ]) {
+      copyIfExists(join(src, f), join(dest, f));
+    }
+    for (const dir of ["hooks", "skills"]) {
+      copyIfExists(join(src, dir), join(dest, dir));
+    }
+    ensureDir(join(dest, "tools"));
+    bundleSessionBootstrap(src, join(dest, "tools"));
+    bundleNodeEntry({
+      entry: join(src, "tools/qa-verify.mjs"),
+      outfile: join(dest, "tools/qa-verify.cjs"),
+      format: "cjs",
+    });
+    rewriteBootstrapDocs(dest);
+    return dest;
+  }
+
   if (id === "architect" || id === "developer") {
     const pkg = stripWorkspaceDeps(readJson(join(src, "package.json")));
     const files =
@@ -461,7 +500,7 @@ export function collectPackagePathRefs(pkg) {
 export function buildAllPluginArtifacts(outRoot = join(root, "dist/release-mirror")) {
   // Ensure runtime builds exist
   const build = run(
-    "npm run build -w @praxis/knowledge -w @praxis/project-config -w @praxis/plugin-sdk -w @praxis/ba-canon-graph -w @praxis/jira",
+  "npm run build -w @praxis/knowledge -w @praxis/project-config -w @praxis/plugin-sdk -w @praxis/ba-canon-graph -w @praxis/jira",
   );
   if (!build.ok) {
     throw new Error(`prerequisite build failed:\n${build.stderr || build.stdout}`);

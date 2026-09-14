@@ -1,9 +1,24 @@
+export type JiraMode = "cloud" | "datacenter" | "auto";
+
+export type JiraAuthMode = "pat" | "cloud-basic" | "oauth-placeholder";
+
 export type JiraConfig = {
+  mode: "cloud" | "datacenter";
   baseUrl: string;
   token: string;
   projectKey: string;
-  /** Optional custom field id for architect estimate (Server). */
+  email?: string;
+  cloudId?: string;
+  authMode: JiraAuthMode;
   architectEstimateFieldId?: string;
+  epicType: string;
+  storyType: string;
+  taskType: string;
+  bugType: string;
+  workPackageType: string;
+  storyPointsField?: string;
+  transitions: Record<string, string>;
+  workPackageMaxHours: number;
 };
 
 /** Jira Server 8.14+ supports personal access tokens. */
@@ -49,6 +64,54 @@ export function patSupportedForVersion(version: string): {
   return { supported: true, version };
 }
 
+function readTransitions(env: NodeJS.ProcessEnv): Record<string, string> {
+  const keys = [
+    "IN_PROGRESS",
+    "READY_FOR_ARCH",
+    "READY_FOR_DEV",
+    "READY_FOR_QA",
+    "DONE",
+    "BLOCKED",
+  ] as const;
+  const out: Record<string, string> = {};
+  for (const k of keys) {
+    const v = env[`PRAXIS_JIRA_TRANSITION_${k}`];
+    if (v) out[k.toLowerCase().replace(/_/g, "-")] = v;
+  }
+  return out;
+}
+
+export function detectJiraMode(
+  env: NodeJS.ProcessEnv,
+  baseUrl: string,
+): "cloud" | "datacenter" {
+  const raw = (env.PRAXIS_JIRA_MODE ?? "").trim().toLowerCase();
+  const host = (() => {
+    try {
+      return new URL(baseUrl).hostname;
+    } catch {
+      return "";
+    }
+  })();
+  const looksCloud = host.endsWith(".atlassian.net");
+
+  if (raw === "cloud") return "cloud";
+  if (raw === "datacenter" || raw === "server") return "datacenter";
+  if (raw === "auto") {
+    if (looksCloud) return "cloud";
+    if (host) return "datacenter";
+    throw new Error(
+      "PRAXIS_JIRA_MODE=auto could not detect Cloud vs Data Center. Set PRAXIS_JIRA_MODE=cloud or datacenter explicitly.",
+    );
+  }
+  if (raw && raw !== "") {
+    throw new Error(
+      `Unknown PRAXIS_JIRA_MODE=${raw}. Use cloud, datacenter, or auto.`,
+    );
+  }
+  return looksCloud ? "cloud" : "datacenter";
+}
+
 export function loadJiraConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): JiraConfig {
@@ -72,10 +135,37 @@ export function loadJiraConfig(
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`PRAXIS_JIRA_BASE_URL must be http(s): ${baseUrl}`);
   }
+
+  const mode = detectJiraMode(env, baseUrl);
+  const email = env.PRAXIS_JIRA_EMAIL ?? "";
+  if (mode === "cloud" && !email) {
+    throw new Error(
+      "PRAXIS_JIRA_EMAIL is required for Cloud (email + API token). OAuth 2.0/3LO is reserved (PRAXIS_JIRA_AUTH=oauth is not implemented).",
+    );
+  }
+  if (env.PRAXIS_JIRA_AUTH === "oauth") {
+    throw new Error(
+      "PRAXIS_JIRA_AUTH=oauth is a reserved provider hook (OAuth 2.0/3LO) and is not implemented yet.",
+    );
+  }
+
+  const maxHours = Number(env.PRAXIS_WORK_PACKAGE_MAX_HOURS ?? "16");
   return {
+    mode,
     baseUrl,
     token,
     projectKey,
+    email: email || undefined,
+    cloudId: env.PRAXIS_JIRA_CLOUD_ID,
+    authMode: mode === "cloud" ? "cloud-basic" : "pat",
     architectEstimateFieldId: env.PRAXIS_JIRA_ARCHITECT_ESTIMATE_FIELD,
+    epicType: env.PRAXIS_JIRA_EPIC_TYPE ?? "Epic",
+    storyType: env.PRAXIS_JIRA_STORY_TYPE ?? "Story",
+    taskType: env.PRAXIS_JIRA_TASK_TYPE ?? "Task",
+    bugType: env.PRAXIS_JIRA_BUG_TYPE ?? "Bug",
+    workPackageType: env.PRAXIS_JIRA_WORK_PACKAGE_TYPE ?? "",
+    storyPointsField: env.PRAXIS_JIRA_STORY_POINTS_FIELD,
+    transitions: readTransitions(env),
+    workPackageMaxHours: Number.isFinite(maxHours) ? maxHours : 16,
   };
 }

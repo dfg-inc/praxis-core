@@ -105,7 +105,7 @@ const EVIDENCE = {
   "1": "npm test -w @praxis/ba; accept:ba-diagnostics; accept:ba-outcomes",
   "1.21": "npm run accept:standalone-repositories",
   "2": "npm run accept:knowledge-external",
-  "3": "npm run accept:jira-readiness (no live write)",
+  "3": "npm run accept:jira-workflow (deterministic; live Jira pending)",
   "4": "npm run accept:architecture-governance; npm test -w @praxis/architect",
   "5": "npm run accept:developer-governance",
   "5.3": "developer-governance notes tests + web provider pending",
@@ -134,7 +134,7 @@ const BLOCKERS = {
   },
   "3": {
     reason: "live Jira Server credentials / sandbox project not provided",
-    requiredAction: "Set PRAXIS_JIRA_* and run plugins/jira/tools/live-smoke.mjs (read-only first)",
+    requiredAction: "Set PRAXIS_JIRA_* in .env.praxis.local, then make jira-smoke and make jira-workflow-preview EPIC=<key>",
   },
   "5.3": {
     reason: "live web search provider not configured",

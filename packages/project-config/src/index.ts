@@ -30,6 +30,17 @@ export const ProjectConfigSchema = z.object({
       projectKey: z.string().optional(),
     })
     .default({}),
+  quality: z
+    .object({
+      install: z.string().optional(),
+      build: z.string().optional(),
+      test: z.string().optional(),
+      coverage: z.string().optional(),
+      start: z.string().optional(),
+      healthUrl: z.string().optional(),
+      startupTimeoutMs: z.number().int().positive().optional(),
+    })
+    .default({}),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
