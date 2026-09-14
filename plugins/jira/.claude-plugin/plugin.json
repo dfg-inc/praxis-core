@@ -1,6 +1,6 @@
 {
   "name": "praxis-jira",
-  "version": "0.1.0-alpha.21",
+  "version": "0.1.0-alpha.22",
   "description": "Praxis Jira Server integration (company infra, closed).",
   "author": {
     "name": "dfuture-co"

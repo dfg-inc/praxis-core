@@ -1,6 +1,6 @@
 {
   "name": "@praxis/catalog",
-  "version": "0.1.0-alpha.21",
+  "version": "0.1.0-alpha.22",
   "private": true,
   "type": "module",
   "description": "Praxis plugin lineup catalog",

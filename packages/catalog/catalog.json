@@ -1,25 +1,25 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-11",
+  "updated": "2026-09-14",
   "channel": "local-mirror",
   "channelNote": "Public URL assigned after EXTERNAL domain/TLS + mirror sync",
   "plugins": [
     {
       "name": "praxis-ba",
       "package": "@praxis/ba",
-      "version": "0.1.0-alpha.21",
+      "version": "0.1.0-alpha.22",
       "license": "Apache-2.0"
     },
     {
       "name": "praxis-architect",
       "package": "@praxis/architect",
-      "version": "0.1.0-alpha.21",
+      "version": "0.1.0-alpha.22",
       "license": "Apache-2.0"
     },
     {
       "name": "praxis-developer",
       "package": "@praxis/developer",
-      "version": "0.1.0-alpha.21",
+      "version": "0.1.0-alpha.22",
       "license": "Apache-2.0"
     }
   ],
