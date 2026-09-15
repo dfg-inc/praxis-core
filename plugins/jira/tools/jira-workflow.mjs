@@ -14,8 +14,25 @@ function flag(name) {
   return i >= 0 ? argv[i + 1] : undefined;
 }
 
+function formatIssue(issue) {
+  const p = issue.properties ?? {};
+  return [
+    `  ${issue.key}`,
+    `    summary: ${issue.summary}`,
+    `    status: ${issue.status}`,
+    `    issueType: ${issue.issueType}`,
+    `    parent: ${issue.parentKey ?? ""}`,
+    `    managed: ${p["praxis.managed"] ?? ""}`,
+    `    artifactId: ${p["praxis.artifactId"] ?? ""}`,
+    `    superseded: ${Boolean(p["praxis.superseded"] || p["praxis.supersededBy"])}`,
+    `    supersededBy: ${p["praxis.supersededBy"] ?? ""}`,
+  ].join("\n");
+}
+
 if (!cmd) {
-  console.error("usage: jira-workflow.mjs smoke|epic|preview|status");
+  console.error(
+    "usage: jira-workflow.mjs smoke|epic|status|ba-preview|ba-apply|architect-preview",
+  );
   process.exit(2);
 }
 
@@ -31,23 +48,78 @@ if (cmd === "epic") {
   const epic = flag("--epic");
   const issue = await provider.getIssue(epic);
   const children = await provider.getChildren(epic);
-  console.log(JSON.stringify({ epic: issue, children }, null, 2));
+  const verbose = argv.includes("--verbose") || process.env.VERBOSE === "1";
+  console.log(`Epic:\n  key: ${issue.key}\n  summary: ${issue.summary}\n  status: ${issue.status}\n  issueType: ${issue.issueType}\n`);
+  console.log("Children:\n");
+  for (const c of children) console.log(formatIssue(c) + "\n");
+  if (verbose) console.log(JSON.stringify({ epic: issue, children }, null, 2));
   process.exit(0);
 }
 
-if (cmd === "preview") {
+if (cmd === "ba-preview") {
   const epic = flag("--epic");
   const repo = flag("--repo") ?? ".";
-  const ba = await baAnalyzeEpic({ provider, epicKey: epic, repo, dryRun: true });
-  const arch = await architectPlanEpic({
+  const ba = await baAnalyzeEpic({
     provider,
     epicKey: epic,
     repo,
     dryRun: true,
-  }).catch((e) => ({ error: String(e) }));
+  });
   console.log(ba.planText);
-  console.log(JSON.stringify({ dryRun: true, ba, arch }, null, 2));
-  process.exit(0);
+  console.log(
+    JSON.stringify(
+      {
+        ok: ba.ok,
+        reason: ba.reason,
+        dryRun: true,
+        proposalReady: ba.proposalReady,
+        readyForArchitecture: ba.handoff.readyForArchitecture,
+        canonicalStoryKeys: ba.handoff.canonicalStoryKeys,
+        supersededStoryKeys: ba.handoff.supersededStoryKeys,
+        plan: ba.plan,
+      },
+      null,
+      2,
+    ),
+  );
+  process.exit(ba.ok || ba.reason === "BA_PROPOSAL_MISSING" ? 0 : 1);
+}
+
+if (cmd === "ba-apply") {
+  if (flag("--confirm") !== "YES") {
+    console.error("ba-apply requires --confirm YES");
+    process.exit(1);
+  }
+  const epic = flag("--epic");
+  const repo = flag("--repo") ?? ".";
+  const ba = await baAnalyzeEpic({
+    provider,
+    epicKey: epic,
+    repo,
+    dryRun: false,
+  });
+  console.log(ba.planText);
+  console.log(JSON.stringify({ ok: ba.ok, created: ba.created, storyKeys: ba.storyKeys }, null, 2));
+  process.exit(ba.ok ? 0 : 1);
+}
+
+if (cmd === "architect-preview") {
+  const epic = flag("--epic");
+  const repo = flag("--repo") ?? ".";
+  try {
+    const arch = await architectPlanEpic({
+      provider,
+      epicKey: epic,
+      repo,
+      dryRun: true,
+    });
+    console.log(JSON.stringify({ ok: true, dryRun: true, arch }, null, 2));
+    process.exit(0);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(JSON.stringify({ ok: false, skipped: true, reason: msg }, null, 2));
+    process.exit(0);
+  }
 }
 
 if (cmd === "status") {
@@ -56,7 +128,7 @@ if (cmd === "status") {
   console.log(
     [
       `Epic:`,
-      `  ${status.epic.key}  ${status.epic.summary}`,
+      `  ${status.epic.key}`,
       ``,
       `Canonical Stories:`,
       ...(status.canonicalStories.length
@@ -73,7 +145,7 @@ if (cmd === "status") {
         ? status.workPackages.map((w) => `  ${w.key}  ${w.title}`)
         : ["  none"]),
       ``,
-      `Claims: ${status.claims.length}`,
+      `Developer claims: ${status.claims.length}`,
       `Quality: ${status.quality.length}`,
       `Bugs: ${status.bugs.join(", ") || "none"}`,
     ].join("\n"),
@@ -82,5 +154,5 @@ if (cmd === "status") {
   process.exit(0);
 }
 
-console.error("usage: jira-workflow.mjs smoke|epic|preview|status");
+console.error("usage: jira-workflow.mjs smoke|epic|status|ba-preview|ba-apply|architect-preview");
 process.exit(2);

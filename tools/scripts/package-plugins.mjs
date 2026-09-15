@@ -44,6 +44,7 @@ export const REQUIRED_PATHS = {
     "skills",
     "templates",
     "rules",
+    "prompts/jira-role.md",
   ],
   architect: [
     ".claude-plugin/plugin.json",
@@ -60,6 +61,7 @@ export const REQUIRED_PATHS = {
     "agents",
     "skills",
     "templates",
+    "prompts/jira-role.md",
   ],
   developer: [
     ".claude-plugin/plugin.json",
@@ -80,6 +82,7 @@ export const REQUIRED_PATHS = {
     "hooks/session-start.md",
     "agents",
     "skills",
+    "prompts/jira-role.md",
   ],
   jira: [
     ".claude-plugin/plugin.json",
@@ -97,6 +100,7 @@ export const REQUIRED_PATHS = {
     "tools/qa-verify.cjs",
     "hooks/session-start.md",
     "skills",
+    "prompts/jira-role.md",
   ],
 };
 
@@ -299,6 +303,7 @@ export function stagePlugin(id, outPluginsDir) {
       "rules",
       "skills",
       "templates",
+      "prompts",
       "tools",
       "LICENSE",
       "README.md",
@@ -317,7 +322,7 @@ export function stagePlugin(id, outPluginsDir) {
     ]) {
       copyIfExists(join(src, f), join(dest, f));
     }
-    for (const dir of ["skills", "templates", "hooks", "rules"]) {
+    for (const dir of ["skills", "templates", "hooks", "rules", "prompts"]) {
       copyIfExists(join(src, dir), join(dest, dir));
     }
     ensureDir(join(dest, "tools"));
@@ -344,7 +349,7 @@ export function stagePlugin(id, outPluginsDir) {
   if (id === "quality") {
     assertBuilt("plugins/jira/dist/index.js");
     const pkg = stripWorkspaceDeps(readJson(join(src, "package.json")));
-    pkg.files = [".claude-plugin", "hooks", "skills", "tools", "README.md"];
+    pkg.files = [".claude-plugin", "hooks", "skills", "prompts", "tools", "README.md"];
     pkg.scripts = {
       "session-bootstrap": "node ./tools/session-bootstrap.cjs",
       "qa-verify": "node ./tools/qa-verify.cjs",
@@ -357,7 +362,7 @@ export function stagePlugin(id, outPluginsDir) {
     ]) {
       copyIfExists(join(src, f), join(dest, f));
     }
-    for (const dir of ["hooks", "skills"]) {
+    for (const dir of ["hooks", "skills", "prompts"]) {
       copyIfExists(join(src, dir), join(dest, dir));
     }
     ensureDir(join(dest, "tools"));
@@ -381,6 +386,7 @@ export function stagePlugin(id, outPluginsDir) {
             "hooks",
             "skills",
             "templates",
+            "prompts",
             "tools",
             "LICENSE",
             "README.md",
@@ -390,6 +396,7 @@ export function stagePlugin(id, outPluginsDir) {
             "agents",
             "hooks",
             "skills",
+            "prompts",
             "tools",
             "LICENSE",
             "README.md",
@@ -422,8 +429,8 @@ export function stagePlugin(id, outPluginsDir) {
       copyIfExists(join(src, f), join(dest, f));
     }
     for (const dir of id === "architect"
-      ? ["agents", "hooks", "skills", "templates"]
-      : ["agents", "hooks", "skills"]) {
+      ? ["agents", "hooks", "skills", "templates", "prompts"]
+      : ["agents", "hooks", "skills", "prompts"]) {
       copyIfExists(join(src, dir), join(dest, dir));
     }
     ensureDir(join(dest, "tools"));

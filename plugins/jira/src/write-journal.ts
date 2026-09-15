@@ -1,24 +1,28 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { JiraWriteJournalEntry, JiraWriteOpState } from "@praxis/contracts";
+import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
 
 export function writeJournalPath(repo: string): string {
   return join(repo, ".praxis-jira", "write-journal.json");
 }
 
 export function loadWriteJournal(repo: string): JiraWriteJournalEntry[] {
-  const p = writeJournalPath(repo);
-  if (!existsSync(p)) return [];
-  return JSON.parse(readFileSync(p, "utf8")) as JiraWriteJournalEntry[];
+  const parsed = readJsonFile<JiraWriteJournalEntry[]>(
+    writeJournalPath(repo),
+    "jira-write-journal",
+  );
+  if (!parsed.ok) {
+    if (parsed.reason === "missing") return [];
+    throw new Error(parsed.message);
+  }
+  return parsed.value;
 }
 
 export function saveWriteJournal(
   repo: string,
   journal: JiraWriteJournalEntry[],
 ): void {
-  const p = writeJournalPath(repo);
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, `${JSON.stringify(journal, null, 2)}\n`);
+  writeJsonAtomic(writeJournalPath(repo), journal);
 }
 
 export function upsertWriteOp(

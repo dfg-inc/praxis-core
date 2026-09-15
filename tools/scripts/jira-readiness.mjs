@@ -36,9 +36,10 @@ console.log(
         "3.3.2 8h story ceiling",
         "3.9 read-only status client",
       ],
-      pending: liveEnv
-        ? []
-        : ["3.x live Jira Server credentials + sandbox project"],
+      pending: [
+        "live Jira Cloud full E2E",
+        "live Jira Data Center acceptance",
+      ],
       liveEnvPresent: liveEnv,
       mutations: "not attempted",
     },

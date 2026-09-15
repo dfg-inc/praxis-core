@@ -18,6 +18,7 @@ export type JiraIssueLite = {
   parentKey?: string;
   assignee?: JiraUser;
   fields: Record<string, unknown>;
+  properties: Record<string, unknown>;
 };
 
 export type JiraComment = { id: string; body: unknown; author: string };
@@ -50,6 +51,21 @@ export type CreateIssueInput = {
   labels?: string[];
   fields?: Record<string, unknown>;
 };
+
+export const PRAXIS_ISSUE_PROPERTIES = [
+  "praxis.managed",
+  "praxis.artifactId",
+  "praxis.role",
+  "praxis.sourceEpic",
+  "praxis.superseded",
+  "praxis.supersededBy",
+  "praxis.state",
+  "praxis.workPackage",
+  "praxis.claim",
+  "praxis.requirementIds",
+  "praxis.contentFingerprint",
+  "praxis.baHandoff",
+] as const;
 
 export interface JiraProvider {
   readonly flavor: "cloud" | "datacenter";
@@ -102,6 +118,7 @@ export interface JiraProvider {
   setFixVersion(key: string, versionName: string): Promise<void>;
   setIssueProperty(key: string, propertyKey: string, value: unknown): Promise<void>;
   getIssueProperty<T = unknown>(key: string, propertyKey: string): Promise<T | undefined>;
+  listIssueProperties(key: string): Promise<string[]>;
   writePraxisState(key: string, state: unknown): Promise<void>;
   readPraxisState<T = unknown>(key: string): Promise<T | undefined>;
   writeArchitectureMetadata(key: string, value: unknown): Promise<void>;

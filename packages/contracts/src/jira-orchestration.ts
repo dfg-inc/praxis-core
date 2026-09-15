@@ -132,7 +132,6 @@ export type PraxisWorkPackage = z.infer<typeof PraxisWorkPackageSchema>;
 export const JiraBaHandoffSchema = ContractMeta.extend({
   contract: z.literal("jira.ba.architect.handoff"),
   epicKey: z.string().min(1),
-  /** Canonical active stories only (legacy field; same as canonicalStoryKeys). */
   storyKeys: z.array(z.string()),
   canonicalStoryKeys: z.array(z.string()),
   supersededStoryKeys: z.array(z.string()),
@@ -144,9 +143,53 @@ export const JiraBaHandoffSchema = ContractMeta.extend({
   constraints: z.array(z.string()),
   acceptanceSummary: z.string(),
   dependencies: z.array(z.string()),
+  proposalReady: z.boolean(),
   readyForArchitecture: z.boolean(),
+}).superRefine((h, ctx) => {
+  if (h.readyForArchitecture && h.canonicalStoryKeys.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "readyForArchitecture=true requires canonicalStoryKeys.length > 0",
+    });
+  }
 });
 export type JiraBaHandoff = z.infer<typeof JiraBaHandoffSchema>;
+
+export const JiraBaProposalStorySchema = z.object({
+  logicalId: z.string().min(1),
+  artifactId: z.string().min(1),
+  summary: z.string().min(1),
+  userStory: z.object({
+    asA: z.string().min(1),
+    iWant: z.string().min(1),
+    soThat: z.string().min(1),
+  }),
+  businessContext: z.string().min(1),
+  acceptanceCriteria: z
+    .array(
+      z.object({
+        given: z.string().min(1),
+        when: z.string().min(1),
+        then: z.string().min(1),
+      }),
+    )
+    .min(1),
+  outOfScope: z.array(z.string()),
+  dependencies: z.array(z.string()),
+  requirementIds: z.array(z.string()).min(1),
+});
+export type JiraBaProposalStory = z.infer<typeof JiraBaProposalStorySchema>;
+
+export const JiraBaProposalSchema = ContractMeta.extend({
+  contract: z.literal("jira.ba.proposal"),
+  epicKey: z.string().min(1),
+  stories: z.array(JiraBaProposalStorySchema),
+  nfrs: z.array(z.string()),
+  businessRules: z.array(z.string()),
+  openQuestions: z.array(z.string()),
+});
+export type JiraBaProposal = z.infer<typeof JiraBaProposalSchema>;
 
 export const JiraWriteOpStateSchema = z.enum([
   "planned",

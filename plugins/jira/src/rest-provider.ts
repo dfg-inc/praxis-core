@@ -10,6 +10,7 @@ import type {
   MetadataContext,
   Transition,
 } from "./provider.js";
+import { PRAXIS_ISSUE_PROPERTIES } from "./provider.js";
 import type { PraxisRichTextDocument } from "@praxis/contracts";
 import { renderRichText } from "./rich-text.js";
 
@@ -37,6 +38,13 @@ export function createMockJiraState(): MockJiraState {
     versions: [],
     claimLocks: new Map(),
   };
+}
+
+function findStored(state: MockJiraState, idOrKey: string): StoredIssue | undefined {
+  return (
+    state.issues.get(idOrKey) ??
+    [...state.issues.values()].find((i) => i.id === idOrKey)
+  );
 }
 
 function issueFields(issue: StoredIssue) {
@@ -148,7 +156,7 @@ export function createMockFetch(
       const keyNew = `${opts.projectKey}-${state.nextId++}`;
       const fields = body.fields ?? {};
       const stored: StoredIssue = {
-        id: String(state.nextId),
+        id: String(10000 + Number(keyNew.split("-").pop())),
         key: keyNew,
         summary: fields.summary,
         description: fields.description,
@@ -169,7 +177,7 @@ export function createMockFetch(
     if (issueMatch && !path.includes("/issueLink")) {
       const key = decodeURIComponent(issueMatch[1] ?? "");
       const rest = issueMatch[2] ?? "";
-      const issue = state.issues.get(key);
+      const issue = findStored(state, key);
       if (method === "GET" && rest.startsWith("/comment")) {
         if (!issue) return notFound();
         return json({ comments: issue.comments });
@@ -217,6 +225,12 @@ export function createMockFetch(
           displayName: String(body.accountId ?? body.name ?? "acct"),
         };
         return new Response(null, { status: 204 });
+      }
+      if (method === "GET" && (rest === "/properties" || rest === "/properties/")) {
+        if (!issue) return notFound();
+        return json({
+          keys: Object.keys(issue.properties).map((k) => ({ key: k })),
+        });
       }
       const propMatch = rest.match(/^\/properties\/(.+)$/);
       if (propMatch) {
@@ -504,9 +518,9 @@ export class RestJiraProvider implements JiraProvider {
   }
 
   private mapIssue(raw: {
-    id: string;
-    key: string;
-    fields: Record<string, unknown>;
+    id?: string;
+    key?: string;
+    fields?: Record<string, unknown>;
   }): JiraIssueLite {
     const fields = raw.fields ?? {};
     const status = fields.status as { name?: string } | undefined;
@@ -514,8 +528,8 @@ export class RestJiraProvider implements JiraProvider {
     const parent = fields.parent as { key?: string } | undefined;
     const assignee = fields.assignee as JiraUser | undefined;
     return {
-      id: raw.id,
-      key: raw.key,
+      id: String(raw.id ?? ""),
+      key: String(raw.key ?? ""),
       summary: String(fields.summary ?? ""),
       description: fields.description,
       status: status?.name ?? "To Do",
@@ -524,7 +538,67 @@ export class RestJiraProvider implements JiraProvider {
       parentKey: parent?.key,
       assignee,
       fields,
+      properties: {},
     };
+  }
+
+  private assertIssueKey(issue: JiraIssueLite): void {
+    if (!issue.key) {
+      throw new Error(
+        `Jira issue missing key (id=${issue.id || "unknown"}); search/children result was not hydrated`,
+      );
+    }
+  }
+
+  async listIssueProperties(key: string): Promise<string[]> {
+    try {
+      const raw = await this.requestJson<{ keys?: { key: string }[] }>(
+        "GET",
+        `${this.apiPrefix()}/issue/${encodeURIComponent(key)}/properties`,
+      );
+      return (raw.keys ?? []).map((k) => k.key);
+    } catch {
+      return [...PRAXIS_ISSUE_PROPERTIES];
+    }
+  }
+
+  private async loadPraxisProperties(
+    key: string,
+  ): Promise<Record<string, unknown>> {
+    const names = await this.listIssueProperties(key);
+    const wanted = new Set<string>([
+      ...PRAXIS_ISSUE_PROPERTIES,
+      ...names.filter((n) => n.startsWith("praxis.")),
+    ]);
+    const properties: Record<string, unknown> = {};
+    for (const name of wanted) {
+      const value = await this.getIssueProperty(key, name);
+      if (value !== undefined) properties[name] = value;
+    }
+    return properties;
+  }
+
+  private async hydrateIssue(raw: {
+    id?: string;
+    key?: string;
+    fields?: Record<string, unknown>;
+  }): Promise<JiraIssueLite> {
+    let issue = this.mapIssue(raw);
+    if (!issue.key || !issue.summary) {
+      const idOrKey = issue.key || issue.id;
+      if (!idOrKey) {
+        throw new Error("Jira search hit has neither key nor id");
+      }
+      const full = await this.requestJson<{
+        id: string;
+        key: string;
+        fields: Record<string, unknown>;
+      }>("GET", `${this.apiPrefix()}/issue/${encodeURIComponent(idOrKey)}`);
+      issue = this.mapIssue(full);
+    }
+    this.assertIssueKey(issue);
+    issue.properties = await this.loadPraxisProperties(issue.key);
+    return issue;
   }
 
   async getIssue(key: string): Promise<JiraIssueLite> {
@@ -533,30 +607,45 @@ export class RestJiraProvider implements JiraProvider {
       key: string;
       fields: Record<string, unknown>;
     }>("GET", `${this.apiPrefix()}/issue/${encodeURIComponent(key)}`);
-    return this.mapIssue(raw);
+    const issue = this.mapIssue(raw);
+    this.assertIssueKey(issue);
+    issue.properties = await this.loadPraxisProperties(issue.key);
+    return issue;
   }
 
   async searchIssues(jql: string): Promise<JiraIssueLite[]> {
-    const path =
-      this.flavor === "cloud"
-        ? `${this.apiPrefix()}/search/jql`
-        : `${this.apiPrefix()}/search`;
-    const raw = await this.requestJson<{
-      issues: { id: string; key: string; fields: Record<string, unknown> }[];
-    }>(this.flavor === "cloud" ? "POST" : "GET", path, this.flavor === "cloud"
-      ? { jql }
-      : undefined);
-    // DC uses query string
+    const fields = [
+      "summary",
+      "status",
+      "issuetype",
+      "labels",
+      "parent",
+      "assignee",
+      "description",
+    ];
     if (this.flavor === "datacenter") {
       const viaGet = await this.requestJson<{
         issues: { id: string; key: string; fields: Record<string, unknown> }[];
       }>(
         "GET",
-        `${this.apiPrefix()}/search?jql=${encodeURIComponent(jql)}`,
+        `${this.apiPrefix()}/search?jql=${encodeURIComponent(jql)}&fields=${encodeURIComponent(fields.join(","))}`,
       );
-      return (viaGet.issues ?? []).map((i) => this.mapIssue(i));
+      const issues: JiraIssueLite[] = [];
+      for (const i of viaGet.issues ?? []) issues.push(await this.hydrateIssue(i));
+      return issues;
     }
-    return (raw.issues ?? []).map((i) => this.mapIssue(i));
+    const raw = await this.requestJson<{
+      issues?: { id?: string; key?: string; fields?: Record<string, unknown> }[];
+      values?: { id?: string; key?: string; fields?: Record<string, unknown> }[];
+    }>("POST", `${this.apiPrefix()}/search/jql`, {
+      jql,
+      maxResults: 100,
+      fields,
+    });
+    const hits = raw.issues ?? raw.values ?? [];
+    const issues: JiraIssueLite[] = [];
+    for (const i of hits) issues.push(await this.hydrateIssue(i));
+    return issues;
   }
 
   async getIssues(jql: string): Promise<JiraIssueLite[]> {

@@ -1,6 +1,6 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   loadJiraConfig,
@@ -25,6 +25,9 @@ import {
 } from "../src/workflows.js";
 import { loadWriteJournal } from "../src/write-journal.js";
 import { resolveBaArtifactId } from "../src/artifact-id.js";
+import { writeJsonAtomic, readJsonFile } from "../src/atomic-json.js";
+import { JiraBaHandoffSchema } from "@praxis/contracts";
+import { launchRole, findClaudeBin } from "../../../tools/scripts/claude-launch.mjs";
 import type { PraxisRichTextDocument } from "@praxis/contracts";
 import type { JiraConfig } from "../src/config.js";
 
@@ -88,6 +91,32 @@ async function seedEpic(mode: "cloud" | "datacenter") {
     description: provider.renderDescription(SAMPLE_DOC),
   });
   return { provider, state, epicKey: epic.key, fetchImpl };
+}
+
+function storySpec(epicKey: string, summary = "core story") {
+  return {
+    logicalId: `REQ-${epicKey}-1`,
+    summary,
+    userStory: "As a user I want a capability So that value is delivered",
+    acceptanceCriteria: "Given context\nWhen action\nThen outcome",
+    requirementIds: [`REQ-${epicKey}-1`],
+  };
+}
+
+function analyze(
+  provider: Awaited<ReturnType<typeof seedEpic>>["provider"],
+  epicKey: string,
+  repo: string,
+  extra: Partial<Parameters<typeof baAnalyzeEpic>[0]> = {},
+) {
+  const { stories, ...rest } = extra;
+  return baAnalyzeEpic({
+    provider,
+    epicKey,
+    repo,
+    stories: stories ?? [storySpec(epicKey)],
+    ...rest,
+  });
 }
 
 describe("jira mode/config", () => {
@@ -182,9 +211,9 @@ describe("jira workflow orchestration", () => {
   it("BA epic→stories is idempotent", async () => {
     const { provider, epicKey } = await seedEpic("cloud");
     const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
-    const first = await baAnalyzeEpic({ provider, epicKey, repo });
+    const first = await analyze(provider, epicKey, repo);
     expect(first.storyKeys.length).toBe(1);
-    const second = await baAnalyzeEpic({ provider, epicKey, repo });
+    const second = await analyze(provider, epicKey, repo);
     expect(second.created).toEqual([]);
     expect(second.storyKeys).toEqual(first.storyKeys);
   });
@@ -192,7 +221,7 @@ describe("jira workflow orchestration", () => {
   it("Architect groups stories into work packages without orphans", async () => {
     const { provider, epicKey } = await seedEpic("datacenter");
     const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
-    await baAnalyzeEpic({ provider, epicKey, repo });
+    await analyze(provider, epicKey, repo);
     const plan = await architectPlanEpic({ provider, epicKey, repo });
     expect(plan.workPackages.length).toBeGreaterThan(0);
     for (const wp of plan.workPackages) {
@@ -208,7 +237,7 @@ describe("jira workflow orchestration", () => {
   it("claim: first wins, second denied, same actor resumes", async () => {
     const { provider, epicKey } = await seedEpic("cloud");
     const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
-    await baAnalyzeEpic({ provider, epicKey, repo });
+    await analyze(provider, epicKey, repo);
     const { workPackages } = await architectPlanEpic({ provider, epicKey, repo });
     const wpKey = workPackages[0]!.jiraIssueKey;
     const first = await claimWorkPackage({
@@ -241,7 +270,7 @@ describe("jira workflow orchestration", () => {
   it("detects a claim token race as blocked", async () => {
     const { provider, epicKey, state } = await seedEpic("cloud");
     const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
-    await baAnalyzeEpic({ provider, epicKey, repo });
+    await analyze(provider, epicKey, repo);
     const { workPackages } = await architectPlanEpic({ provider, epicKey, repo });
     const wpKey = workPackages[0]!.jiraIssueKey;
     const issue = state.issues.get(wpKey)!;
@@ -285,7 +314,7 @@ describe("jira workflow orchestration", () => {
   it("Developer ready-for-QA only after verification covering all issues", async () => {
     const { provider, epicKey } = await seedEpic("datacenter");
     const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
-    await baAnalyzeEpic({ provider, epicKey, repo });
+    await analyze(provider, epicKey, repo);
     const { workPackages } = await architectPlanEpic({ provider, epicKey, repo });
     const wpKey = workPackages[0]!.jiraIssueKey;
     await claimWorkPackage({
@@ -320,7 +349,7 @@ describe("jira workflow orchestration", () => {
       join(repo, ".project"),
       "stack: [node]\nquality:\n  build: \"node -e process.exit(0)\"\n  test: \"node -e process.exit(0)\"\n",
     );
-    await baAnalyzeEpic({ provider, epicKey, repo });
+    await analyze(provider, epicKey, repo);
     const { workPackages } = await architectPlanEpic({ provider, epicKey, repo });
     const wpKey = workPackages[0]!.jiraIssueKey;
     expect(() => assertQaPathAllowed("src/index.ts")).toThrow(/source guard/);
@@ -552,17 +581,38 @@ describe("BA remote-write idempotency", () => {
   it("live-like PRX-2 superseded summary / PRX-3 canonical without creating a fourth", async () => {
     const { provider, epicKey, state } = await seedEpic("cloud");
     const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
+    const baText =
+      "User Story\nAs a developer I want reset()\nBusiness context\nCounter\nAcceptance Criteria\nGiven a counter When reset Then 0\nRequirement IDs\nREQ-PRX-1-1";
     const dup = await provider.createIssue({
       summary:
         "[DUPLICATE — superseded by PRX-3] Counter library: add reset() to return the counter to zero",
       issueType: "Story",
       parentKey: epicKey,
+      description: baText,
     });
     const canonical = await provider.createIssue({
       summary: "Counter library: add reset() to return the counter to zero",
       issueType: "Story",
       parentKey: epicKey,
+      description: baText,
     });
+    await provider.addComment(
+      epicKey,
+      provider.renderDescription({
+        version: 1,
+        blocks: [
+          {
+            type: "paragraph",
+            inlines: [
+              {
+                type: "text",
+                text: "Praxis BA handoff ready. Stories: PRX-3",
+              },
+            ],
+          },
+        ],
+      }),
+    );
     expect(dup.key).toBe("PRX-2");
     expect(canonical.key).toBe("PRX-3");
     const before = state.createIssueCount;
@@ -570,11 +620,12 @@ describe("BA remote-write idempotency", () => {
       provider,
       epicKey,
       repo,
-      stories: [CORE_SPEC(epicKey)],
     });
+    expect(result.reason).not.toBe("BA_PROPOSAL_MISSING");
     expect(state.createIssueCount).toBe(before);
     expect(result.storyKeys).toEqual(["PRX-3"]);
     expect(result.created).toEqual([]);
+    expect(result.plan.some((p) => p.action === "CREATE")).toBe(false);
   });
 });
 
@@ -651,4 +702,227 @@ describe("canonical/superseded downstream", () => {
     expect(status.superseded.some((s) => s.from === superseded.key)).toBe(true);
   });
 });
+
+describe("child hydration", () => {
+  it("Cloud sparse search still returns keys, summaries, parent, properties", async () => {
+    const { provider, epicKey, fetchImpl } = await seedEpic("cloud");
+    const child = await provider.createIssue({
+      summary: "Real summary",
+      issueType: "Story",
+      parentKey: epicKey,
+      labels: ["praxis-managed"],
+    });
+    await provider.setIssueProperty(child.key, "praxis.artifactId", "ba:PRX-1:x");
+    const sparse: typeof fetch = async (input, init) => {
+      const res = await fetchImpl(input, init);
+      const url = String(input);
+      if (url.includes("/search")) {
+        const body = (await res.json()) as {
+          issues: { id: string; key: string; fields: unknown }[];
+        };
+        return new Response(
+          JSON.stringify({
+            issues: body.issues.map((i) => ({ id: i.id })),
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return res;
+    };
+    const hydrating = createJiraProvider({
+      config: cfg("cloud"),
+      fetchImpl: sparse,
+    });
+    const children = await hydrating.getChildren(epicKey);
+    expect(children.some((c) => c.key === child.key)).toBe(true);
+    const hit = children.find((c) => c.key === child.key)!;
+    expect(hit.summary).toBe("Real summary");
+    expect(hit.parentKey).toBe(epicKey);
+    expect(hit.properties["praxis.artifactId"]).toBe("ba:PRX-1:x");
+  });
+
+  it("Data Center search with fields still hydrates keys and properties", async () => {
+    const { provider, epicKey } = await seedEpic("datacenter");
+    const child = await provider.createIssue({
+      summary: "DC child",
+      issueType: "Story",
+      parentKey: epicKey,
+      labels: ["praxis-managed"],
+    });
+    await provider.setIssueProperty(child.key, "praxis.managed", true);
+    const children = await provider.getChildren(epicKey);
+    const hit = children.find((c) => c.key === child.key)!;
+    expect(hit.key).toBe(child.key);
+    expect(hit.summary).toBe("DC child");
+    expect(hit.parentKey).toBe(epicKey);
+    expect(hit.properties["praxis.managed"]).toBe(true);
+  });
+});
+
+describe("BA proposal vs machine", () => {
+  it("without proposal does not synthesize generic AC", async () => {
+    const { provider, epicKey } = await seedEpic("cloud");
+    const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
+    const result = await baAnalyzeEpic({ provider, epicKey, repo, dryRun: true });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("BA_PROPOSAL_MISSING");
+    expect(result.planText).not.toMatch(/Given the epic is in Jira/);
+    expect(result.planText).not.toMatch(/core story/);
+    expect(result.handoff.readyForArchitecture).toBe(false);
+    expect(result.handoff.canonicalStoryKeys).toEqual([]);
+  });
+
+  it("schema rejects readyForArchitecture with empty canonical keys", () => {
+    const parsed = JiraBaHandoffSchema.safeParse({
+      contract: "jira.ba.architect.handoff",
+      version: "1.0.0",
+      epicKey: "PRX-1",
+      storyKeys: [],
+      canonicalStoryKeys: [],
+      supersededStoryKeys: [],
+      requirementIds: [],
+      baArtifacts: [],
+      openQuestions: [],
+      nfrs: [],
+      businessRules: [],
+      constraints: [],
+      acceptanceSummary: "",
+      dependencies: [],
+      proposalReady: false,
+      readyForArchitecture: true,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("Architect skips invalid/truncated handoff without raw SyntaxError", async () => {
+    const { provider, epicKey } = await seedEpic("cloud");
+    const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
+    mkdirSync(join(repo, ".praxis-jira", "handoffs"), { recursive: true });
+    writeFileSync(join(repo, ".praxis-jira", "handoffs", `${epicKey}.json`), "{");
+    await expect(
+      architectPlanEpic({ provider, epicKey, repo, dryRun: true }),
+    ).rejects.toThrow(/BA_HANDOFF/);
+  });
+});
+
+describe("atomic artifacts", () => {
+  it("keeps previous JSON if temp write is not renamed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "praxis-json-"));
+    const file = join(dir, "handoff.json");
+    writeJsonAtomic(file, { ok: 1 });
+    const first = readJsonFile<{ ok: number }>(file, "handoff");
+    expect(first.ok && first.value.ok).toBe(1);
+    const empty = readJsonFile(join(dir, "missing.json"), "handoff");
+    expect(empty.ok).toBe(false);
+    if (!empty.ok) expect(empty.reason).toBe("missing");
+  });
+});
+
+describe("migration conflict", () => {
+  it("two active praxis-shaped stories without superseded stop with MIGRATION_CONFLICT", async () => {
+    const { provider, epicKey, state } = await seedEpic("cloud");
+    const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
+    const body =
+      "User Story\nAs a x\nAcceptance Criteria\nGiven When Then\nRequirement IDs\nREQ-A";
+    await provider.createIssue({
+      summary: "one",
+      issueType: "Story",
+      parentKey: epicKey,
+      description: body,
+    });
+    await provider.createIssue({
+      summary: "two",
+      issueType: "Story",
+      parentKey: epicKey,
+      description: body,
+    });
+    const before = state.createIssueCount;
+    const result = await baAnalyzeEpic({ provider, epicKey, repo, dryRun: true });
+    expect(result.reason).toBe("MIGRATION_CONFLICT");
+    expect(state.createIssueCount).toBe(before);
+  });
+
+  it("does not adopt an unrelated human child", async () => {
+    const { provider, epicKey } = await seedEpic("cloud");
+    const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
+    await provider.createIssue({
+      summary: "Random human note",
+      issueType: "Task",
+      parentKey: epicKey,
+      description: "please fix later",
+    });
+    const result = await baAnalyzeEpic({ provider, epicKey, repo, dryRun: true });
+    expect(result.reason).toBe("BA_PROPOSAL_MISSING");
+  });
+});
+
+describe("claude launcher", () => {
+  it("launches fake binary with plugin-dir and cwd=repo", () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-role-"));
+    mkdirSync(join(repo, "node_modules/@praxis/ba/.claude-plugin"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(repo, "node_modules/@praxis/ba/.claude-plugin/plugin.json"),
+      '{"name":"praxis-ba"}\n',
+    );
+    const fake = join(repo, "fake-claude.mjs");
+    const capture = join(repo, "capture.json");
+    writeFileSync(
+      fake,
+      `import { writeFileSync } from "node:fs";
+writeFileSync(process.env.PRAXIS_CLAUDE_CAPTURE, JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(2) }));
+`,
+    );
+    const env = {
+      ...process.env,
+      PRAXIS_CLAUDE_BIN: process.execPath,
+      PRAXIS_CLAUDE_CAPTURE: capture,
+      PRAXIS_JIRA_MODE: "cloud",
+      PRAXIS_JIRA_BASE_URL: "https://example.atlassian.net",
+      PRAXIS_JIRA_PROJECT_KEY: "PRX",
+      PRAXIS_JIRA_EMAIL: "dev@example.com",
+      PRAXIS_JIRA_TOKEN: "secret-token-value",
+    };
+    const launched = launchRole({
+      praxisRoot: resolve(join(import.meta.dirname, "../../..")),
+      role: "ba",
+      repo,
+      epic: "PRX-1",
+      env,
+      dryLaunch: true,
+    });
+    expect(launched.cwd).toBe(repo);
+    expect(launched.args[0]).toBe("--plugin-dir");
+    expect(launched.args[1]).toContain("@praxis/ba");
+    expect(launched.prompt).toMatch(/PRX-1/);
+    expect(JSON.stringify(launched.args)).not.toMatch(/secret-token-value/);
+  });
+
+  it("fails when plugin missing", () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-role-"));
+    expect(() =>
+      launchRole({
+        praxisRoot: resolve("."),
+        role: "ba",
+        repo,
+        epic: "PRX-1",
+        env: {
+          PRAXIS_CLAUDE_BIN: process.execPath,
+          PRAXIS_JIRA_MODE: "cloud",
+          PRAXIS_JIRA_BASE_URL: "https://example.atlassian.net",
+          PRAXIS_JIRA_PROJECT_KEY: "PRX",
+          PRAXIS_JIRA_EMAIL: "a@b.c",
+          PRAXIS_JIRA_TOKEN: "t",
+        },
+        dryLaunch: true,
+      }),
+    ).toThrow(/not installed/);
+  });
+
+  it("reports missing claude binary", () => {
+    expect(findClaudeBin({ PATH: "/nonexistent", PRAXIS_CLAUDE_BIN: "" })).toBeNull();
+  });
+});
+
 
