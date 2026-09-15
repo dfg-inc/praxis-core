@@ -40,6 +40,9 @@ export function extractLogicalId(
   if (typeof aid === "string" && aid.startsWith(`ba:${epicKey}:`)) {
     return aid.slice(`ba:${epicKey}:`.length);
   }
+  if (typeof aid === "string" && aid.startsWith(`story:${epicKey}:`)) {
+    return aid.slice(`story:${epicKey}:`.length);
+  }
   const req = extractRequirementIds(issue)[0];
   if (req) return req;
   return "story-core";
@@ -88,7 +91,7 @@ export async function adoptLegacyStories(opts: {
   const active = opts.flags.filter(
     (f) =>
       !isSupersededFlags(f) &&
-      f.issueType.toLowerCase() !== "epic" &&
+      f.semanticType !== "epic" &&
       f.key !== opts.epicKey,
   );
 
@@ -178,6 +181,7 @@ export async function hydrateFlags(
           c.properties["praxis.superseded"] === true || Boolean(supersededBy),
         supersededBy,
         issueType: c.issueType,
+        semanticType: c.semanticType,
         parentKey: c.parentKey,
         labels: c.labels,
         summary: c.summary,

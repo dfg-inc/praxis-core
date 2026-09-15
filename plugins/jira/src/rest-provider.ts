@@ -13,12 +13,39 @@ import type {
 import { PRAXIS_ISSUE_PROPERTIES } from "./provider.js";
 import type { PraxisRichTextDocument } from "@praxis/contracts";
 import { renderRichText } from "./rich-text.js";
+import { readJiraResponseJson } from "./http.js";
+import {
+  buildIssueTypeMapping,
+  resolveSemanticType,
+  type IssueTypeMapping,
+  type RawIssueType,
+} from "./issue-types.js";
 
 type StoredIssue = JiraIssueLite & {
   comments: JiraComment[];
   attachments: { id: string; filename: string }[];
   properties: Record<string, unknown>;
 };
+
+export type MockIssueType = RawIssueType & { id: string; name: string };
+
+export const DEFAULT_MOCK_ISSUE_TYPES: MockIssueType[] = [
+  { id: "10000", name: "Epic", hierarchyLevel: 1, subtask: false },
+  { id: "10001", name: "Story", hierarchyLevel: 0, subtask: false },
+  { id: "10002", name: "Task", hierarchyLevel: 0, subtask: false },
+  { id: "10003", name: "Bug", hierarchyLevel: 0, subtask: false },
+  { id: "10004", name: "Sub-task", hierarchyLevel: -1, subtask: true },
+  { id: "10005", name: "Work Package", hierarchyLevel: 0, subtask: false },
+];
+
+export const LOCALIZED_RU_ISSUE_TYPES: MockIssueType[] = [
+  { id: "10000", name: "Эпик", hierarchyLevel: 1, subtask: false },
+  { id: "10001", name: "История", hierarchyLevel: 0, subtask: false },
+  { id: "10002", name: "Задача", hierarchyLevel: 0, subtask: false },
+  { id: "10003", name: "Ошибка", hierarchyLevel: 0, subtask: false },
+  { id: "10004", name: "Подзадача", hierarchyLevel: -1, subtask: true },
+  { id: "10005", name: "Work Package", hierarchyLevel: 0, subtask: false },
+];
 
 export type MockJiraState = {
   nextId: number;
@@ -27,9 +54,13 @@ export type MockJiraState = {
   links: JiraLink[];
   versions: { id: string; name: string }[];
   claimLocks: Map<string, string>;
+  issueTypes: MockIssueType[];
+  propertyPutStatus: number;
 };
 
-export function createMockJiraState(): MockJiraState {
+export function createMockJiraState(
+  extra: Partial<Pick<MockJiraState, "issueTypes" | "propertyPutStatus">> = {},
+): MockJiraState {
   return {
     nextId: 1,
     createIssueCount: 0,
@@ -37,6 +68,8 @@ export function createMockJiraState(): MockJiraState {
     links: [],
     versions: [],
     claimLocks: new Map(),
+    issueTypes: extra.issueTypes ?? DEFAULT_MOCK_ISSUE_TYPES,
+    propertyPutStatus: extra.propertyPutStatus ?? 200,
   };
 }
 
@@ -49,14 +82,18 @@ function findStored(state: MockJiraState, idOrKey: string): StoredIssue | undefi
 
 function issueFields(issue: StoredIssue) {
   return {
+    ...issue.fields,
     summary: issue.summary,
     description: issue.description ?? "",
     status: { name: issue.status },
-    issuetype: { name: issue.issueType, id: issue.issueType },
+    issuetype: {
+      name: issue.issueType,
+      id: issue.issueTypeId ?? issue.issueType,
+      hierarchyLevel: issue.hierarchyLevel,
+    },
     labels: issue.labels,
     parent: issue.parentKey ? { key: issue.parentKey } : undefined,
     assignee: issue.assignee,
-    ...issue.fields,
   };
 }
 
@@ -99,13 +136,7 @@ export function createMockFetch(
       return json({ id: "10000", key: opts.projectKey, name: opts.projectKey });
     }
     if (method === "GET" && path.endsWith("/issuetype")) {
-      return json([
-        { id: "1", name: "Epic" },
-        { id: "2", name: "Story" },
-        { id: "3", name: "Task" },
-        { id: "4", name: "Bug" },
-        { id: "5", name: "Work Package" },
-      ]);
+      return json(state.issueTypes);
     }
     if (method === "GET" && path.endsWith("/field")) {
       return json([
@@ -155,13 +186,27 @@ export function createMockFetch(
       state.createIssueCount += 1;
       const keyNew = `${opts.projectKey}-${state.nextId++}`;
       const fields = body.fields ?? {};
+      const requested = fields.issuetype as RawIssueType | undefined;
+      const catalog = state.issueTypes;
+      const resolvedType =
+        catalog.find((t) => requested?.id && t.id === String(requested.id)) ??
+        catalog.find(
+          (t) =>
+            requested?.name &&
+            t.name.toLowerCase() === String(requested.name).toLowerCase(),
+        ) ??
+        catalog.find((t) => t.name === "Task" || t.name === "Задача") ??
+        catalog[2];
       const stored: StoredIssue = {
         id: String(10000 + Number(keyNew.split("-").pop())),
         key: keyNew,
         summary: fields.summary,
         description: fields.description,
         status: "To Do",
-        issueType: fields.issuetype?.name ?? "Task",
+        issueType: resolvedType?.name ?? String(requested?.name ?? "Task"),
+        issueTypeId: resolvedType?.id,
+        semanticType: "unknown",
+        hierarchyLevel: resolvedType?.hierarchyLevel,
         labels: fields.labels ?? [],
         parentKey: fields.parent?.key,
         fields: { ...fields },
@@ -242,7 +287,13 @@ export function createMockFetch(
         }
         if (method === "PUT") {
           issue.properties[pk] = body;
-          return new Response(null, { status: 204 });
+          if (state.propertyPutStatus === 204) {
+            return new Response(null, { status: 204 });
+          }
+          return new Response("", {
+            status: state.propertyPutStatus,
+            headers: { "Content-Type": "application/json" },
+          });
         }
       }
       if (method === "GET" && (rest === "" || rest.startsWith("?"))) {
@@ -322,7 +373,10 @@ function matchJql(issue: StoredIssue, jql: string): boolean {
   const key = jql.match(/key\s*=\s*(\S+)/i);
   if (key && issue.key !== key[1].replace(/"/g, "")) return false;
   const type = jql.match(/issuetype\s*=\s*(\S+)/i);
-  if (type && issue.issueType !== type[1].replace(/"/g, "")) return false;
+  if (type) {
+    const t = type[1].replace(/"/g, "");
+    if (issue.issueType !== t && issue.issueTypeId !== t) return false;
+  }
   const project = jql.match(/project\s*=\s*(\S+)/i);
   if (project && !issue.key.startsWith(project[1].replace(/"/g, "")))
     return false;
@@ -337,6 +391,7 @@ export class RestJiraProvider implements JiraProvider {
   readonly config: JiraConfig;
   private readonly fetchImpl: typeof fetch;
   private meta?: MetadataContext;
+  private typeMapping?: IssueTypeMapping;
 
   constructor(opts: {
     config: JiraConfig;
@@ -387,16 +442,7 @@ export class RestJiraProvider implements JiraProvider {
       headers: this.headers(),
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(
-        `Jira ${method} ${path} failed: HTTP ${res.status} ${text}`,
-      );
-    }
-    if (res.status === 204) return undefined as T;
-    const ct = res.headers.get("content-type") ?? "";
-    if (!ct.includes("json")) return undefined as T;
-    return (await res.json()) as T;
+    return readJiraResponseJson<T>(res, method, path);
   }
 
   renderDescription(doc: PraxisRichTextDocument): unknown {
@@ -463,7 +509,7 @@ export class RestJiraProvider implements JiraProvider {
   }
 
   async getIssueTypes() {
-    return this.requestJson<{ id: string; name: string }[]>(
+    return this.requestJson<RawIssueType[]>(
       "GET",
       `${this.apiPrefix()}/issuetype`,
     );
@@ -498,18 +544,15 @@ export class RestJiraProvider implements JiraProvider {
       this.getFields(),
       this.getVersions(),
     ]);
-    const findType = (hint: string) =>
-      types.find((t) => t.name.toLowerCase() === hint.toLowerCase())?.id ??
-      hint;
+    const mapping = buildIssueTypeMapping(types ?? [], this.config);
+    this.typeMapping = mapping;
     this.meta = {
-      epicTypeId: findType(this.config.epicType),
-      storyTypeId: findType(this.config.storyType),
-      taskTypeId: findType(this.config.taskType),
-      bugTypeId: findType(this.config.bugType),
-      workPackageTypeId: this.config.workPackageType
-        ? findType(this.config.workPackageType)
-        : types.find((t) => t.name.toLowerCase() === "work package")?.id,
-      issueTypes: types,
+      epicTypeId: mapping.epicTypeId ?? this.config.epicTypeId ?? this.config.epicType,
+      storyTypeId: mapping.storyTypeId ?? this.config.storyTypeId ?? this.config.storyType,
+      taskTypeId: mapping.taskTypeId ?? this.config.taskTypeId ?? this.config.taskType,
+      bugTypeId: mapping.bugTypeId ?? this.config.bugTypeId ?? this.config.bugType,
+      workPackageTypeId: mapping.workPackageTypeId,
+      issueTypes: mapping.types,
       fields,
       versions,
       transitionsByName: { ...this.config.transitions },
@@ -524,16 +567,24 @@ export class RestJiraProvider implements JiraProvider {
   }): JiraIssueLite {
     const fields = raw.fields ?? {};
     const status = fields.status as { name?: string } | undefined;
-    const type = fields.issuetype as { name?: string } | undefined;
+    const type = fields.issuetype as RawIssueType | undefined;
     const parent = fields.parent as { key?: string } | undefined;
     const assignee = fields.assignee as JiraUser | undefined;
+    const semanticType = resolveSemanticType(
+      type ?? {},
+      this.typeMapping,
+      this.config,
+    );
     return {
       id: String(raw.id ?? ""),
       key: String(raw.key ?? ""),
       summary: String(fields.summary ?? ""),
       description: fields.description,
       status: status?.name ?? "To Do",
-      issueType: type?.name ?? "Task",
+      issueType: type?.name ?? "",
+      issueTypeId: type?.id ? String(type.id) : undefined,
+      semanticType,
+      hierarchyLevel: type?.hierarchyLevel,
       labels: Array.isArray(fields.labels) ? (fields.labels as string[]) : [],
       parentKey: parent?.key,
       assignee,
@@ -663,11 +714,32 @@ export class RestJiraProvider implements JiraProvider {
   }
 
   async createIssue(input: CreateIssueInput) {
+    if (!this.typeMapping) await this.discoverMetadata();
+    const mapping = this.typeMapping ?? buildIssueTypeMapping([], this.config);
+    const semantic = resolveSemanticType(
+      { name: input.issueType, id: input.issueTypeId },
+      mapping,
+      this.config,
+    );
+    const idFromSemantic =
+      semantic === "epic"
+        ? mapping.epicTypeId
+        : semantic === "story"
+          ? mapping.storyTypeId
+          : semantic === "task"
+            ? mapping.taskTypeId
+            : semantic === "bug"
+              ? mapping.bugTypeId
+              : semantic === "work-package"
+                ? mapping.workPackageTypeId
+                : undefined;
+    const typeId = input.issueTypeId ?? idFromSemantic;
+    const issuetype = typeId ? { id: typeId } : { name: input.issueType };
     const body = {
       fields: {
         project: { key: this.config.projectKey },
         summary: input.summary,
-        issuetype: { name: input.issueType },
+        issuetype,
         ...(input.description !== undefined
           ? { description: input.description }
           : {}),
@@ -825,7 +897,7 @@ export class RestJiraProvider implements JiraProvider {
         "GET",
         `${this.apiPrefix()}/issue/${encodeURIComponent(key)}/properties/${encodeURIComponent(propertyKey)}`,
       );
-      return raw.value;
+      return raw?.value;
     } catch {
       return undefined;
     }

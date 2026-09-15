@@ -9,12 +9,15 @@ export const DUPLICATE_LABEL = "praxis-duplicate";
 const HISTORICAL_DUP =
   /\[DUPLICATE[^\]]*superseded by\s+([A-Z][A-Z0-9]+-\d+)/i;
 
+import type { JiraIssueSemanticType } from "./issue-types.js";
+
 export type IssueScopeFlags = {
   key: string;
   artifactId?: string;
   superseded: boolean;
   supersededBy?: string;
   issueType: string;
+  semanticType: JiraIssueSemanticType;
   parentKey?: string;
   labels: string[];
   summary: string;
@@ -57,6 +60,7 @@ export async function loadIssueScopeFlags(
     superseded: supersededRaw === true || Boolean(supersededBy),
     supersededBy,
     issueType: issue.issueType,
+    semanticType: issue.semanticType,
     parentKey: issue.parentKey,
     labels: issue.labels,
     summary: issue.summary,
@@ -73,6 +77,14 @@ export async function loadEpicIssueFlags(
     out.push(await loadIssueScopeFlags(provider, c));
   }
   return out;
+}
+
+export function artifactIdAliases(artifactId: string): string[] {
+  const ba = artifactId.match(/^ba:([^:]+):(.+)$/);
+  if (ba) return [artifactId, `story:${ba[1]}:${ba[2]}`];
+  const story = artifactId.match(/^story:([^:]+):(.+)$/);
+  if (story) return [artifactId, `ba:${story[1]}:${story[2]}`];
+  return [artifactId];
 }
 
 export function issueNumber(key: string): number {
@@ -157,6 +169,18 @@ export async function lookupByArtifactId(
     repo,
   );
   if (recovered.canonical) return recovered;
+  const aliases = artifactIdAliases(artifactId);
+  if (aliases.length > 1) {
+    for (const alt of aliases.slice(1)) {
+      const viaLegacy = await recoverDuplicatesForArtifact(
+        provider,
+        flags,
+        alt,
+        repo,
+      );
+      if (viaLegacy.canonical) return viaLegacy;
+    }
+  }
   const journal = findWriteOpByArtifact(repo, artifactId);
   if (journal?.jiraIssueKey) {
     try {
@@ -180,7 +204,7 @@ export function unmatchedCanonicalStories(
     (f) =>
       !isSupersededFlags(f) &&
       !claimedKeys.has(f.key) &&
-      f.issueType.toLowerCase() === "story",
+      f.semanticType === "story",
   );
 }
 
@@ -188,7 +212,7 @@ export function canonicalStoryKeysFromFlags(flags: IssueScopeFlags[]): string[] 
   return flags
     .filter(
       (f) =>
-        !isSupersededFlags(f) && f.issueType.toLowerCase() === "story",
+        !isSupersededFlags(f) && f.semanticType === "story",
     )
     .map((f) => f.key);
 }

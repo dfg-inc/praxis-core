@@ -21,6 +21,7 @@ function formatIssue(issue) {
     `    summary: ${issue.summary}`,
     `    status: ${issue.status}`,
     `    issueType: ${issue.issueType}`,
+    `    semanticType: ${issue.semanticType ?? ""}`,
     `    parent: ${issue.parentKey ?? ""}`,
     `    managed: ${p["praxis.managed"] ?? ""}`,
     `    artifactId: ${p["praxis.artifactId"] ?? ""}`,
@@ -31,7 +32,7 @@ function formatIssue(issue) {
 
 if (!cmd) {
   console.error(
-    "usage: jira-workflow.mjs smoke|epic|status|ba-preview|ba-apply|architect-preview",
+    "usage: jira-workflow.mjs smoke|epic|status|discover|ba-preview|ba-apply|architect-preview",
   );
   process.exit(2);
 }
@@ -42,6 +43,29 @@ if (cmd === "smoke") {
   const v = await provider.verifyConnection();
   console.log(JSON.stringify({ ok: v.ok, ...v }, null, 2));
   process.exit(v.ok ? 0 : 1);
+}
+
+if (cmd === "discover") {
+  const meta = await provider.discoverMetadata();
+  console.log(
+    JSON.stringify(
+      {
+        issueTypes: meta.issueTypes.map((t) => ({
+          id: t.id,
+          displayName: t.displayName ?? t.name,
+          hierarchyLevel: t.hierarchyLevel,
+          semanticType: t.semanticType,
+        })),
+        epicTypeId: meta.epicTypeId,
+        storyTypeId: meta.storyTypeId,
+        taskTypeId: meta.taskTypeId,
+        bugTypeId: meta.bugTypeId,
+      },
+      null,
+      2,
+    ),
+  );
+  process.exit(0);
 }
 
 if (cmd === "epic") {
@@ -148,11 +172,15 @@ if (cmd === "status") {
       `Developer claims: ${status.claims.length}`,
       `Quality: ${status.quality.length}`,
       `Bugs: ${status.bugs.join(", ") || "none"}`,
+      ``,
+      `BA:`,
+      `  proposalReady: ${status.ba?.proposalReady ?? false}`,
+      `  readyForArchitecture: ${status.ba?.readyForArchitecture ?? false}`,
     ].join("\n"),
   );
   console.log(JSON.stringify(status, null, 2));
   process.exit(0);
 }
 
-console.error("usage: jira-workflow.mjs smoke|epic|status|ba-preview|ba-apply|architect-preview");
+console.error("usage: jira-workflow.mjs smoke|epic|status|discover|ba-preview|ba-apply|architect-preview");
 process.exit(2);

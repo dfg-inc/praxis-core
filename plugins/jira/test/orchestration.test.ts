@@ -1,6 +1,7 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   loadJiraConfig,
@@ -10,6 +11,7 @@ import {
   createJiraProvider,
   createMockFetch,
   createMockJiraState,
+  LOCALIZED_RU_ISSUE_TYPES,
 } from "../src/rest-provider.js";
 import { renderRichTextAdf, renderRichTextWiki } from "../src/rich-text.js";
 import { assertRole, roleAllows } from "../src/role-policy.js";
@@ -801,7 +803,7 @@ describe("BA proposal vs machine", () => {
     writeFileSync(join(repo, ".praxis-jira", "handoffs", `${epicKey}.json`), "{");
     await expect(
       architectPlanEpic({ provider, epicKey, repo, dryRun: true }),
-    ).rejects.toThrow(/BA_HANDOFF/);
+    ).rejects.toThrow(/BA_REMOTE_APPLY_INCOMPLETE/);
   });
 });
 
@@ -924,5 +926,184 @@ writeFileSync(process.env.PRAXIS_CLAUDE_CAPTURE, JSON.stringify({ cwd: process.c
     expect(findClaudeBin({ PATH: "/nonexistent", PRAXIS_CLAUDE_BIN: "" })).toBeNull();
   });
 });
+
+describe("localized issue types", () => {
+  async function seedRu() {
+    const state = createMockJiraState({ issueTypes: LOCALIZED_RU_ISSUE_TYPES });
+    const fetchImpl = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
+    const provider = createJiraProvider({ config: cfg("cloud"), fetchImpl });
+    const epic = await provider.createIssue({
+      summary: "Counter management improvements",
+      issueType: "Epic",
+    });
+    return { provider, state, epicKey: epic.key };
+  }
+
+  it("История is semantic story and status lists canonical PRX-3", async () => {
+    const { provider, epicKey } = await seedRu();
+    const dup = await provider.createIssue({
+      summary:
+        "[DUPLICATE — superseded by PRX-3] Counter library: add reset() to return the counter to zero",
+      issueType: "Story",
+      parentKey: epicKey,
+    });
+    const canon = await provider.createIssue({
+      summary: "Counter library: add reset() to return the counter to zero",
+      issueType: "Story",
+      parentKey: epicKey,
+      description:
+        "User Story\nAs a developer\nAcceptance Criteria\nGiven When Then\nRequirement IDs\nE2-FR1",
+    });
+    await provider.addComment(epicKey, "Praxis BA handoff ready. Stories: " + canon.key);
+    const got = await provider.getIssue(canon.key);
+    expect(got.issueType).toBe("История");
+    expect(got.semanticType).toBe("story");
+    const epic = await provider.getIssue(epicKey);
+    expect(epic.issueType).toBe("Эпик");
+    expect(epic.semanticType).toBe("epic");
+    const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
+    const ba = await baAnalyzeEpic({ provider, epicKey, repo, dryRun: true });
+    expect(ba.plan.some((p) => p.action === "CREATE")).toBe(false);
+    expect(ba.handoff.canonicalStoryKeys).toContain(canon.key);
+    expect(ba.handoff.readyForArchitecture).toBe(false);
+    const applied = await baAnalyzeEpic({ provider, epicKey, repo });
+    expect(applied.created).toEqual([]);
+    expect(applied.handoff.readyForArchitecture).toBe(true);
+    const status = await collectEpicStatus(provider, epicKey);
+    expect(status.canonicalStories).toContain(canon.key);
+    expect(status.superseded.some((s) => s.from === dup.key && s.to === canon.key)).toBe(true);
+  });
+
+  it("English Story behaves the same", async () => {
+    const { provider, epicKey } = await seedEpic("cloud");
+    await provider.createIssue({
+      summary: "s",
+      issueType: "Story",
+      parentKey: epicKey,
+      description: "User Story\nAcceptance Criteria\nRequirement IDs\nREQ-1",
+    });
+    const children = await provider.getChildren(epicKey);
+    expect(children[0]?.semanticType).toBe("story");
+  });
+
+  it("configured type ID maps arbitrary display name to story", async () => {
+    const state = createMockJiraState({
+      issueTypes: [
+        { id: "10000", name: "Эпик", hierarchyLevel: 1, subtask: false },
+        { id: "999", name: "User Need", hierarchyLevel: 0, subtask: false },
+      ],
+    });
+    const fetchImpl = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
+    const provider = createJiraProvider({
+      config: { ...cfg("cloud"), storyTypeId: "999" },
+      fetchImpl,
+    });
+    const epic = await provider.createIssue({ summary: "e", issueType: "Epic" });
+    const story = await provider.createIssue({
+      summary: "s",
+      issueType: "Story",
+      issueTypeId: "999",
+      parentKey: epic.key,
+    });
+    const got = await provider.getIssue(story.key);
+    expect(got.issueType).toBe("User Need");
+    expect(got.semanticType).toBe("story");
+  });
+
+  it("managed-scope source never compares English display names", () => {
+    const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
+    const src = readFileSync(join(srcDir, "managed-scope.ts"), "utf8");
+    expect(src).not.toMatch(/toLowerCase\(\)\s*===\s*"story"/);
+    expect(src).not.toMatch(/===\s*"Story"/);
+    const workflows = readFileSync(join(srcDir, "workflows.ts"), "utf8");
+    expect(workflows).not.toMatch(/toLowerCase\(\)\s*===\s*"bug"/);
+    const adopt = readFileSync(join(srcDir, "legacy-adopt.ts"), "utf8");
+    expect(adopt).not.toMatch(/toLowerCase\(\)\s*!==\s*"epic"/);
+  });
+});
+
+describe("empty property PUT + partial BA apply resume", () => {
+  it("setIssueProperty succeeds on 200 empty JSON then rereads", async () => {
+    const { provider, epicKey } = await seedEpic("cloud");
+    await provider.setIssueProperty(epicKey, "praxis.artifactId", "ba:PRX-1:x");
+    expect(await provider.getIssueProperty(epicKey, "praxis.artifactId")).toBe(
+      "ba:PRX-1:x",
+    );
+  });
+
+  it("resume after crash after property write creates no extra issue and one handoff comment", async () => {
+    const state = createMockJiraState({
+      issueTypes: LOCALIZED_RU_ISSUE_TYPES,
+      propertyPutStatus: 200,
+    });
+    const fetchImpl = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
+    const provider = createJiraProvider({ config: cfg("cloud"), fetchImpl });
+    const epic = await provider.createIssue({
+      summary: "Counter management improvements",
+      issueType: "Epic",
+    });
+    await provider.createIssue({
+      summary: "[DUPLICATE — superseded by PRX-3] Counter library: add reset()",
+      issueType: "Story",
+      parentKey: epic.key,
+    });
+    const canon = await provider.createIssue({
+      summary: "Counter library: add reset()",
+      issueType: "Story",
+      parentKey: epic.key,
+      description:
+        "User Story\nAs a developer I want reset\nAcceptance Criteria\nGiven When Then\nRequirement IDs\nE2-FR1",
+    });
+    await provider.setIssueProperty(canon.key, "praxis.artifactId", `ba:${epic.key}:E2-FR1`);
+    const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
+    const spec = {
+      logicalId: "E2-FR1",
+      artifactId: `ba:${epic.key}:E2-FR1`,
+      summary: "Counter library: add reset()",
+      userStory: "As a developer I want reset So that zero",
+      acceptanceCriteria: "Given When Then",
+      requirementIds: ["E2-FR1"],
+    };
+    const before = state.createIssueCount;
+    await expect(
+      baAnalyzeEpic({
+        provider,
+        epicKey: epic.key,
+        repo,
+        stories: [spec],
+        hooks: { crashAfterProperty: true },
+      }),
+    ).rejects.toThrow(/injected crash/);
+    const mid = state.createIssueCount;
+    const retry = await baAnalyzeEpic({
+      provider,
+      epicKey: epic.key,
+      repo,
+      stories: [spec],
+    });
+    expect(state.createIssueCount).toBe(mid);
+    expect(state.createIssueCount).toBe(before);
+    expect(retry.created).toEqual([]);
+    expect(retry.handoff.canonicalStoryKeys).toContain(canon.key);
+    expect(retry.handoff.readyForArchitecture).toBe(true);
+    const comments = await provider.getComments(epic.key);
+    const handoffs = comments.filter((c) =>
+      JSON.stringify(c.body).includes("Praxis BA handoff ready"),
+    );
+    expect(handoffs).toHaveLength(1);
+    const again = await baAnalyzeEpic({
+      provider,
+      epicKey: epic.key,
+      repo,
+      stories: [spec],
+    });
+    const comments2 = await provider.getComments(epic.key);
+    expect(
+      comments2.filter((c) => JSON.stringify(c.body).includes("Praxis BA handoff ready")),
+    ).toHaveLength(1);
+    expect(again.created).toEqual([]);
+  });
+});
+
 
 

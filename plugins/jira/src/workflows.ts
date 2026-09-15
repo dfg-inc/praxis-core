@@ -178,6 +178,37 @@ function emptyHandoff(epicKey: string, extra: Partial<JiraBaHandoff> = {}): Jira
   });
 }
 
+const HANDOFF_COMMENT = /Praxis BA handoff ready\./i;
+
+async function ensureBaHandoffComment(
+  provider: JiraProvider,
+  epicKey: string,
+  canonical: string[],
+): Promise<void> {
+  const comments = await provider.getComments(epicKey);
+  const exists = comments.some((c) =>
+    HANDOFF_COMMENT.test(JSON.stringify(c.body ?? "")),
+  );
+  if (exists) return;
+  await provider.addComment(
+    epicKey,
+    provider.renderDescription(
+      textDocument(`Praxis BA handoff ready. Stories: ${canonical.join(", ") || "none"}`),
+    ),
+  );
+}
+
+async function persistPreview(
+  repo: string,
+  epicKey: string,
+  payload: unknown,
+  planText: string,
+): Promise<void> {
+  const dir = join(repo, ".praxis-jira", "previews");
+  writeJsonAtomic(join(dir, `${epicKey}.json`), payload);
+  writeFileSync(join(dir, `${epicKey}.plan.txt`), `${planText}\n`);
+}
+
 export async function baAnalyzeEpic(opts: {
   provider: JiraProvider;
   epicKey: string;
@@ -298,7 +329,8 @@ export async function baAnalyzeEpic(opts: {
   ].filter((k, i, arr) => arr.indexOf(k) === i);
   const blocking = false;
   const pending = result.applied.length === 0 && !opts.dryRun;
-  const remoteReady = canonical.length > 0 && !blocking && !pending;
+  const remoteReady =
+    !opts.dryRun && canonical.length > 0 && !blocking && !pending;
   const handoff = JiraBaHandoffSchema.parse({
     contract: "jira.ba.architect.handoff",
     version: "1.0.0",
@@ -317,39 +349,62 @@ export async function baAnalyzeEpic(opts: {
       : "legacy remote BA content",
     dependencies: [],
     proposalReady,
-    readyForArchitecture: remoteReady && !opts.dryRun ? true : remoteReady && !created.length,
+    readyForArchitecture: remoteReady,
   });
-  if (opts.dryRun) {
-    handoff.readyForArchitecture = remoteReady && created.length === 0 && canonical.length > 0;
-  }
-  const handoffPath = join(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
-  writeJsonAtomic(handoffPath, handoff);
+  persistPreview(
+    opts.repo,
+    opts.epicKey,
+    {
+      proposalReady,
+      readyForArchitecture: false,
+      remoteReadyForArchitecture: false,
+      canonicalStoryKeys: canonical,
+      supersededStoryKeys: superseded,
+      plan: result.plan,
+    },
+    result.planText,
+  );
+  mkdirSync(join(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
   writeFileSync(
     join(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`),
     `${result.planText}\n`,
   );
-  if (!opts.dryRun) {
-    assertRole("ba", "ba-handoff");
-    await opts.provider.setIssueProperty(opts.epicKey, "praxis.baHandoff", handoff);
-    await opts.provider.addComment(
-      opts.epicKey,
-      opts.provider.renderDescription(
-        textDocument(`Praxis BA handoff ready. Stories: ${canonical.join(", ") || "none"}`),
-      ),
-    );
-    await opts.provider.writePraxisState(opts.epicKey, { lifecycle: "architecture" });
-    for (const a of result.applied) {
-      if (!a.jiraIssueKey) continue;
-      record(opts.repo, {
-        operationId: `ba-story:${a.artifactId}`,
-        artifactId: a.artifactId,
-        jiraIssueKey: a.jiraIssueKey,
-        result: a.action === "CREATE" ? "ok" : "skipped",
-        provider: opts.provider.flavor,
-        kind: "create-story",
-        detail: a.action,
-      });
-    }
+  if (opts.dryRun) {
+    return {
+      ok: true,
+      handoff,
+      storyKeys: canonical,
+      created,
+      plan: result.plan,
+      planText: result.planText,
+      proposalReady,
+      migration: adoption.status === "adopted" ? "required" : "none",
+    };
+  }
+  const handoffPath = join(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
+  assertRole("ba", "ba-handoff");
+  await opts.provider.setIssueProperty(opts.epicKey, "praxis.baHandoff", handoff);
+  await ensureBaHandoffComment(opts.provider, opts.epicKey, canonical);
+  await opts.provider.writePraxisState(opts.epicKey, { lifecycle: "architecture" });
+  const remote = await opts.provider.getIssueProperty<JiraBaHandoff>(
+    opts.epicKey,
+    "praxis.baHandoff",
+  );
+  if (!remote || remote.readyForArchitecture !== true) {
+    throw new Error("BA remote handoff property missing after apply");
+  }
+  writeJsonAtomic(handoffPath, handoff);
+  for (const a of result.applied) {
+    if (!a.jiraIssueKey) continue;
+    record(opts.repo, {
+      operationId: `ba-story:${a.artifactId}`,
+      artifactId: a.artifactId,
+      jiraIssueKey: a.jiraIssueKey,
+      result: a.action === "CREATE" ? "ok" : "skipped",
+      provider: opts.provider.flavor,
+      kind: "create-story",
+      detail: a.action,
+    });
   }
   return {
     ok: true,
@@ -374,24 +429,15 @@ export async function architectPlanEpic(opts: {
     opts.epicKey,
     "praxis.baHandoff",
   );
-  const localPath = join(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
-  const local = readJsonFile<JiraBaHandoff>(localPath, "BA architect handoff");
-  if (!local.ok && local.reason !== "missing") {
-    throw new Error(`BA_HANDOFF_UNAVAILABLE: ${local.message}`);
-  }
-  const handoff = remoteHandoff ?? (local.ok ? local.value : null);
-  const parsed = handoff ? JiraBaHandoffSchema.safeParse(handoff) : null;
-  if (parsed && !parsed.success) {
+  const parsedRemote = remoteHandoff
+    ? JiraBaHandoffSchema.safeParse(remoteHandoff)
+    : null;
+  if (!parsedRemote?.success || !parsedRemote.data.readyForArchitecture) {
     throw new Error(
-      `BA_HANDOFF_INVALID: schema validation failed for ${opts.epicKey}`,
+      `BA_REMOTE_APPLY_INCOMPLETE: remote BA apply is not complete for ${opts.epicKey} (Architect skipped)`,
     );
   }
-  if (!parsed?.success || !parsed.data.readyForArchitecture) {
-    throw new Error(
-      `BA_HANDOFF_NOT_READY: BA handoff not ready for ${opts.epicKey} (Architect skipped)`,
-    );
-  }
-  const ready = parsed.data;
+  const ready = parsedRemote.data;
   const flags = await loadEpicIssueFlags(opts.provider, opts.epicKey);
   const fromHandoff =
     ready.canonicalStoryKeys?.length
@@ -488,9 +534,8 @@ export async function architectPlanEpic(opts: {
       if (aid === wpArtifact) wpKey = c.key;
     }
     const meta = await opts.provider.discoverMetadata();
-    const wpType = meta.workPackageTypeId
-      ? "Work Package"
-      : opts.provider.config.taskType;
+    const wpTypeId = meta.workPackageTypeId ?? meta.taskTypeId;
+    const wpType = opts.provider.config.taskType;
     const labels = meta.workPackageTypeId
       ? ["praxis-managed"]
       : ["praxis-managed", "praxis-work-package"];
@@ -499,6 +544,7 @@ export async function architectPlanEpic(opts: {
       const created = await opts.provider.createIssue({
         summary: `WP: ${story.summary}`,
         issueType: wpType,
+        issueTypeId: wpTypeId,
         parentKey: opts.epicKey,
         labels,
         description: opts.provider.renderDescription(
@@ -823,8 +869,9 @@ export async function qaVerifyWorkPackage(opts: {
   for (const f of blocking) {
     assertRole("qa", "create-bug");
     const artifactId = `bug:${f.fingerprint}`;
+    const meta = await opts.provider.discoverMetadata();
     const existingBugs = await opts.provider.searchIssues(
-      `issuetype = ${opts.provider.config.bugType} AND project = ${opts.provider.config.projectKey}`,
+      `issuetype = ${meta.bugTypeId} AND project = ${opts.provider.config.projectKey}`,
     );
     let bugKey: string | undefined;
     for (const b of existingBugs) {
@@ -835,6 +882,7 @@ export async function qaVerifyWorkPackage(opts: {
       const created = await opts.provider.createIssue({
         summary: f.summary,
         issueType: opts.provider.config.bugType,
+        issueTypeId: meta.bugTypeId,
         labels: ["praxis-managed", "praxis-blocking"],
         description: opts.provider.renderDescription(
           headingParagraphs([
@@ -943,6 +991,7 @@ export async function collectEpicStatus(
   claims: unknown[];
   quality: unknown[];
   bugs: string[];
+  ba: { proposalReady: boolean; readyForArchitecture: boolean };
 }> {
   const epic = await provider.getIssue(epicKey);
   const flags = await loadEpicIssueFlags(provider, epicKey);
@@ -961,7 +1010,11 @@ export async function collectEpicStatus(
       if (q) quality.push(q);
     }
   }
-  const bugs = flags.filter((f) => f.issueType.toLowerCase() === "bug").map((f) => f.key);
+  const bugs = flags.filter((f) => f.semanticType === "bug").map((f) => f.key);
+  const remoteHandoff = await provider.getIssueProperty<JiraBaHandoff>(
+    epicKey,
+    "praxis.baHandoff",
+  );
   return {
     epic: { key: epic.key, summary: epic.summary },
     canonicalStories: stories,
@@ -970,5 +1023,9 @@ export async function collectEpicStatus(
     claims,
     quality,
     bugs,
+    ba: {
+      proposalReady: remoteHandoff?.proposalReady ?? false,
+      readyForArchitecture: remoteHandoff?.readyForArchitecture === true,
+    },
   };
 }

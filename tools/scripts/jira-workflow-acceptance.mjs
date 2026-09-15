@@ -68,6 +68,13 @@ console.log(
         "QA bug/block lifecycle",
         "external tgz install",
         "one-line Claude role launcher contracts",
+        "localized Jira semantic issue types",
+        "no display-name type dependency",
+        "empty 2xx Jira response support",
+        "property write verification after empty response",
+        "partial BA apply resume",
+        "BA handoff comment idempotency",
+        "remote BA readiness after apply only",
       ],
       pending: [
         "live Jira Cloud full E2E",

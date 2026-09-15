@@ -93,6 +93,10 @@ async function applyPraxisMetadata(
   await provider.setIssueProperty(key, "praxis.sourceEpic", epicKey);
   await provider.setIssueProperty(key, "praxis.contentFingerprint", fingerprint);
   await provider.writePraxisState(key, { lifecycle: "ready-for-architecture" });
+  const stored = await provider.getIssueProperty<string>(key, ARTIFACT_PROP);
+  if (stored !== artifactId) {
+    throw new Error(`property verify failed for ${ARTIFACT_PROP} on ${key}`);
+  }
 }
 
 async function verifyCreated(
@@ -291,6 +295,7 @@ export async function planAndApplyBaStories(opts: {
     const createdIssue = await opts.provider.createIssue({
       summary: spec.summary,
       issueType: opts.provider.config.storyType,
+      issueTypeId: (await opts.provider.discoverMetadata()).storyTypeId,
       description: storyDescription(opts.provider, spec, opts.epicKey),
       parentKey: opts.epicKey,
       labels: ["praxis-managed"],

@@ -16,6 +16,10 @@ export type JiraConfig = {
   taskType: string;
   bugType: string;
   workPackageType: string;
+  epicTypeId?: string;
+  storyTypeId?: string;
+  taskTypeId?: string;
+  bugTypeId?: string;
   storyPointsField?: string;
   transitions: Record<string, string>;
   workPackageMaxHours: number;
@@ -164,6 +168,10 @@ export function loadJiraConfig(
     taskType: env.PRAXIS_JIRA_TASK_TYPE ?? "Task",
     bugType: env.PRAXIS_JIRA_BUG_TYPE ?? "Bug",
     workPackageType: env.PRAXIS_JIRA_WORK_PACKAGE_TYPE ?? "",
+    epicTypeId: env.PRAXIS_JIRA_EPIC_TYPE_ID || undefined,
+    storyTypeId: env.PRAXIS_JIRA_STORY_TYPE_ID || undefined,
+    taskTypeId: env.PRAXIS_JIRA_TASK_TYPE_ID || undefined,
+    bugTypeId: env.PRAXIS_JIRA_BUG_TYPE_ID || undefined,
     storyPointsField: env.PRAXIS_JIRA_STORY_POINTS_FIELD,
     transitions: readTransitions(env),
     workPackageMaxHours: Number.isFinite(maxHours) ? maxHours : 16,

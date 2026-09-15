@@ -15,6 +15,8 @@ import type {
   SetFixVersionInput,
 } from "./types.js";
 
+import { readJiraResponseJson } from "./http.js";
+
 export type { JiraConfig } from "./config.js";
 export { loadJiraConfig, patSupportedForVersion, parseJiraVersion } from "./config.js";
 export type * from "./types.js";
@@ -143,12 +145,7 @@ export class JiraClient {
       headers: this.headers(),
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`Jira ${method} ${path} failed: HTTP ${res.status} ${text}`);
-    }
-    if (res.status === 204) return undefined as T;
-    return (await res.json()) as T;
+    return readJiraResponseJson<T>(res, method, path);
   }
 
   createFeaturePreview(input: CreateFeatureInput): MutationPreview {
@@ -403,5 +400,10 @@ export {
   createMockFetch,
   createMockJiraState,
 } from "./rest-provider.js";
+export { parseJiraSuccessBody, readJiraResponseJson } from "./http.js";
+export {
+  buildIssueTypeMapping,
+  resolveSemanticType,
+} from "./issue-types.js";
 export { detectJiraMode } from "./config.js";
 export type { JiraProvider } from "./provider.js";

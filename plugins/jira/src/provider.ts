@@ -13,7 +13,11 @@ export type JiraIssueLite = {
   summary: string;
   description?: unknown;
   status: string;
+  /** Localized display name. Not a semantic source of truth. */
   issueType: string;
+  issueTypeId?: string;
+  semanticType: import("./issue-types.js").JiraIssueSemanticType;
+  hierarchyLevel?: number;
   labels: string[];
   parentKey?: string;
   assignee?: JiraUser;
@@ -37,7 +41,7 @@ export type MetadataContext = {
   taskTypeId: string;
   bugTypeId: string;
   workPackageTypeId?: string;
-  issueTypes: { id: string; name: string }[];
+  issueTypes: import("./issue-types.js").IssueTypeDescriptor[];
   fields: { id: string; name: string }[];
   versions: { id: string; name: string }[];
   transitionsByName: Record<string, string>;
@@ -46,6 +50,7 @@ export type MetadataContext = {
 export type CreateIssueInput = {
   summary: string;
   issueType: string;
+  issueTypeId?: string;
   description?: unknown;
   parentKey?: string;
   labels?: string[];
@@ -85,7 +90,9 @@ export interface JiraProvider {
   }>;
   getCurrentUser(): Promise<JiraUser>;
   getProject(): Promise<{ key: string; name: string; id: string }>;
-  getIssueTypes(): Promise<{ id: string; name: string }[]>;
+  getIssueTypes(): Promise<
+    import("./issue-types.js").RawIssueType[]
+  >;
   getFields(): Promise<{ id: string; name: string }[]>;
   getVersions(): Promise<{ id: string; name: string }[]>;
   createVersion(name: string): Promise<{ id: string; name: string }>;
