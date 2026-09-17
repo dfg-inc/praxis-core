@@ -34,4 +34,22 @@ describe("issue type resolution", () => {
     expect(resolveSemanticType({ name: "Задача", id: "2" }, mapping, cfg)).toBe("task");
     expect(resolveSemanticType({ name: "Ошибка", id: "3" }, mapping, cfg)).toBe("bug");
   });
+
+  it("maps localized Баг to semantic bug and numeric type id", () => {
+    const mapping = buildIssueTypeMapping(
+      [
+        { id: "10000", name: "Эпик", hierarchyLevel: 1 },
+        { id: "10012", name: "Баг", hierarchyLevel: 0 },
+      ],
+      cfg,
+    );
+    expect(mapping.bugTypeId).toBe("10012");
+    expect(mapping.types.find((t) => t.id === "10012")).toMatchObject({
+      displayName: "Баг",
+      semanticType: "bug",
+    });
+    expect(
+      resolveSemanticType({ name: "Баг", id: "10012" }, mapping, cfg),
+    ).toBe("bug");
+  });
 });

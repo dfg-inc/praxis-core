@@ -41,6 +41,54 @@ export function parseJiraSuccessBody<T = unknown>(opts: {
   }
 }
 
+export function isTransientHttp(status: number): boolean {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+
+export function isTransientError(err: unknown): boolean {
+  const code =
+    err && typeof err === "object" && "code" in err
+      ? String((err as { code?: string }).code ?? "")
+      : "";
+  const cause =
+    err && typeof err === "object" && "cause" in err
+      ? (err as { cause?: { code?: string; message?: string } }).cause
+      : undefined;
+  const msg = `${code} ${cause?.code ?? ""} ${cause?.message ?? ""} ${err instanceof Error ? err.message : String(err)}`;
+  return /UND_ERR_SOCKET|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|other side closed|fetch failed/i.test(
+    msg,
+  );
+}
+
+export async function sleepBackoff(
+  attempt: number,
+  retryAfter: string | null | undefined,
+): Promise<void> {
+  if (process.env.PRAXIS_JIRA_RETRY_BACKOFF_MS === "0") return;
+  const fromHeader = retryAfter ? Number(retryAfter) * 1000 : NaN;
+  const base = Number.isFinite(fromHeader) ? fromHeader : 200 * 2 ** (attempt - 1);
+  const jitter = Math.floor(Math.random() * 50);
+  await new Promise((r) => setTimeout(r, Math.min(base + jitter, 4000)));
+}
+
+export function contextualTransportError(
+  err: unknown,
+  ctx: { provider: string; method: string; path: string; attempt: number },
+): Error {
+  const code =
+    err && typeof err === "object" && "code" in err
+      ? String((err as { code?: string }).code)
+      : "";
+  const msg = err instanceof Error ? err.message : String(err);
+  const safe = msg
+    .replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>")
+    .replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>")
+    .replace(/Bearer\s+\S+/g, "Bearer <redacted>");
+  return new Error(
+    `Jira ${ctx.provider} ${ctx.method} ${ctx.path} failed after ${ctx.attempt} attempt(s)${code ? ` code=${code}` : ""}: ${safe}`,
+  );
+}
+
 export async function readJiraResponseJson<T>(
   res: Response,
   method: string,

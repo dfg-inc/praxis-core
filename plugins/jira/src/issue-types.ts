@@ -43,6 +43,7 @@ export const ISSUE_TYPE_NAME_ALIASES: Record<string, JiraIssueSemanticType> = {
   task: "task",
   задача: "task",
   bug: "bug",
+  баг: "bug",
   ошибка: "bug",
   epic: "epic",
   эпик: "epic",

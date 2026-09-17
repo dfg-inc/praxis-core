@@ -66,6 +66,7 @@ export const PRAXIS_ISSUE_PROPERTIES = [
   "praxis.supersededBy",
   "praxis.state",
   "praxis.workPackage",
+  "praxis.architectCommentId",
   "praxis.claim",
   "praxis.requirementIds",
   "praxis.contentFingerprint",
@@ -108,6 +109,11 @@ export interface JiraProvider {
   getTransitions(key: string): Promise<Transition[]>;
   transitionIssue(key: string, transitionIdOrName: string): Promise<void>;
   addComment(key: string, body: unknown): Promise<{ id: string }>;
+  updateComment(
+    key: string,
+    commentId: string,
+    body: unknown,
+  ): Promise<{ id: string }>;
   getComments(key: string): Promise<JiraComment[]>;
   addAttachment(
     key: string,

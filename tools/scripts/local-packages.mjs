@@ -19,6 +19,7 @@ export const SHARED_WORKSPACES = [
   "@praxis/project-config",
   "@praxis/knowledge",
   "@praxis/plugin-sdk",
+  "@praxis/cli",
 ];
 
 export const PLUGIN_WORKSPACES = [
@@ -156,12 +157,14 @@ export function validateInstall(testRepo, version) {
   const qualityPkg = join(testRepo, "node_modules/@praxis/quality/package.json");
   if (!existsSync(qualityPkg)) fail(`missing ${qualityPkg}`);
   const smoke = spawnSync(
-    `node --input-type=module -e "import '@praxis/contracts'; import '@praxis/jira'; import '@praxis/plugin-sdk'; console.log('imports-ok')"`,
+    `node --input-type=module -e "import '@praxis/contracts'; import '@praxis/jira'; import '@praxis/plugin-sdk'; import '@praxis/cli'; console.log('imports-ok')"`,
     { cwd: testRepo, shell: true, encoding: "utf8" },
   );
   if ((smoke.status ?? 1) !== 0) {
     fail(`import smoke failed\n${smoke.stderr || smoke.stdout}`);
   }
+  const cliBin = join(testRepo, "node_modules/@praxis/cli/dist/main.js");
+  if (!existsSync(cliBin)) fail(`missing CLI entry ${cliBin}`);
   console.log(`install-test PASS version=${version} repo=${testRepo}`);
   return { ok: true, version, testRepo };
 }

@@ -32,7 +32,7 @@ function formatIssue(issue) {
 
 if (!cmd) {
   console.error(
-    "usage: jira-workflow.mjs smoke|epic|status|discover|ba-preview|ba-apply|architect-preview",
+    "usage: jira-workflow.mjs smoke|epic|status|discover|ba-preview|ba-apply|architect-preview|architect-apply",
   );
   process.exit(2);
 }
@@ -137,6 +137,7 @@ if (cmd === "architect-preview") {
       repo,
       dryRun: true,
     });
+    if (arch.planText) console.log(arch.planText);
     console.log(JSON.stringify({ ok: true, dryRun: true, arch }, null, 2));
     process.exit(0);
   } catch (e) {
@@ -144,6 +145,37 @@ if (cmd === "architect-preview") {
     console.log(JSON.stringify({ ok: false, skipped: true, reason: msg }, null, 2));
     process.exit(0);
   }
+}
+
+if (cmd === "architect-apply") {
+  if (flag("--confirm") !== "YES") {
+    console.error("architect-apply requires --confirm YES");
+    process.exit(3);
+  }
+  const epic = flag("--epic");
+  const repo = flag("--repo") ?? ".";
+  const arch = await architectPlanEpic({
+    provider,
+    epicKey: epic,
+    repo,
+    dryRun: false,
+  });
+  if (arch.planText) console.log(arch.planText);
+  console.log(
+    JSON.stringify(
+      {
+        ok: arch.ok !== false,
+        dryRun: false,
+        workPackages: arch.workPackages,
+        taskKeys: arch.taskKeys,
+        readyForDevelopment: arch.readyForDevelopment,
+        plan: arch.plan,
+      },
+      null,
+      2,
+    ),
+  );
+  process.exit(arch.ok === false ? 4 : 0);
 }
 
 if (cmd === "status") {
@@ -182,5 +214,5 @@ if (cmd === "status") {
   process.exit(0);
 }
 
-console.error("usage: jira-workflow.mjs smoke|epic|status|discover|ba-preview|ba-apply|architect-preview");
+console.error("usage: jira-workflow.mjs smoke|epic|status|discover|ba-preview|ba-apply|architect-preview|architect-apply");
 process.exit(2);

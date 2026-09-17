@@ -1,0 +1,39 @@
+{
+  "name": "@praxis/cli",
+  "version": "0.1.0-alpha.26",
+  "private": true,
+  "type": "module",
+  "description": "Public Praxis CLI — canonical machine/runtime interface for agents, CI, and plugins",
+  "license": "UNLICENSED",
+  "bin": {
+    "praxis": "./bin/praxis.js"
+  },
+  "main": "./dist/main.js",
+  "types": "./dist/main.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/main.d.ts",
+      "default": "./dist/main.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@praxis/contracts": "*",
+    "@praxis/jira": "*",
+    "@praxis/project-config": "*"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "typescript": "~5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -95,6 +95,27 @@ async function seedEpic(mode: "cloud" | "datacenter") {
   return { provider, state, epicKey: epic.key, fetchImpl };
 }
 
+function seedCanonicalWp(repo: string, id = "WP-20260914-002") {
+  const dir = join(repo, "design", id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "index.md"),
+    "# Counter Reset\n\nImplement reset() on the counter library.\n",
+  );
+  writeFileSync(
+    join(dir, "change-spec.json"),
+    `${JSON.stringify({ id, files: ["src/index.js"] }, null, 2)}\n`,
+  );
+  writeFileSync(
+    join(dir, "architect-developer.handoff.json"),
+    `${JSON.stringify({
+      contract: "architect.developer.handoff",
+      version: "1.0.0",
+      workPackageId: id,
+    }, null, 2)}\n`,
+  );
+}
+
 function storySpec(epicKey: string, summary = "core story") {
   return {
     logicalId: `REQ-${epicKey}-1`,
@@ -224,11 +245,13 @@ describe("jira workflow orchestration", () => {
     const { provider, epicKey } = await seedEpic("datacenter");
     const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
     await analyze(provider, epicKey, repo);
+    seedCanonicalWp(repo);
     const plan = await architectPlanEpic({ provider, epicKey, repo });
     expect(plan.workPackages.length).toBeGreaterThan(0);
     for (const wp of plan.workPackages) {
       expect(wp.storyKeys.length).toBeGreaterThan(0);
-      expect(wp.taskKeys.length).toBeGreaterThan(0);
+      expect(wp.taskKeys.length).toBe(0);
+      expect(wp.id).toMatch(/^WP-\d{8}-\d+$/);
     }
     const again = await architectPlanEpic({ provider, epicKey, repo });
     expect(again.workPackages.map((w) => w.jiraIssueKey)).toEqual(
@@ -240,6 +263,7 @@ describe("jira workflow orchestration", () => {
     const { provider, epicKey } = await seedEpic("cloud");
     const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
     await analyze(provider, epicKey, repo);
+    seedCanonicalWp(repo);
     const { workPackages } = await architectPlanEpic({ provider, epicKey, repo });
     const wpKey = workPackages[0]!.jiraIssueKey;
     const first = await claimWorkPackage({
@@ -273,6 +297,7 @@ describe("jira workflow orchestration", () => {
     const { provider, epicKey, state } = await seedEpic("cloud");
     const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
     await analyze(provider, epicKey, repo);
+    seedCanonicalWp(repo);
     const { workPackages } = await architectPlanEpic({ provider, epicKey, repo });
     const wpKey = workPackages[0]!.jiraIssueKey;
     const issue = state.issues.get(wpKey)!;
@@ -317,6 +342,7 @@ describe("jira workflow orchestration", () => {
     const { provider, epicKey } = await seedEpic("datacenter");
     const repo = mkdtempSync(join(tmpdir(), "praxis-jira-"));
     await analyze(provider, epicKey, repo);
+    seedCanonicalWp(repo);
     const { workPackages } = await architectPlanEpic({ provider, epicKey, repo });
     const wpKey = workPackages[0]!.jiraIssueKey;
     await claimWorkPackage({
@@ -352,6 +378,7 @@ describe("jira workflow orchestration", () => {
       "stack: [node]\nquality:\n  build: \"node -e process.exit(0)\"\n  test: \"node -e process.exit(0)\"\n",
     );
     await analyze(provider, epicKey, repo);
+    seedCanonicalWp(repo);
     const { workPackages } = await architectPlanEpic({ provider, epicKey, repo });
     const wpKey = workPackages[0]!.jiraIssueKey;
     expect(() => assertQaPathAllowed("src/index.ts")).toThrow(/source guard/);
@@ -661,6 +688,7 @@ describe("canonical/superseded downstream", () => {
       repo,
       stories: [CORE_SPEC(epicKey)],
     });
+    seedCanonicalWp(repo);
     return { ...seeded, repo, ba, superseded, canonical };
   }
 

@@ -13,7 +13,13 @@ import type {
 import { PRAXIS_ISSUE_PROPERTIES } from "./provider.js";
 import type { PraxisRichTextDocument } from "@praxis/contracts";
 import { renderRichText } from "./rich-text.js";
-import { readJiraResponseJson } from "./http.js";
+import {
+  contextualTransportError,
+  isTransientError,
+  isTransientHttp,
+  readJiraResponseJson,
+  sleepBackoff,
+} from "./http.js";
 import {
   buildIssueTypeMapping,
   resolveSemanticType,
@@ -43,6 +49,7 @@ export const LOCALIZED_RU_ISSUE_TYPES: MockIssueType[] = [
   { id: "10001", name: "История", hierarchyLevel: 0, subtask: false },
   { id: "10002", name: "Задача", hierarchyLevel: 0, subtask: false },
   { id: "10003", name: "Ошибка", hierarchyLevel: 0, subtask: false },
+  { id: "10012", name: "Баг", hierarchyLevel: 0, subtask: false },
   { id: "10004", name: "Подзадача", hierarchyLevel: -1, subtask: true },
   { id: "10005", name: "Work Package", hierarchyLevel: 0, subtask: false },
 ];
@@ -227,7 +234,7 @@ export function createMockFetch(
         if (!issue) return notFound();
         return json({ comments: issue.comments });
       }
-      if (method === "POST" && rest.startsWith("/comment")) {
+      if (method === "POST" && rest.startsWith("/comment") && rest === "/comment") {
         if (!issue) return notFound();
         const c = {
           id: `c${issue.comments.length + 1}`,
@@ -236,6 +243,14 @@ export function createMockFetch(
         };
         issue.comments.push(c);
         return json(c, 201);
+      }
+      const putComment = rest.match(/^\/comment\/([^/]+)$/);
+      if (method === "PUT" && putComment) {
+        if (!issue) return notFound();
+        const hit = issue.comments.find((c) => c.id === putComment[1]);
+        if (!hit) return notFound();
+        hit.body = body.body ?? body;
+        return json(hit);
       }
       if (method === "POST" && rest.startsWith("/attachments")) {
         if (!issue) return notFound();
@@ -437,12 +452,51 @@ export class RestJiraProvider implements JiraProvider {
     path: string,
     body?: unknown,
   ): Promise<T> {
-    const res = await this.fetchImpl(this.url(path), {
+    const maxAttempts = 3;
+    const write = method !== "GET" && method !== "HEAD";
+    const retryWrites = method === "PUT";
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const res = await this.fetchImpl(this.url(path), {
+          method,
+          headers: this.headers(),
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        if (
+          !res.ok &&
+          isTransientHttp(res.status) &&
+          (!write || retryWrites) &&
+          attempt < maxAttempts
+        ) {
+          await sleepBackoff(attempt, res.headers.get("retry-after"));
+          continue;
+        }
+        return await readJiraResponseJson<T>(res, method, path);
+      } catch (err) {
+        lastErr = err;
+        if (
+          isTransientError(err) &&
+          (!write || retryWrites) &&
+          attempt < maxAttempts
+        ) {
+          await sleepBackoff(attempt, undefined);
+          continue;
+        }
+        throw contextualTransportError(err, {
+          provider: this.flavor,
+          method,
+          path,
+          attempt,
+        });
+      }
+    }
+    throw contextualTransportError(lastErr, {
+      provider: this.flavor,
       method,
-      headers: this.headers(),
-      body: body === undefined ? undefined : JSON.stringify(body),
+      path,
+      attempt: maxAttempts,
     });
-    return readJiraResponseJson<T>(res, method, path);
   }
 
   renderDescription(doc: PraxisRichTextDocument): unknown {
@@ -547,10 +601,10 @@ export class RestJiraProvider implements JiraProvider {
     const mapping = buildIssueTypeMapping(types ?? [], this.config);
     this.typeMapping = mapping;
     this.meta = {
-      epicTypeId: mapping.epicTypeId ?? this.config.epicTypeId ?? this.config.epicType,
-      storyTypeId: mapping.storyTypeId ?? this.config.storyTypeId ?? this.config.storyType,
-      taskTypeId: mapping.taskTypeId ?? this.config.taskTypeId ?? this.config.taskType,
-      bugTypeId: mapping.bugTypeId ?? this.config.bugTypeId ?? this.config.bugType,
+      epicTypeId: mapping.epicTypeId ?? this.config.epicTypeId ?? "",
+      storyTypeId: mapping.storyTypeId ?? this.config.storyTypeId ?? "",
+      taskTypeId: mapping.taskTypeId ?? this.config.taskTypeId ?? "",
+      bugTypeId: mapping.bugTypeId ?? this.config.bugTypeId ?? "",
       workPackageTypeId: mapping.workPackageTypeId,
       issueTypes: mapping.types,
       fields,
@@ -733,7 +787,7 @@ export class RestJiraProvider implements JiraProvider {
               : semantic === "work-package"
                 ? mapping.workPackageTypeId
                 : undefined;
-    const typeId = input.issueTypeId ?? idFromSemantic;
+    const typeId = input.issueTypeId || idFromSemantic;
     const issuetype = typeId ? { id: typeId } : { name: input.issueType };
     const body = {
       fields: {
@@ -805,6 +859,14 @@ export class RestJiraProvider implements JiraProvider {
     return this.requestJson<{ id: string }>(
       "POST",
       `${this.apiPrefix()}/issue/${encodeURIComponent(key)}/comment`,
+      { body },
+    );
+  }
+
+  async updateComment(key: string, commentId: string, body: unknown) {
+    return this.requestJson<{ id: string }>(
+      "PUT",
+      `${this.apiPrefix()}/issue/${encodeURIComponent(key)}/comment/${encodeURIComponent(commentId)}`,
       { body },
     );
   }

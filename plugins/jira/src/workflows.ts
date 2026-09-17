@@ -5,7 +5,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type {
   BaJiraWritePlanItem,
   JiraBaHandoff,
@@ -20,6 +20,8 @@ import type { JiraProvider } from "./provider.js";
 import { assertRole } from "./role-policy.js";
 import { spawnSync } from "node:child_process";
 import { headingParagraphs, textDocument } from "./rich-text.js";
+import { architectMaterialize } from "./architect-apply.js";
+import { resolveRemoteWpKey } from "./work-package-local.js";
 import { planAndApplyBaStories, type BaStorySpec, type BaWriteHooks } from "./ba-write.js";
 import { resolveBaArtifactId } from "./artifact-id.js";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
@@ -423,170 +425,30 @@ export async function architectPlanEpic(opts: {
   epicKey: string;
   repo: string;
   dryRun?: boolean;
-}): Promise<{ workPackages: PraxisWorkPackage[]; taskKeys: string[] }> {
-  assertRole("architect", "read-epic");
-  const remoteHandoff = await opts.provider.getIssueProperty<JiraBaHandoff>(
-    opts.epicKey,
-    "praxis.baHandoff",
-  );
-  const parsedRemote = remoteHandoff
-    ? JiraBaHandoffSchema.safeParse(remoteHandoff)
-    : null;
-  if (!parsedRemote?.success || !parsedRemote.data.readyForArchitecture) {
-    throw new Error(
-      `BA_REMOTE_APPLY_INCOMPLETE: remote BA apply is not complete for ${opts.epicKey} (Architect skipped)`,
-    );
+}): Promise<{
+  workPackages: PraxisWorkPackage[];
+  taskKeys: string[];
+  planText?: string;
+  plan?: unknown;
+  readyForDevelopment?: boolean;
+  ok?: boolean;
+  reason?: string;
+}> {
+  const result = await architectMaterialize(opts);
+  if (!result.ok && result.reason) {
+    throw new Error(`${result.reason}: Architect design package missing for ${opts.epicKey}`);
   }
-  const ready = parsedRemote.data;
-  const flags = await loadEpicIssueFlags(opts.provider, opts.epicKey);
-  const fromHandoff =
-    ready.canonicalStoryKeys?.length
-      ? ready.canonicalStoryKeys
-      : ready.storyKeys;
-  const storyKeys = fromHandoff.filter((key) => {
-    const f = flags.find((x) => x.key === key);
-    return !f || !isSupersededFlags(f);
-  });
-  const taskKeys: string[] = [];
-  const packages: PraxisWorkPackage[] = [];
-  const hoursCap = opts.provider.config.workPackageMaxHours;
-
-  for (const storyKey of storyKeys) {
-    assertRole("architect", "create-architecture");
-    const story = await opts.provider.getIssue(storyKey);
-    const arch = {
-      technicalApproach: `Implement ${story.summary} behind existing module boundaries.`,
-      nfr: ["observability: structured logs"],
-      testConsiderations: ["unit tests for new behavior"],
-      adrIds: [] as string[],
-      platformContractIds: [] as string[],
-      diagrams: [{ language: "mermaid", text: "flowchart LR\nA-->B" }],
-    };
-    if (!opts.dryRun) {
-      await opts.provider.writeArchitectureMetadata(storyKey, arch);
-      await opts.provider.addComment(
-        storyKey,
-        opts.provider.renderDescription(
-          headingParagraphs([
-            { heading: "Technical approach", body: arch.technicalApproach },
-            {
-              heading: "Diagram",
-              body: "",
-            },
-          ]),
-        ),
-      );
-      await opts.provider.addComment(
-        storyKey,
-        opts.provider.renderDescription({
-          version: 1,
-          blocks: [
-            {
-              type: "codeBlock",
-              language: "mermaid",
-              text: arch.diagrams[0].text,
-            },
-          ],
-        }),
-      );
-    }
-
-    const techArtifact = `task:${storyKey}:impl`;
-    let taskKey: string | undefined;
-    const children = await opts.provider.getChildren(storyKey);
-    for (const c of children) {
-      const aid = await opts.provider.getIssueProperty<string>(c.key, ARTIFACT_PROP);
-      if (aid === techArtifact) taskKey = c.key;
-    }
-    if (!taskKey && !opts.dryRun) {
-      assertRole("architect", "create-technical-ticket");
-      const created = await opts.provider.createIssue({
-        summary: `Technical implementation for ${storyKey}`,
-        issueType: opts.provider.config.taskType,
-        parentKey: storyKey,
-        labels: ["praxis-managed"],
-        description: opts.provider.renderDescription(
-          headingParagraphs([
-            {
-              heading: "Reason",
-              body: "Story requires a bounded technical task",
-            },
-            {
-              heading: "Technical acceptance criteria",
-              body: "Given the story AC, when implemented, then tests pass",
-            },
-          ]),
-        ),
-      });
-      await opts.provider.setIssueProperty(created.key, ARTIFACT_PROP, techArtifact);
-      await opts.provider.createIssueLink(storyKey, created.key, "Relates");
-      taskKey = created.key;
-      taskKeys.push(created.key);
-    } else if (taskKey) {
-      taskKeys.push(taskKey);
-    }
-
-    const wpArtifact = `wp:${storyKey}`;
-    let wpKey: string | undefined;
-    const epicChildren = await opts.provider.getChildren(opts.epicKey);
-    for (const c of epicChildren) {
-      const aid = await opts.provider.getIssueProperty<string>(c.key, ARTIFACT_PROP);
-      if (aid === wpArtifact) wpKey = c.key;
-    }
-    const meta = await opts.provider.discoverMetadata();
-    const wpTypeId = meta.workPackageTypeId ?? meta.taskTypeId;
-    const wpType = opts.provider.config.taskType;
-    const labels = meta.workPackageTypeId
-      ? ["praxis-managed"]
-      : ["praxis-managed", "praxis-work-package"];
-    if (!wpKey && !opts.dryRun) {
-      assertRole("architect", "create-work-package");
-      const created = await opts.provider.createIssue({
-        summary: `WP: ${story.summary}`,
-        issueType: wpType,
-        issueTypeId: wpTypeId,
-        parentKey: opts.epicKey,
-        labels,
-        description: opts.provider.renderDescription(
-          textDocument(`Work package for ${storyKey}`),
-        ),
-      });
-      wpKey = created.key;
-      await opts.provider.setIssueProperty(created.key, ARTIFACT_PROP, wpArtifact);
-      await opts.provider.setIssueProperty(created.key, "praxis.workPackage", true);
-      if (taskKey) await opts.provider.createIssueLink(created.key, taskKey, "Relates");
-      await opts.provider.createIssueLink(created.key, storyKey, "Relates");
-    }
-    if (!wpKey) continue;
-    const storyKeys = await assertCanonicalMembers(opts.provider, [storyKey]);
-    if (storyKeys.length !== 1) {
-      throw new Error(
-        `work package member ${storyKey} is superseded; Architect scope is canonical-only`,
-      );
-    }
-    const wp: PraxisWorkPackage = {
-      id: wpArtifact,
-      jiraIssueKey: wpKey,
-      epicKey: opts.epicKey,
-      title: `WP: ${story.summary}`,
-      storyKeys,
-      taskKeys: taskKey ? [taskKey] : [],
-      dependencyWorkPackages: [],
-      estimatedHours: Math.min(8, hoursCap),
-      architectureDecisionIds: [],
-      platformContractIds: [],
-      status: "ready",
-      claim: null,
-    };
-    const dir = join(opts.repo, "work-packages", wp.id);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "manifest.json"), `${JSON.stringify(wp, null, 2)}\n`);
-    await opts.provider.setIssueProperty(wpKey, "praxis.workPackageManifest", wp);
-    await opts.provider.writePraxisState(wpKey, { lifecycle: "ready" });
-    packages.push(wp);
-  }
-  await opts.provider.writePraxisState(opts.epicKey, { lifecycle: "development" });
-  return { workPackages: packages, taskKeys };
+  return {
+    workPackages: opts.dryRun
+      ? result.workPackages
+      : result.workPackages.filter((w) => w.jiraIssueKey !== "PLANNED"),
+    taskKeys: result.taskKeys,
+    planText: result.planText,
+    plan: result.plan,
+    readyForDevelopment: result.readyForDevelopment,
+    ok: result.ok,
+    reason: result.reason,
+  };
 }
 
 export async function claimWorkPackage(opts: {
@@ -596,10 +458,12 @@ export async function claimWorkPackage(opts: {
   actor: string;
   accountId: string;
 }): Promise<WorkPackageClaim> {
+  const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
+
   assertRole("developer", "claim-work-package");
-  const remote = await opts.provider.getIssue(opts.wpKey);
+  const remote = await opts.provider.getIssue(wpKey);
   const existing = await opts.provider.getIssueProperty<WorkPackageClaim>(
-    opts.wpKey,
+    wpKey,
     "praxis.claim",
   );
   if (
@@ -608,7 +472,7 @@ export async function claimWorkPackage(opts: {
     existing.jiraAccountId !== opts.accountId
   ) {
     throw new Error(
-      `claim denied: ${opts.wpKey} is held by ${existing.actor} (token ${existing.claimToken})`,
+      `claim denied: ${wpKey} is held by ${existing.actor} (token ${existing.claimToken})`,
     );
   }
   if (existing && existing.jiraAccountId === opts.accountId) {
@@ -617,7 +481,7 @@ export async function claimWorkPackage(opts: {
   const token = randomUUID();
   const manifest =
     (await opts.provider.getIssueProperty<PraxisWorkPackage>(
-      opts.wpKey,
+      wpKey,
       "praxis.workPackageManifest",
     )) ?? null;
   const member = await assertCanonicalMembers(opts.provider, [
@@ -626,7 +490,7 @@ export async function claimWorkPackage(opts: {
   ]);
   if (member.length === 0) {
     throw new Error(
-      `work package ${opts.wpKey} has no canonical members after Jira reread (superseded-only or empty)`,
+      `work package ${wpKey} has no canonical members after Jira reread (superseded-only or empty)`,
     );
   }
   if (manifest) {
@@ -643,15 +507,15 @@ export async function claimWorkPackage(opts: {
       repaired.taskKeys.length !== manifest.taskKeys.length
     ) {
       await opts.provider.setIssueProperty(
-        opts.wpKey,
+        wpKey,
         "praxis.workPackageManifest",
         repaired,
       );
     }
   }
   const claim: WorkPackageClaim = {
-    workPackageId: manifest?.id ?? opts.wpKey,
-    jiraWorkPackageKey: opts.wpKey,
+    workPackageId: manifest?.id ?? wpKey,
+    jiraWorkPackageKey: wpKey,
     actor: opts.actor,
     jiraAccountId: opts.accountId,
     claimedAt: new Date().toISOString(),
@@ -660,40 +524,40 @@ export async function claimWorkPackage(opts: {
     expectedState: "claimed",
     state: "active",
   };
-  await opts.provider.assignIssue(opts.wpKey, opts.accountId);
-  await opts.provider.transitionIssue(opts.wpKey, "In Progress");
+  await opts.provider.assignIssue(wpKey, opts.accountId);
+  await opts.provider.transitionIssue(wpKey, "In Progress");
   for (const key of member) {
     await opts.provider.assignIssue(key, opts.accountId);
     await opts.provider.transitionIssue(key, "In Progress");
   }
-  await opts.provider.setIssueProperty(opts.wpKey, "praxis.claim", claim);
+  await opts.provider.setIssueProperty(wpKey, "praxis.claim", claim);
   const labels = Array.from(new Set([...remote.labels, "praxis-claimed"]));
-  await opts.provider.updateIssue(opts.wpKey, { labels });
+  await opts.provider.updateIssue(wpKey, { labels });
   const verify = await opts.provider.getIssueProperty<WorkPackageClaim>(
-    opts.wpKey,
+    wpKey,
     "praxis.claim",
   );
   if (!verify || verify.claimToken !== token) {
-    await opts.provider.writePraxisState(opts.wpKey, {
+    await opts.provider.writePraxisState(wpKey, {
       lifecycle: "blocked",
       reason: "claim-race",
     });
     throw new Error(
-      `claim race detected on ${opts.wpKey}; package blocked until resolved (not a distributed atomic lock)`,
+      `claim race detected on ${wpKey}; package blocked until resolved (not a distributed atomic lock)`,
     );
   }
   mkdirSync(join(opts.repo, ".praxis-jira", "claims"), { recursive: true });
   writeFileSync(
-    join(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`),
+    join(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`),
     `${JSON.stringify(claim, null, 2)}\n`,
   );
   await opts.provider.addComment(
-    opts.wpKey,
+    wpKey,
     opts.provider.renderDescription(
       textDocument(`Work Package claimed by ${opts.actor}`),
     ),
   );
-  await opts.provider.writePraxisState(opts.wpKey, { lifecycle: "claimed" });
+  await opts.provider.writePraxisState(wpKey, { lifecycle: "claimed" });
   return claim;
 }
 
@@ -732,12 +596,14 @@ export async function developerCompleteWp(opts: {
     verification: { ok: boolean };
   };
 }): Promise<void> {
+  const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
+
   assertRole("developer", "developer-evidence");
   const manifest = await opts.provider.getIssueProperty<PraxisWorkPackage>(
-    opts.wpKey,
+    wpKey,
     "praxis.workPackageManifest",
   );
-  if (!manifest) throw new Error(`missing work package manifest on ${opts.wpKey}`);
+  if (!manifest) throw new Error(`missing work package manifest on ${wpKey}`);
   const required = await assertCanonicalMembers(opts.provider, [
     ...manifest.storyKeys,
     ...manifest.taskKeys,
@@ -749,18 +615,18 @@ export async function developerCompleteWp(opts: {
     throw new Error("cannot mark Ready for QA: verification failed");
   }
   const claim = await opts.provider.getIssueProperty<WorkPackageClaim>(
-    opts.wpKey,
+    wpKey,
     "praxis.claim",
   );
   if (claim) {
-    await opts.provider.setIssueProperty(opts.wpKey, "praxis.claim", {
+    await opts.provider.setIssueProperty(wpKey, "praxis.claim", {
       ...claim,
       state: "implementation-complete",
     });
   }
   assertRole("developer", "transition-ready-for-qa");
   await opts.provider.addComment(
-    opts.wpKey,
+    wpKey,
     opts.provider.renderDescription(
       textDocument(
         [
@@ -775,8 +641,8 @@ export async function developerCompleteWp(opts: {
       ),
     ),
   );
-  await opts.provider.transitionIssue(opts.wpKey, "Done");
-  await opts.provider.writePraxisState(opts.wpKey, { lifecycle: "ready-for-qa" });
+  await opts.provider.transitionIssue(wpKey, "Done");
+  await opts.provider.writePraxisState(wpKey, { lifecycle: "ready-for-qa" });
   for (const key of required) {
     await opts.provider.writePraxisState(key, { lifecycle: "ready-for-qa" });
   }
@@ -837,6 +703,8 @@ export async function qaVerifyWorkPackage(opts: {
   addTests?: string[];
   findings?: Array<{ fingerprint: string; blocking: boolean; summary: string }>;
 }): Promise<QualityWpReport> {
+  const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
+
   assertRole("qa", "qa-report");
   const q = loadQualityCommands(opts.repo);
   const build = runAllowlisted(q.build, opts.repo);
@@ -857,7 +725,7 @@ export async function qaVerifyWorkPackage(opts: {
     for (const f of opts.addTests) assertQaPathAllowed(f);
   }
   const manifest = await opts.provider.getIssueProperty<PraxisWorkPackage>(
-    opts.wpKey,
+    wpKey,
     "praxis.workPackageManifest",
   );
   const canonicalStories = await assertCanonicalMembers(
@@ -886,7 +754,7 @@ export async function qaVerifyWorkPackage(opts: {
         labels: ["praxis-managed", "praxis-blocking"],
         description: opts.provider.renderDescription(
           headingParagraphs([
-            { heading: "Work Package", body: opts.wpKey },
+            { heading: "Work Package", body: wpKey },
             { heading: "Reproduction", body: f.summary },
             { heading: "Expected", body: "No blocking defect" },
             { heading: "Actual", body: f.summary },
@@ -898,7 +766,7 @@ export async function qaVerifyWorkPackage(opts: {
       await opts.provider.setIssueProperty(created.key, "praxis.managed", true);
       await opts.provider.setIssueProperty(created.key, "praxis.role", "qa");
       await opts.provider.setIssueProperty(created.key, "praxis.blocking", true);
-      await opts.provider.createIssueLink(opts.wpKey, created.key, "Relates");
+      await opts.provider.createIssueLink(wpKey, created.key, "Relates");
       if (canonicalStories[0]) {
         await opts.provider.createIssueLink(canonicalStories[0], created.key, "Relates");
       }
@@ -906,25 +774,25 @@ export async function qaVerifyWorkPackage(opts: {
   }
   if (blocking.length) {
     assertRole("qa", "block-package");
-    await opts.provider.writePraxisState(opts.wpKey, {
+    await opts.provider.writePraxisState(wpKey, {
       lifecycle: "blocked",
       blockedBy: blocking.map((b) => b.fingerprint),
     });
     await opts.provider.setIssueProperty(
-      opts.wpKey,
+      wpKey,
       "praxis.blockedBy",
       blocking.map((b) => b.fingerprint),
     );
   } else if (build.ok && test.ok) {
     assertRole("qa", "qa-pass");
-    await opts.provider.writePraxisState(opts.wpKey, { lifecycle: "qa-passed" });
+    await opts.provider.writePraxisState(wpKey, { lifecycle: "qa-passed" });
   }
 
   const report: QualityWpReport = {
     contract: "quality.work-package.report",
     version: "1.0.0",
-    workPackageId: manifest?.id ?? opts.wpKey,
-    jiraWorkPackageKey: opts.wpKey,
+    workPackageId: manifest?.id ?? wpKey,
+    jiraWorkPackageKey: wpKey,
     memberIssueResults: canonicalStories.map((k) => ({
       jiraIssueKey: k,
       acceptanceCriteria: [],
@@ -949,20 +817,20 @@ export async function qaVerifyWorkPackage(opts: {
   const outDir = join(opts.repo, ".praxis-jira", "quality");
   mkdirSync(outDir, { recursive: true });
   writeFileSync(
-    join(outDir, `${opts.wpKey}.json`),
+    join(outDir, `${wpKey}.json`),
     `${JSON.stringify(report, null, 2)}\n`,
   );
   writeFileSync(
-    join(outDir, `${opts.wpKey}.md`),
-    `# Quality report ${opts.wpKey}\n\nVerdict: **${report.overallVerdict}**\n`,
+    join(outDir, `${wpKey}.md`),
+    `# Quality report ${wpKey}\n\nVerdict: **${report.overallVerdict}**\n`,
   );
   await opts.provider.addComment(
-    opts.wpKey,
+    wpKey,
     opts.provider.renderDescription(
       textDocument(`Quality report ${report.overallVerdict}`),
     ),
   );
-  await opts.provider.setIssueProperty(opts.wpKey, "praxis.qualityReport", report);
+  await opts.provider.setIssueProperty(wpKey, "praxis.qualityReport", report);
   return report;
 }
 
@@ -987,7 +855,7 @@ export async function collectEpicStatus(
   epic: { key: string; summary: string };
   canonicalStories: string[];
   superseded: Array<{ from: string; to: string }>;
-  workPackages: Array<{ key: string; title: string }>;
+  workPackages: Array<{ key: string; title: string; localWorkPackageId?: string; status?: string; members?: string[] }>;
   claims: unknown[];
   quality: unknown[];
   bugs: string[];
@@ -997,13 +865,36 @@ export async function collectEpicStatus(
   const flags = await loadEpicIssueFlags(provider, epicKey);
   const stories = canonicalStoryKeysFromFlags(flags);
   const superseded = supersededPairs(flags);
-  const workPackages: Array<{ key: string; title: string }> = [];
+  const workPackages: Array<{
+    key: string;
+    title: string;
+    localWorkPackageId?: string;
+    status?: string;
+    members?: string[];
+  }> = [];
   const claims: unknown[] = [];
   const quality: unknown[] = [];
   for (const f of flags) {
-    const wp = await provider.getIssueProperty(f.key, "praxis.workPackage");
+    const wp = await provider.getIssueProperty<{ id?: string } | boolean>(
+      f.key,
+      "praxis.workPackage",
+    );
     if (wp) {
-      workPackages.push({ key: f.key, title: f.summary });
+      const manifest = await provider.getIssueProperty<PraxisWorkPackage>(
+        f.key,
+        "praxis.workPackageManifest",
+      );
+      const localId =
+        wp && typeof wp === "object" && typeof wp.id === "string"
+          ? wp.id
+          : manifest?.id;
+      workPackages.push({
+        key: f.key,
+        title: f.summary,
+        localWorkPackageId: localId,
+        status: manifest?.status,
+        members: manifest?.storyKeys,
+      });
       const claim = await provider.getIssueProperty(f.key, "praxis.claim");
       if (claim) claims.push(claim);
       const q = await provider.getIssueProperty(f.key, "praxis.qualityReport");
@@ -1029,3 +920,10 @@ export async function collectEpicStatus(
     },
   };
 }
+
+export {
+  discoverLocalWorkPackages,
+  resolveLocalWorkPackage,
+  resolveRemoteWpKey,
+} from "./work-package-local.js";
+export { architectMaterialize } from "./architect-apply.js";

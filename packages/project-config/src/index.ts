@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
 export const ProjectConfigSchema = z.object({
@@ -112,4 +112,59 @@ export function usesGherkinAcceptance(config: ProjectConfig): boolean {
     config.requirementsFormat === "user-story-gherkin" ||
     config.requirementsFormat === "история с критериями в сценарной форме"
   );
+}
+
+export type InferProjectResult = {
+  proposed: ProjectConfig;
+  yaml: string;
+  notes: string[];
+  existing: LoadProjectResult;
+};
+
+function readJson(path: string): Record<string, unknown> | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+export function inferProjectConfig(repoRoot: string): InferProjectResult {
+  const existing = loadProjectConfig(repoRoot);
+  const notes: string[] = [];
+  const pkg = readJson(join(repoRoot, "package.json"));
+  const scripts =
+    pkg && typeof pkg.scripts === "object" && pkg.scripts
+      ? (pkg.scripts as Record<string, string>)
+      : {};
+  const stack: string[] = [];
+  if (pkg) {
+    stack.push("node", "javascript");
+  }
+  const quality: ProjectConfig["quality"] = {};
+  if (scripts.test) quality.test = "npm test";
+  if (scripts.build) quality.build = "npm run build";
+  if (scripts.coverage) quality.coverage = "npm run coverage";
+  if (!scripts.test) notes.push("no test script found; quality.test omitted");
+  if (!scripts.build) notes.push("no build script found; quality.build omitted");
+  const proposed = ProjectConfigSchema.parse({
+    stack: stack.length ? [...new Set(stack)] : [],
+    requirementsFormat: "user-story-gherkin",
+    quality,
+  });
+  const yaml = stringifyYaml(proposed).trimEnd() + "\n";
+  return { proposed, yaml, notes, existing };
+}
+
+export function writeProjectConfig(repoRoot: string, yamlOrConfig: string | ProjectConfig): string {
+  const path = join(repoRoot, ".project");
+  const yaml =
+    typeof yamlOrConfig === "string"
+      ? yamlOrConfig.endsWith("\n")
+        ? yamlOrConfig
+        : `${yamlOrConfig}\n`
+      : `${stringifyYaml(yamlOrConfig).trimEnd()}\n`;
+  writeFileSync(path, yaml);
+  return path;
 }

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$ROOT/praxis.js" ]]; then
+  exec node "$ROOT/praxis.js" "$@"
+fi
+echo "LOCAL_RUNTIME_UNAVAILABLE: Praxis CLI entry missing" >&2
+exit 7

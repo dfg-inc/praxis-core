@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadProjectConfig, usesGherkinAcceptance } from "./index.js";
+import { loadProjectConfig, inferProjectConfig, writeProjectConfig, usesGherkinAcceptance } from "./index.js";
 
 describe("loadProjectConfig", () => {
   it("returns defaults when .project is missing", () => {
@@ -62,5 +62,35 @@ describe("loadProjectConfig", () => {
     writeFileSync(join(dir, ".project"), "requirementsFormat: not-a-real-format\n");
     const result = loadProjectConfig(dir);
     expect(result.status).toBe("invalid");
+  });
+
+  it("infers node/javascript and npm test without inventing missing scripts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "praxis-project-"));
+    writeFileSync(
+      join(dir, "package.json"),
+      `${JSON.stringify({ name: "demo", scripts: { test: "node --test" } }, null, 2)}\n`,
+    );
+    const inferred = inferProjectConfig(dir);
+    expect(inferred.existing.status).toBe("missing");
+    expect(inferred.proposed.stack).toContain("node");
+    expect(inferred.proposed.quality.test).toBe("npm test");
+    expect(inferred.proposed.quality.build).toBeUndefined();
+    expect(inferred.notes.some((n) => n.includes("build"))).toBe(true);
+  });
+
+  it("writes .project only via writeProjectConfig", () => {
+    const dir = mkdtempSync(join(tmpdir(), "praxis-project-"));
+    writeFileSync(
+      join(dir, "package.json"),
+      `${JSON.stringify({ name: "demo", scripts: { test: "node --test" } }, null, 2)}\n`,
+    );
+    const inferred = inferProjectConfig(dir);
+    expect(loadProjectConfig(dir).status).toBe("missing");
+    writeProjectConfig(dir, inferred.yaml);
+    const loaded = loadProjectConfig(dir);
+    expect(loaded.status).toBe("loaded");
+    if (loaded.status !== "loaded") return;
+    expect(loaded.config.quality.test).toBe("npm test");
+    expect(readFileSync(join(dir, ".project"), "utf8")).toContain("user-story-gherkin");
   });
 });
