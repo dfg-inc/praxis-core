@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+/**
+ * Legacy custom JSON-RPC harness (Content-Length + initialize).
+ * Kept only to prove why alpha.29 tests passed while Claude Desktop timed out.
+ * New acceptance MUST use official-mcp-client.mjs (StdioClientTransport).
+ */
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 

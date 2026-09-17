@@ -2,7 +2,7 @@
 /**
  * Build Claude UI hosted plugin ZIPs (no top-level bin/).
  *
- *   node tools/scripts/pack-claude-plugins.mjs --version 0.1.0-alpha.29
+ *   node tools/scripts/pack-claude-plugins.mjs --version 0.1.0-alpha.30
  *
  * Layout (archive root):
  *   .claude-plugin/plugin.json

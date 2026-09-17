@@ -23,7 +23,13 @@ import {
   resolvePluginPath,
   validateExtractedHostedPlugin,
 } from "./hosted-plugin-policy.mjs";
-import { mcpInitializeAndList, spawnMcpServer } from "./mcp-stdio-client.mjs";
+import {
+  connectOfficialMcp,
+  hostedCleanEnv,
+  listAndDoctor,
+  MCP_STARTUP_BUDGET_MS,
+  versionNegotiationModern,
+} from "./official-mcp-client.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -34,17 +40,6 @@ function fail(msg) {
 
 function sha256File(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
-}
-
-function hostedEnv(home) {
-  return {
-    PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
-    PRAXIS_SKIP_DOTENV: "1",
-    HOME: home,
-    TMPDIR: home,
-    LANG: "C",
-    NODE_ENV: "test",
-  };
 }
 
 function findClaudeBin() {
@@ -88,15 +83,20 @@ export async function verifyClaudePluginZip(zipPath, plugin, version, tmp) {
   const mcpJson = JSON.parse(readFileSync(join(unpack, ".mcp.json"), "utf8"));
   const mcp = parsePluginMcpConfig(mcpJson);
   const args = mcp.args.map((a) => resolvePluginPath(a, unpack));
-  const client = spawnMcpServer({
-    command: mcp.command,
+  const session = await connectOfficialMcp({
+    command: process.execPath,
     args,
     cwd: unpack,
-    env: hostedEnv(unpack),
+    env: hostedCleanEnv(unpack),
+    versionNegotiation: versionNegotiationModern(),
+    timeoutMs: MCP_STARTUP_BUDGET_MS,
+    clientVersion: version,
   });
   try {
-    const { initialize, tools } = await mcpInitializeAndList(client, version);
-    if (!initialize?.serverInfo) fail(`${plugin.id} initialize missing serverInfo`);
+    if (session.era !== "modern") {
+      fail(`${plugin.id} expected modern era, got ${session.era} ${session.protocolVersion}`);
+    }
+    const { tools, envelope, doctor } = await listAndDoctor(session, unpack);
     const names = tools.map((t) => t.name);
     if (!names.includes("praxis_doctor")) fail(`${plugin.id} tools/list missing praxis_doctor`);
     if (plugin.role === "architect" && names.includes("praxis_developer_complete")) {
@@ -108,16 +108,10 @@ export async function verifyClaudePluginZip(zipPath, plugin, version, tmp) {
     if (plugin.role === "ba" && !names.includes("praxis_ba_preview")) {
       fail(`${plugin.id} missing praxis_ba_preview`);
     }
-    const doctor = await client.request("tools/call", {
-      name: "praxis_doctor",
-      arguments: { repo: unpack },
-    });
-    if (doctor.error) fail(`${plugin.id} praxis_doctor RPC error ${JSON.stringify(doctor.error)}`);
-    const envelope = doctor.result?.structuredContent;
     if (!envelope || envelope.ok !== true) {
-      fail(`${plugin.id} praxis_doctor failed: ${JSON.stringify(doctor.result)}`);
+      fail(`${plugin.id} praxis_doctor failed: ${JSON.stringify(doctor)}`);
     }
-    const combined = `${JSON.stringify(doctor)}\n${client.stderr()}`;
+    const combined = `${JSON.stringify(doctor)}\n${session.stderr()}`;
     if (combined.includes("Cannot find package") || combined.includes("Cannot find module")) {
       fail(`${plugin.id} bundled MCP missing dependency`);
     }
@@ -135,9 +129,10 @@ export async function verifyClaudePluginZip(zipPath, plugin, version, tmp) {
       toolCount: names.length,
       claudeCli: claudeCli.status,
       tools: names,
+      protocol: { era: session.era, version: session.protocolVersion },
     };
   } finally {
-    await client.close();
+    await session.close();
   }
 }
 
@@ -191,6 +186,8 @@ export async function verifyClaudePlugins(
       "MCP declaration valid",
       "MCP runtime bundled",
       "MCP server initializes",
+      "official MCP SDK client",
+      "modern protocol negotiation",
       "role tool list valid",
       "bundled runtime",
       "no runtime node_modules",
