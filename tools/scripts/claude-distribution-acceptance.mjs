@@ -27,7 +27,7 @@ const distDir = claudePluginsDir(version);
 const repoDir = repoClaudePluginsDir();
 
 await packClaudePlugins(version);
-const distReport = verifyClaudePlugins(version, distDir);
+const distReport = await verifyClaudePlugins(version, distDir);
 if (!distReport.ok) fail("dist verify-claude-plugins failed");
 
 if (!existsSync(join(repoDir, "README.md"))) {
@@ -62,7 +62,7 @@ const stale = PLUGIN_ZIP_FILES.filter((file) => {
 });
 if (stale.length) fail(`stale previous-version archives: ${stale.join(", ")}`);
 
-const repoReport = verifyClaudePlugins(version, repoDir);
+const repoReport = await verifyClaudePlugins(version, repoDir);
 if (!repoReport.ok) fail("repository verify-claude-plugins failed");
 
 const report = {
@@ -72,19 +72,20 @@ const report = {
   directory: "claude-plugins",
   plugins: PLUGIN_ZIP_FILES,
   proven: [
-    "bundled runtime",
+    "MCP runtime bundled",
+    "no top-level bin directory",
     "no runtime node_modules",
     "no symlink entries",
     "safe archive paths",
     "deterministic archive structure",
     "valid Claude plugin manifest",
     "skills packaged",
-    "public praxis runtime executes",
+    "MCP server initializes from extracted ZIP",
     "repository artifacts match dist hashes",
     "no secrets",
     "no absolute paths",
   ],
-  pending: ["manual Claude UI upload"],
+  pending: ["manual Claude UI upload", "manual Cowork local-workspace E2E"],
 };
 
 console.log(JSON.stringify(report, null, 2));

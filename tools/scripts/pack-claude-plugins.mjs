@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * Build Claude UI plugin ZIPs with a single bundled Praxis runtime.
+ * Build Claude UI hosted plugin ZIPs (no top-level bin/).
  *
- *   node tools/scripts/pack-claude-plugins.mjs --version 0.1.0-alpha.28
+ *   node tools/scripts/pack-claude-plugins.mjs --version 0.1.0-alpha.29
  *
  * Layout (archive root):
  *   .claude-plugin/plugin.json
- *   skills/  prompts/  hooks/
- *   bin/praxis
- *   runtime/praxis-runtime.cjs
+ *   .mcp.json
+ *   skills/  prompts/
+ *   runtime/praxis-mcp.cjs
  *   README.md
  *   VERSION
  */
@@ -86,6 +86,8 @@ function copyTreeFiltered(from, to) {
     for (const name of readdirSync(from).sort()) {
       if (isJunkName(name)) continue;
       if (name === "node_modules") continue;
+      if (name === "marketplace.json") continue;
+      if (name === "bin") continue;
       copyTreeFiltered(join(from, name), join(to, name));
     }
     return;
@@ -95,41 +97,25 @@ function copyTreeFiltered(from, to) {
   cpSync(from, to);
 }
 
-function writeLauncher(dest) {
-  const binDir = join(dest, "bin");
-  mkdirSync(binDir, { recursive: true });
-  const sh = `#!/usr/bin/env bash
-set -euo pipefail
-if [[ -n "\${CLAUDE_PLUGIN_ROOT:-}" ]]; then
-  ROOT="\${CLAUDE_PLUGIN_ROOT}"
-else
-  ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-fi
-NODE="\${PRAXIS_NODE:-$(command -v node || true)}"
-if [[ -z "$NODE" ]]; then
-  echo "LOCAL_RUNTIME_UNAVAILABLE: Node.js not found on PATH" >&2
-  exit 7
-fi
-RUNTIME="$ROOT/runtime/praxis-runtime.cjs"
-if [[ ! -f "$RUNTIME" ]]; then
-  echo "LOCAL_RUNTIME_UNAVAILABLE: bundled Praxis runtime missing" >&2
-  exit 7
-fi
-exec "$NODE" "$RUNTIME" "$@"
-`;
-  const path = join(binDir, "praxis");
-  writeFileSync(path, sh);
-  chmodSync(path, 0o755);
+export function mcpConfigForRole(role) {
+  return {
+    mcpServers: {
+      praxis: {
+        command: "node",
+        args: ["${CLAUDE_PLUGIN_ROOT}/runtime/praxis-mcp.cjs", "--role", role],
+      },
+    },
+  };
 }
 
-async function bundlePraxisRuntime(outfile, version) {
-  const entry = join(root, "packages/cli/dist/main.js");
+async function bundlePraxisMcp(outfile, version) {
+  const entry = join(root, "packages/mcp/dist/main.js");
   if (!existsSync(entry)) {
     run(
-      "npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira -w @praxis/cli",
+      "npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira -w @praxis/cli -w @praxis/mcp",
     );
   }
-  if (!existsSync(entry)) fail(`missing CLI build ${entry}`);
+  if (!existsSync(entry)) fail(`missing MCP build ${entry}`);
   mkdirSync(dirname(outfile), { recursive: true });
   await esbuild.build({
     absWorkingDir: root,
@@ -169,14 +155,20 @@ function collectZipEntries(dest) {
     const name = rel.replace(/\\/g, "/");
     const check = checkSafeArchivePath(name);
     if (!check.ok) fail(invalidPathError(name, check.reason));
+    if (name === "bin" || name.startsWith("bin/")) {
+      fail(`CLAUDE_HOSTED_PLUGIN_TOP_LEVEL_BIN_FORBIDDEN: ${name}`);
+    }
     if (name.includes("node_modules")) {
       fail(`CLAUDE_PLUGIN_NODE_MODULES: ${name}`);
     }
     if (/\.tgz$/i.test(name)) fail(`CLAUDE_PLUGIN_TGZ: ${name}`);
+    if (name === ".claude-plugin/marketplace.json") {
+      fail(`CLAUDE_HOSTED_PLUGIN_MARKETPLACE_IN_STANDALONE_ZIP: ${name}`);
+    }
     files.push({
       name,
       abs,
-      mode: name === "bin/praxis" ? 0o755 : 0o644,
+      mode: 0o644,
     });
   }
   walk("");
@@ -195,36 +187,50 @@ function collectZipEntries(dest) {
   return entries;
 }
 
+function pluginReadme(plugin, version) {
+  return `# ${plugin.title}
+
+Claude UI / Cowork plugin for Praxis ${version}.
+
+${plugin.title} requires:
+- a supported Claude workspace / Cowork execution surface with project access
+- access to the product repository
+- Jira configuration available in the local runtime (environment or \`.env.praxis\`)
+
+Do not paste Jira tokens into chat. Do not run \`praxis\`, \`make\`, or \`npm\` to use this plugin.
+
+Primary workflow: invoke a role Skill and speak naturally. Praxis operations run through bundled MCP tools (\`runtime/praxis-mcp.cjs\`), not a CLI.
+
+Claude Chat may show Skills, but local edit/test flow needs workspace/runtime capabilities. If the repository or local runtime is unavailable the tools return \`REPOSITORY_UNAVAILABLE\` or \`LOCAL_RUNTIME_UNAVAILABLE\` instead of pretending work ran.
+`;
+}
+
 function stagePlugin(plugin, version, stagingRoot, runtimeSrc) {
   const dest = join(stagingRoot, plugin.id);
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
   const src = join(root, plugin.src);
   copyTreeFiltered(join(src, ".claude-plugin"), join(dest, ".claude-plugin"));
-  copyTreeFiltered(join(src, "skills"), join(dest, "skills"));
+  const market = join(dest, ".claude-plugin", "marketplace.json");
+  if (existsSync(market)) rmSync(market);
+  for (const skill of plugin.requiredSkills) {
+    copyTreeFiltered(join(src, "skills", skill), join(dest, "skills", skill));
+  }
   copyTreeFiltered(join(src, "prompts"), join(dest, "prompts"));
-  copyTreeFiltered(join(src, "hooks"), join(dest, "hooks"));
-  mkdirSync(join(dest, "hooks"), { recursive: true });
   const pluginJsonPath = join(dest, ".claude-plugin", "plugin.json");
   if (!existsSync(pluginJsonPath)) fail(`missing ${pluginJsonPath}`);
   const pluginJson = JSON.parse(readFileSync(pluginJsonPath, "utf8"));
   pluginJson.version = version;
   writeFileSync(pluginJsonPath, `${JSON.stringify(pluginJson, null, 2)}\n`);
-  writeFileSync(join(dest, "VERSION"), `${version}\n`);
   writeFileSync(
-    join(dest, "README.md"),
-    `# ${plugin.title}
-
-Claude UI plugin. Import this ZIP (manifest at archive root).
-
-Primary human workflow: invoke a skill and speak naturally.
-Machine runtime: \`bin/praxis\` (bundled Praxis CLI ${version}).
-`,
+    join(dest, ".mcp.json"),
+    `${JSON.stringify(mcpConfigForRole(plugin.role), null, 2)}\n`,
   );
-  writeLauncher(dest);
+  writeFileSync(join(dest, "VERSION"), `${version}\n`);
+  writeFileSync(join(dest, "README.md"), pluginReadme(plugin, version));
   mkdirSync(join(dest, "runtime"), { recursive: true });
-  cpSync(runtimeSrc, join(dest, "runtime", "praxis-runtime.cjs"));
-  chmodSync(join(dest, "runtime", "praxis-runtime.cjs"), 0o644);
+  cpSync(runtimeSrc, join(dest, "runtime", "praxis-mcp.cjs"));
+  chmodSync(join(dest, "runtime", "praxis-mcp.cjs"), 0o644);
   return dest;
 }
 
@@ -253,8 +259,8 @@ export async function packClaudePlugins(version) {
   const staging = join(root, "dist", "claude-plugins-staging", version);
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(staging, { recursive: true });
-  const runtimeSrc = join(staging, "_runtime", "praxis-runtime.cjs");
-  await bundlePraxisRuntime(runtimeSrc, version);
+  const runtimeSrc = join(staging, "_runtime", "praxis-mcp.cjs");
+  await bundlePraxisMcp(runtimeSrc, version);
   const zips = [];
   for (const plugin of PLUGINS) {
     const dest = stagePlugin(plugin, version, staging, runtimeSrc);

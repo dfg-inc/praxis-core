@@ -22,6 +22,6 @@ const check = spawnSync("node tools/scripts/check-skill-cli.mjs", {
 if ((check.status ?? 1) !== 0) fail(check.stderr || check.stdout);
 
 await packClaudePlugins(version);
-const report = verifyClaudePlugins(version);
+const report = await verifyClaudePlugins(version);
 if (!report.ok) fail("verify-claude-plugins failed");
 console.log(JSON.stringify(report, null, 2));

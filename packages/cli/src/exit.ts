@@ -1,3 +1,5 @@
+import { PraxisOpError } from "./operations.js";
+
 export const EXIT = {
   OK: 0,
   USAGE: 2,
@@ -11,11 +13,28 @@ export const EXIT = {
 
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
 
+const CODE_EXIT: Record<string, ExitCode> = {
+  INVALID_INPUT: EXIT.USAGE,
+  CONFIRMATION_REQUIRED: EXIT.CONFIRM,
+  WORKFLOW_BLOCKED: EXIT.BLOCKED,
+  EXTERNAL_SERVICE_ERROR: EXIT.EXTERNAL,
+  CONFLICT: EXIT.CONFLICT,
+  LOCAL_RUNTIME_UNAVAILABLE: EXIT.LOCAL_UNAVAILABLE,
+  VALIDATION_FAILED: EXIT.VALIDATION,
+  REPOSITORY_UNAVAILABLE: EXIT.USAGE,
+  JIRA_CONFIG_UNAVAILABLE: EXIT.USAGE,
+};
+
 export function exitFromError(err: unknown): ExitCode {
+  if (err instanceof PraxisOpError) {
+    return CODE_EXIT[err.code] ?? EXIT.USAGE;
+  }
   const msg = err instanceof Error ? err.message : String(err);
   if (/LOCAL_RUNTIME_UNAVAILABLE/i.test(msg)) return EXIT.LOCAL_UNAVAILABLE;
-  if (/requires --confirm|confirmation required/i.test(msg)) return EXIT.CONFIRM;
-  if (/claim denied|claim race|migration conflict/i.test(msg)) return EXIT.CONFLICT;
+  if (/requires --confirm|confirmation required|confirmation=YES/i.test(msg)) return EXIT.CONFIRM;
+  if (/claim denied|claim race|migration conflict|previewFingerprint mismatch/i.test(msg)) {
+    return EXIT.CONFLICT;
+  }
   if (
     /BA_REMOTE_APPLY_INCOMPLETE|ARCHITECT_DESIGN_MISSING|BA_PROPOSAL_MISSING|workflow blocked|gate not satisfied/i.test(
       msg,

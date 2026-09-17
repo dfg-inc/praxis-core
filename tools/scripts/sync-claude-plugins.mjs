@@ -53,7 +53,7 @@ Upload these files from this folder:
 - \`praxis-developer.zip\`
 - \`praxis-quality.zip\`
 
-Then open your product workspace and invoke the matching Praxis skill.
+Then open a supported workspace / Cowork project with repository access and invoke the matching Praxis skill.
 
 You do not need \`make\`, \`npm\`, or a terminal to install the plugins.
 
@@ -65,7 +65,7 @@ export async function syncClaudePlugins(version) {
   if (!version) fail("version required");
   const distDir = claudePluginsDir(version);
   await packClaudePlugins(version);
-  const distReport = verifyClaudePlugins(version, distDir);
+  const distReport = await verifyClaudePlugins(version, distDir);
   if (!distReport.ok) fail("dist validation failed");
 
   const repoDir = repoClaudePluginsDir();
@@ -87,7 +87,7 @@ export async function syncClaudePlugins(version) {
   );
   writeFileSync(join(repoDir, "README.md"), claudePluginsReadme());
 
-  const repoReport = verifyClaudePlugins(version, repoDir);
+  const repoReport = await verifyClaudePlugins(version, repoDir);
   if (!repoReport.ok) fail("repository distribution validation failed");
   console.log(`claude-plugins synced -> ${repoDir}`);
   return { distDir, repoDir, manifest: distManifest };

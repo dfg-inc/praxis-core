@@ -21,6 +21,7 @@ export const SHARED_WORKSPACES = [
   "@praxis/plugin-sdk",
   "@praxis/cli",
 ];
+// @praxis/mcp is internal to hosted Claude plugin bundling and is not independently packed.
 
 export const PLUGIN_WORKSPACES = [
   "@praxis/ba",

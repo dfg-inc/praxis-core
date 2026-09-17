@@ -69,11 +69,14 @@ describe("CLI flags and exits", () => {
       ".",
       "--confirm",
       "YES",
+      "--fingerprint",
+      "sha256:abc",
       "--json",
     ]);
     expect(f.json).toBe(true);
     expect(f.epic).toBe("PRX-1");
     expect(f.confirm).toBe("YES");
+    expect(f.fingerprint).toBe("sha256:abc");
     expect(f.argv).toEqual(["architect", "apply"]);
   });
 
