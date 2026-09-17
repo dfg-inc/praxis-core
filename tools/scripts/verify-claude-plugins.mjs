@@ -1,21 +1,26 @@
 #!/usr/bin/env node
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
-  lstatSync,
+  writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { extractLeadingFrontmatter } from "./validate-plugins.mjs";
 import { parse as yamlParse } from "yaml";
-import { PLUGINS, claudePluginsDir } from "./pack-claude-plugins.mjs";
+import {
+  MANIFEST_CONTRACT,
+  PLUGINS,
+  distClaudePluginsDir,
+} from "./claude-plugins-shared.mjs";
+import { extractZip, inspectZipEntries, parseZip } from "./claude-zip.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -24,121 +29,246 @@ function fail(msg) {
   process.exit(1);
 }
 
-function walk(dir, out = []) {
-  for (const name of readdirSync(dir)) {
-    const abs = join(dir, name);
-    const st = lstatSync(abs);
-    if (st.isSymbolicLink()) {
-      if (!existsSync(abs)) fail(`broken symlink ${abs}`);
-      continue;
-    }
-    if (st.isDirectory()) walk(abs, out);
-    else out.push(abs);
-  }
-  return out;
+function sha256File(file) {
+  return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
-export function verifyClaudePlugins(version) {
-  const dir = claudePluginsDir(version);
+function cleanEnv(home) {
+  const nodeDir = dirname(process.execPath);
+  return {
+    PATH: `${nodeDir}:/usr/bin:/bin`,
+    PRAXIS_SKIP_DOTENV: "1",
+    HOME: home,
+    TMPDIR: home,
+    LANG: "C",
+    NODE_ENV: "test",
+  };
+}
+
+function runBin(bin, args, cwd) {
+  return spawnSync(bin, args, {
+    cwd,
+    encoding: "utf8",
+    env: cleanEnv(cwd),
+  });
+}
+
+function scanUnpackedFiles(unpack) {
+  const stack = [unpack];
+  while (stack.length) {
+    const dir = stack.pop();
+    for (const name of readdirSync(dir)) {
+      const abs = join(dir, name);
+      const rel = abs.slice(unpack.length).replace(/\\/g, "/");
+      const st = lstatSync(abs);
+      if (st.isDirectory()) {
+        stack.push(abs);
+        continue;
+      }
+      if (rel.includes("/.env") || /(^|\/)\.env(\.|$)/.test(rel)) {
+        fail(`secret-like file ${rel}`);
+      }
+      const buf = readFileSync(abs);
+      const text = buf.toString("utf8");
+      if (buf.includes(Buffer.from("PRAXIS_JIRA_TOKEN="))) {
+        if (/PRAXIS_JIRA_TOKEN=\S+/.test(text) && !text.includes("<redacted>")) {
+          fail(`token-like content in ${rel}`);
+        }
+      }
+      if (text.includes("/Users/")) {
+        fail(`absolute /Users path in ${rel}`);
+      }
+    }
+  }
+}
+
+export function verifyClaudePluginZip(zipPath, plugin, version, tmp) {
+  if (!existsSync(zipPath)) fail(`missing ${zipPath}`);
+  const buf = readFileSync(zipPath);
+  parseZip(buf);
+  const inspected = inspectZipEntries(buf);
+  if (inspected.issues.length) {
+    fail(`${plugin.id}\n${inspected.issues.join("\n")}`);
+  }
+  for (const e of inspected.entries) {
+    if (e.name === "bin/praxis" && (e.mode & 0o111) === 0) {
+      fail(`${plugin.id} bin/praxis is not executable in ZIP metadata`);
+    }
+  }
+  const unpack = join(tmp, plugin.id);
+  mkdirSync(unpack, { recursive: true });
+  extractZip(buf, unpack);
+
+  const pluginJsonPath = join(unpack, ".claude-plugin", "plugin.json");
+  if (!existsSync(pluginJsonPath)) {
+    fail(`plugin.json not at ZIP root for ${plugin.id}`);
+  }
+  if (existsSync(join(unpack, plugin.id, ".claude-plugin", "plugin.json"))) {
+    fail(`${plugin.id} zip has an extra directory wrapping the plugin`);
+  }
+  const pluginJson = JSON.parse(readFileSync(pluginJsonPath, "utf8"));
+  if (pluginJson.version !== version) {
+    fail(`${plugin.id} plugin.json version ${pluginJson.version} != ${version}`);
+  }
+  if (!existsSync(join(unpack, "VERSION"))) fail(`missing VERSION in ${plugin.id}`);
+  const versionFile = readFileSync(join(unpack, "VERSION"), "utf8").trim();
+  if (versionFile !== version) {
+    fail(`${plugin.id} VERSION ${versionFile} != ${version}`);
+  }
+  if (!existsSync(join(unpack, "README.md"))) fail(`missing README.md in ${plugin.id}`);
+  if (!existsSync(join(unpack, "runtime", "praxis-runtime.cjs"))) {
+    fail(`missing bundled runtime in ${plugin.id}`);
+  }
+  if (existsSync(join(unpack, "runtime", "node_modules"))) {
+    fail(`${plugin.id} contains runtime/node_modules`);
+  }
+
+  for (const skill of plugin.requiredSkills) {
+    const skillMd = join(unpack, "skills", skill, "SKILL.md");
+    if (!existsSync(skillMd)) fail(`missing skill ${skillMd}`);
+    const raw = readFileSync(skillMd, "utf8");
+    const fm = extractLeadingFrontmatter(raw);
+    if (!fm || fm.error) fail(`SKILL.md parse failed ${skillMd}: ${fm?.error}`);
+    yamlParse(fm.yaml);
+  }
+  const prompts = join(unpack, "prompts");
+  if (!existsSync(prompts) || readdirSync(prompts).length === 0) {
+    fail(`missing prompts in ${plugin.id}`);
+  }
+  const bin = join(unpack, "bin", "praxis");
+  if (!existsSync(bin)) fail(`missing ${bin}`);
+
+  scanUnpackedFiles(unpack);
+
+  const ver = runBin(bin, ["--version"], unpack);
+  if ((ver.status ?? 1) !== 0) {
+    fail(`${plugin.id} praxis --version failed\n${ver.stderr || ver.stdout}`);
+  }
+  if ((ver.stdout ?? "").trim() !== version) {
+    fail(`${plugin.id} praxis --version ${(ver.stdout ?? "").trim()} != ${version}`);
+  }
+  const help = runBin(bin, ["--help"], unpack);
+  if ((help.status ?? 1) !== 0) {
+    fail(`${plugin.id} praxis --help failed\n${help.stderr || help.stdout}`);
+  }
+  if (!help.stdout.includes("praxis")) fail(`${plugin.id} help empty`);
+
+  for (const args of plugin.helpCommands) {
+    const roleHelp = runBin(bin, args, unpack);
+    if ((roleHelp.status ?? 1) !== 0) {
+      fail(
+        `${plugin.id} ${args.join(" ")} failed\n${roleHelp.stderr || roleHelp.stdout}`,
+      );
+    }
+  }
+
+  const fake = mkdtempSync(join(tmp, `${plugin.id}-ws-`));
+  writeFileSync(join(fake, "README.md"), "external-workspace\n");
+  const template = join(fake, ".empty-git-template");
+  mkdirSync(template, { recursive: true });
+  const git = spawnSync("git", ["init", "--template", template], {
+    cwd: fake,
+    encoding: "utf8",
+    env: {
+      PATH: process.env.PATH,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_TEMPLATE_DIR: template,
+      HOME: fake,
+    },
+  });
+  rmSync(template, { recursive: true, force: true });
+  if ((git.status ?? 1) !== 0) {
+    writeFileSync(join(fake, ".praxis-external-workspace"), "1\n");
+  }
+
+  const fakeVer = runBin(bin, ["--version"], fake);
+  if ((fakeVer.stdout ?? "").trim() !== version) {
+    fail(
+      `${plugin.id} fake workspace --version ${(fakeVer.stdout ?? "").trim()} != ${version}`,
+    );
+  }
+  const doctor = runBin(bin, ["doctor", "--json"], fake);
+  if ((doctor.status ?? 1) !== 0) {
+    fail(`${plugin.id} doctor --json failed\n${doctor.stderr || doctor.stdout}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse((doctor.stdout ?? "").trim());
+  } catch (e) {
+    fail(`${plugin.id} doctor --json is not JSON: ${doctor.stdout}\n${e}`);
+  }
+  if (!parsed || typeof parsed !== "object") {
+    fail(`${plugin.id} doctor --json did not return an object`);
+  }
+  const combined = `${doctor.stdout}\n${doctor.stderr}`;
+  if (combined.includes("Cannot find package") || combined.includes("Cannot find module")) {
+    fail(`${plugin.id} bundled runtime missing dependency`);
+  }
+  if (combined.includes("/Users/serg/work/praxis/node_modules")) {
+    fail(`${plugin.id} resolved Praxis monorepo node_modules`);
+  }
+
+  return {
+    file: `${plugin.id}.zip`,
+    sha256: sha256File(zipPath),
+    bytes: buf.length,
+  };
+}
+
+export function verifyClaudePlugins(
+  version,
+  dir = distClaudePluginsDir(root, version),
+) {
   const manifestPath = join(dir, "manifest.json");
   if (!existsSync(manifestPath)) fail(`missing ${manifestPath}`);
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  if (manifest.version !== version) fail(`manifest version ${manifest.version} != ${version}`);
-  const tmp = mkdtempSync(join(tmpdir(), "praxis-plugin-"));
-  const proven = [];
+  if (manifest.version !== version) {
+    fail(`manifest version ${manifest.version} != ${version}`);
+  }
+  if (manifest.contract && manifest.contract !== MANIFEST_CONTRACT) {
+    fail(`unexpected manifest contract ${manifest.contract}`);
+  }
+  const tmpRoot = join(root, "dist", "claude-plugin-verify");
+  mkdirSync(tmpRoot, { recursive: true });
+  const tmp = mkdtempSync(join(tmpRoot, "praxis-plugin-"));
   try {
     for (const plugin of PLUGINS) {
       const zip = join(dir, `${plugin.id}.zip`);
-      if (!existsSync(zip)) fail(`missing ${zip}`);
-      const unpack = join(tmp, plugin.id);
-      mkdirSync(unpack, { recursive: true });
-      const unzip = spawnSync("unzip", ["-q", zip, "-d", unpack], { encoding: "utf8" });
-      if ((unzip.status ?? 1) !== 0) fail(`invalid zip ${zip}\n${unzip.stderr}`);
-      const pluginJsonPath = join(unpack, ".claude-plugin", "plugin.json");
-      if (!existsSync(pluginJsonPath)) {
-        fail(`plugin.json not at ZIP root for ${plugin.id}`);
+      const info = verifyClaudePluginZip(zip, plugin, version, tmp);
+      const listed = (manifest.plugins || []).find(
+        (p) => p.file === `${plugin.id}.zip` || p.id === plugin.id,
+      );
+      if (!listed) fail(`manifest missing ${plugin.id}`);
+      if (listed.sha256 && listed.sha256 !== info.sha256) {
+        fail(`${plugin.id} manifest sha256 mismatch`);
       }
-      if (existsSync(join(unpack, plugin.id, ".claude-plugin", "plugin.json"))) {
-        fail(`${plugin.id} zip has an extra directory wrapping the plugin`);
+      if (listed.version && listed.version !== version) {
+        fail(`${plugin.id} manifest version mismatch`);
       }
-      const pluginJson = JSON.parse(readFileSync(pluginJsonPath, "utf8"));
-      if (pluginJson.version !== version) {
-        fail(`${plugin.id} plugin.json version ${pluginJson.version} != ${version}`);
-      }
-      JSON.parse(JSON.stringify(pluginJson));
-      for (const skill of plugin.requiredSkills) {
-        const skillMd = join(unpack, "skills", skill, "SKILL.md");
-        if (!existsSync(skillMd)) fail(`missing skill ${skillMd}`);
-        const raw = readFileSync(skillMd, "utf8");
-        const fm = extractLeadingFrontmatter(raw);
-        if (!fm || fm.error) fail(`SKILL.md parse failed ${skillMd}: ${fm?.error}`);
-        yamlParse(fm.yaml);
-      }
-      const prompts = join(unpack, "prompts");
-      if (!existsSync(prompts) || readdirSync(prompts).length === 0) {
-        fail(`missing prompts in ${plugin.id}`);
-      }
-      const bin = join(unpack, "bin", "praxis");
-      if (!existsSync(bin)) fail(`missing ${bin}`);
-      const runtimeCli = join(unpack, "runtime", "node_modules", "@praxis", "cli", "dist", "main.js");
-      if (!existsSync(runtimeCli)) fail(`missing bundled runtime ${runtimeCli}`);
-      const files = walk(unpack);
-      for (const f of files) {
-        const rel = f.slice(unpack.length);
-        if (rel.includes("node_modules")) continue;
-        if (rel.includes("/.env") || /(^|\/)\.env(\.|$)/.test(rel)) fail(`secret-like file ${rel}`);
-        const buf = readFileSync(f);
-        if (buf.includes(Buffer.from("PRAXIS_JIRA_TOKEN=")) && !rel.endsWith(".md")) {
-          const text = buf.toString("utf8");
-          if (/PRAXIS_JIRA_TOKEN=\S+/.test(text) && !text.includes("<redacted>")) {
-            fail(`token-like content in ${rel}`);
-          }
-        }
-        if (buf.toString("utf8").includes("/Users/")) {
-          fail(`absolute /Users path in ${rel}`);
-        }
-      }
-      const help = spawnSync(bin, ["--help"], {
-        encoding: "utf8",
-        env: { ...process.env, PRAXIS_SKIP_DOTENV: "1" },
-      });
-      if ((help.status ?? 1) !== 0) fail(`${plugin.id} praxis --help failed\n${help.stderr}`);
-      if (!help.stdout.includes("praxis")) fail(`${plugin.id} help empty`);
-      const ver = spawnSync(bin, ["--version"], {
-        encoding: "utf8",
-        env: { ...process.env, PRAXIS_SKIP_DOTENV: "1" },
-      });
-      if ((ver.stdout ?? "").trim() !== version) {
-        fail(`${plugin.id} praxis --version ${(ver.stdout ?? "").trim()} != ${version}`);
-      }
-      const fake = mkdtempSync(join(tmp, `${plugin.id}-ws-`));
-      const roleHelp = spawnSync(bin, ["architect", "--help"], {
-        cwd: fake,
-        encoding: "utf8",
-        env: { ...process.env, PRAXIS_SKIP_DOTENV: "1" },
-      });
-      if ((roleHelp.status ?? 1) !== 0) fail(`${plugin.id} role help failed`);
     }
-    proven.push(
-      "valid Claude plugin manifests",
-      "skills packaged",
-      "prompt templates packaged",
-      "self-contained Praxis runtime",
-      "public CLI help",
-      "public CLI JSON mode",
-      "no absolute paths",
-      "no secrets",
-    );
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+  const repoDir = join(root, "claude-plugins");
+  const fromRepo = resolve(dir) === resolve(repoDir);
   return {
     ok: true,
-    source: "release-bundles",
+    source: fromRepo ? "repository" : "release-bundles",
     version,
     plugins: PLUGINS.map((p) => p.title),
-    proven,
-    pending: ["manual Claude UI import"],
+    proven: [
+      "bundled runtime",
+      "no runtime node_modules",
+      "no symlink entries",
+      "safe archive paths",
+      "deterministic archive structure",
+      "valid Claude plugin manifest",
+      "skills packaged",
+      "public praxis runtime executes",
+      "no secrets",
+      "no absolute paths",
+    ],
+    pending: ["manual Claude UI upload"],
   };
 }
 

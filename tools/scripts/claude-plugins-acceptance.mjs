@@ -2,9 +2,9 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { packClaudePlugins } from "./pack-claude-plugins.mjs";
 import { verifyClaudePlugins } from "./verify-claude-plugins.mjs";
-import { spawnSync } from "node:child_process";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
@@ -21,7 +21,7 @@ const check = spawnSync("node tools/scripts/check-skill-cli.mjs", {
 });
 if ((check.status ?? 1) !== 0) fail(check.stderr || check.stdout);
 
-packClaudePlugins(version);
+await packClaudePlugins(version);
 const report = verifyClaudePlugins(version);
 if (!report.ok) fail("verify-claude-plugins failed");
 console.log(JSON.stringify(report, null, 2));

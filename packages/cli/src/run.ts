@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   inferProjectConfig,
   loadProjectConfig,
@@ -25,8 +25,17 @@ import { EXIT, exitFromError, type ExitCode } from "./exit.js";
 import { helpFor } from "./help.js";
 import { ensureQuality } from "./quality-ensure.js";
 
-const require = createRequire(import.meta.url);
-const VERSION = String(require("../package.json").version ?? "0.0.0");
+function unbundledPackageVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(join(here, "../package.json"), "utf8"));
+    return String(pkg.version ?? "0.0.0");
+  } catch {
+    return "0.0.0";
+  }
+}
+
+const VERSION = String(process.env.PRAXIS_BUNDLE_VERSION || unbundledPackageVersion());
 
 export type Flags = {
   json: boolean;

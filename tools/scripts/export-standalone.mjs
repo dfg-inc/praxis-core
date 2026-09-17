@@ -74,6 +74,8 @@ function run(cmd, cwd = root) {
 }
 
 export function sourceCommit(repoRoot = root) {
+  const fromEnv = process.env.PRAXIS_SOURCE_COMMIT?.trim();
+  if (fromEnv) return fromEnv;
   const r = spawnSync("git", ["rev-parse", "HEAD"], {
     cwd: repoRoot,
     encoding: "utf8",
