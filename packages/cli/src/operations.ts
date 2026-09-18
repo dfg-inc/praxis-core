@@ -7,7 +7,7 @@ import {
   loadProjectConfig,
   writeProjectConfig,
 } from "@praxis/project-config";
-import { createJiraProvider, loadJiraConfig, type JiraProvider } from "@praxis/jira";
+import { createJiraProvider, loadJiraConfig, type JiraProvider, parseJiraTransitions } from "@praxis/jira";
 import {
   architectPlanEpic,
   baAnalyzeEpic,
@@ -46,6 +46,9 @@ export const OP_CODES = {
   WORK_PACKAGE_INVALID_STATE: "WORK_PACKAGE_INVALID_STATE",
   WORK_PACKAGE_TITLE_INVALID: "WORK_PACKAGE_TITLE_INVALID",
   WORK_PACKAGE_SCOPE_AMBIGUOUS: "WORK_PACKAGE_SCOPE_AMBIGUOUS",
+  JIRA_TRANSITION_ID_INVALID: "JIRA_TRANSITION_ID_INVALID",
+  JIRA_TRANSITION_NOT_AVAILABLE: "JIRA_TRANSITION_NOT_AVAILABLE",
+  WORK_PACKAGE_ALREADY_CLAIMED: "WORK_PACKAGE_ALREADY_CLAIMED",
 } as const;
 
 export type OpCode = (typeof OP_CODES)[keyof typeof OP_CODES];
@@ -56,16 +59,18 @@ export class PraxisOpError extends Error {
   readonly code: OpCode;
   readonly stage?: string;
   readonly durationMs?: number;
+  readonly details?: Record<string, unknown>;
   constructor(
     code: OpCode,
     message: string,
-    details?: { stage?: string; durationMs?: number },
+    extra?: { stage?: string; durationMs?: number; details?: Record<string, unknown> },
   ) {
     super(message);
     this.name = "PraxisOpError";
     this.code = code;
-    this.stage = details?.stage;
-    this.durationMs = details?.durationMs;
+    this.stage = extra?.stage;
+    this.durationMs = extra?.durationMs;
+    this.details = extra?.details;
   }
 }
 
@@ -165,17 +170,47 @@ function jiraConfigUnavailableMessage(flags = jiraConfigFlags()): string {
   return `JIRA_CONFIG_UNAVAILABLE: missing ${missing}. Open Claude Desktop → Settings → Extensions → Praxis Runtime → Settings, or set PRAXIS_JIRA_* for CLI/CI. Do not paste tokens into chat.`;
 }
 
+function mapJiraWorkflowError(err: unknown): never {
+  if (err instanceof PraxisOpError) throw err;
+  const rec = err && typeof err === "object" ? (err as Record<string, unknown>) : undefined;
+  const code = typeof rec?.code === "string" ? rec.code : "";
+  if (code === "JIRA_TRANSITION_ID_INVALID" || code === "JIRA_TRANSITION_NOT_AVAILABLE") {
+    throw new PraxisOpError(code, redact(err instanceof Error ? err.message : String(err)), {
+      details: {
+        issueKey: rec?.issueKey,
+        semanticAction: rec?.semanticAction,
+        resolvedValue: rec?.resolvedValue,
+        currentStatus: rec?.currentStatus,
+        available: rec?.available,
+      },
+    });
+  }
+  if (code === "WORK_PACKAGE_ALREADY_CLAIMED") {
+    throw new PraxisOpError(OP_CODES.WORK_PACKAGE_ALREADY_CLAIMED, redact(err instanceof Error ? err.message : String(err)), {
+      details: { issueKey: rec?.issueKey, actor: rec?.actor },
+    });
+  }
+  throw err;
+}
+
 async function withProvider<T>(
   ctx: OpContext,
   fn: (p: JiraProvider) => Promise<T>,
 ): Promise<T> {
-  if (ctx.provider) return fn(ctx.provider);
+  const run = async (p: JiraProvider) => {
+    try {
+      return await fn(p);
+    } catch (e) {
+      return mapJiraWorkflowError(e);
+    }
+  };
+  if (ctx.provider) return run(ctx.provider);
   if (!jiraConfigured()) {
     throw new PraxisOpError(OP_CODES.JIRA_CONFIG_UNAVAILABLE, jiraConfigUnavailableMessage());
   }
   try {
     const config = loadJiraConfig();
-    return await fn(
+    return await run(
       createJiraProvider({
         config,
         signal: ctx.signal,
@@ -623,11 +658,32 @@ export async function developerStatusOp(ctx: OpContext) {
   }
   const repo = requireRepo(ctx.repo);
   const local = resolveLocalWorkPackage(repo, ctx.wp);
-  return {
+  const jiraIssueKey = resolveRemoteWpKey(repo, ctx.wp);
+  const base = {
     wp: ctx.wp,
     local: local?.id,
-    jiraIssueKey: resolveRemoteWpKey(repo, ctx.wp),
+    jiraIssueKey,
   };
+  if (!ctx.provider && !jiraConfigured()) return base;
+  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(jiraIssueKey)) return base;
+  return withProvider({ ...ctx, repo }, async (p) => {
+    const issue = await p.getIssue(jiraIssueKey);
+    const available = parseJiraTransitions({
+      transitions: await p.getTransitions(jiraIssueKey),
+    });
+    const claim = await p.getIssueProperty(jiraIssueKey, "praxis.claim");
+    return {
+      ...base,
+      jiraStatus: issue.status,
+      jiraStatusCategory: issue.statusCategory,
+      claim: claim ?? null,
+      availableTransitions: available.map((t) => ({
+        id: t.id,
+        name: t.name,
+        toStatus: t.toStatus,
+      })),
+    };
+  });
 }
 
 export async function developerClaimOp(ctx: OpContext) {

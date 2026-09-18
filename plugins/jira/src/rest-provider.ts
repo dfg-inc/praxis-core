@@ -29,6 +29,13 @@ import {
   type IssueTypeMapping,
   type RawIssueType,
 } from "./issue-types.js";
+import {
+  assertNumericTransitionId,
+  parseJiraTransitions,
+  parseNumericTransitionId,
+  transitionPostBody,
+  JiraTransitionError,
+} from "./transitions.js";
 
 type StoredIssue = JiraIssueLite & {
   comments: JiraComment[];
@@ -57,6 +64,76 @@ export const LOCALIZED_RU_ISSUE_TYPES: MockIssueType[] = [
   { id: "10005", name: "Work Package", hierarchyLevel: 0, subtask: false },
 ];
 
+export type MockTransition = {
+  id: string;
+  name: string;
+  to?: {
+    id?: string;
+    name?: string;
+    statusCategory?: { id?: number; key?: string; name?: string };
+  };
+};
+
+export const DEFAULT_MOCK_TRANSITIONS: MockTransition[] = [
+  {
+    id: "11",
+    name: "To Do",
+    to: {
+      id: "10000",
+      name: "To Do",
+      statusCategory: { key: "new", name: "To Do" },
+    },
+  },
+  {
+    id: "21",
+    name: "In Progress",
+    to: {
+      id: "10001",
+      name: "In Progress",
+      statusCategory: { key: "indeterminate", name: "In Progress" },
+    },
+  },
+  {
+    id: "31",
+    name: "Done",
+    to: {
+      id: "10002",
+      name: "Done",
+      statusCategory: { key: "done", name: "Done" },
+    },
+  },
+];
+
+export const LOCALIZED_RU_TRANSITIONS: MockTransition[] = [
+  {
+    id: "11",
+    name: "К выполнению",
+    to: {
+      id: "10000",
+      name: "К выполнению",
+      statusCategory: { key: "new", name: "К выполнению" },
+    },
+  },
+  {
+    id: "21",
+    name: "В работу",
+    to: {
+      id: "10001",
+      name: "В работе",
+      statusCategory: { key: "indeterminate", name: "В работе" },
+    },
+  },
+  {
+    id: "31",
+    name: "Готово",
+    to: {
+      id: "10002",
+      name: "Готово",
+      statusCategory: { key: "done", name: "Готово" },
+    },
+  },
+];
+
 export type MockJiraState = {
   nextId: number;
   createIssueCount: number;
@@ -66,10 +143,21 @@ export type MockJiraState = {
   claimLocks: Map<string, string>;
   issueTypes: MockIssueType[];
   propertyPutStatus: number;
+  availableTransitions: MockTransition[];
+  transitionPostStatus: number;
+  transitionPosts: { key: string; body: unknown }[];
 };
 
 export function createMockJiraState(
-  extra: Partial<Pick<MockJiraState, "issueTypes" | "propertyPutStatus">> = {},
+  extra: Partial<
+    Pick<
+      MockJiraState,
+      | "issueTypes"
+      | "propertyPutStatus"
+      | "availableTransitions"
+      | "transitionPostStatus"
+    >
+  > = {},
 ): MockJiraState {
   return {
     nextId: 1,
@@ -80,6 +168,9 @@ export function createMockJiraState(
     claimLocks: new Map(),
     issueTypes: extra.issueTypes ?? DEFAULT_MOCK_ISSUE_TYPES,
     propertyPutStatus: extra.propertyPutStatus ?? 200,
+    availableTransitions: [...(extra.availableTransitions ?? DEFAULT_MOCK_TRANSITIONS)],
+    transitionPostStatus: extra.transitionPostStatus ?? 204,
+    transitionPosts: [],
   };
 }
 
@@ -91,11 +182,15 @@ function findStored(state: MockJiraState, idOrKey: string): StoredIssue | undefi
 }
 
 function issueFields(issue: StoredIssue) {
+  const statusCategoryKey = issue.statusCategory ?? "new";
   return {
     ...issue.fields,
     summary: issue.summary,
     description: issue.description ?? "",
-    status: { name: issue.status },
+    status: {
+      name: issue.status,
+      statusCategory: { key: statusCategoryKey, name: issue.status },
+    },
     issuetype: {
       name: issue.issueType,
       id: issue.issueTypeId ?? issue.issueType,
@@ -213,6 +308,7 @@ export function createMockFetch(
         summary: fields.summary,
         description: fields.description,
         status: "To Do",
+        statusCategory: "new",
         issueType: resolvedType?.name ?? String(requested?.name ?? "Task"),
         issueTypeId: resolvedType?.id,
         semanticType: "unknown",
@@ -263,22 +359,37 @@ export function createMockFetch(
       }
       if (method === "GET" && rest.includes("/transitions")) {
         return json({
-          transitions: [
-            { id: "11", name: "To Do" },
-            { id: "21", name: "In Progress" },
-            { id: "31", name: "Done" },
-          ],
+          transitions: state.availableTransitions,
         });
       }
       if (method === "POST" && rest.includes("/transitions")) {
+        state.transitionPosts.push({ key, body: body?.transition ?? body });
         if (!issue) return notFound();
-        const name = body.transition?.name ?? body.transition?.id;
-        const map: Record<string, string> = {
-          "11": "To Do",
-          "21": "In Progress",
-          "31": "Done",
-        };
-        issue.status = map[String(name)] ?? String(name);
+        const rawId = body?.transition?.id;
+        if (!parseNumericTransitionId(rawId)) {
+          return json(
+            {
+              errorMessages: [
+                "идентификатор «изменение состояния» должен быть целым числом",
+              ],
+            },
+            400,
+          );
+        }
+        if (state.transitionPostStatus !== 204) {
+          return json(
+            { errorMessages: ["transition failed"] },
+            state.transitionPostStatus,
+          );
+        }
+        const hit = state.availableTransitions.find(
+          (t) => t.id === String(rawId).trim(),
+        );
+        if (hit?.to?.name) issue.status = hit.to.name;
+        else if (hit?.name) issue.status = hit.name;
+        if (hit?.to?.statusCategory?.key) {
+          issue.statusCategory = hit.to.statusCategory.key;
+        }
         return new Response(null, { status: 204 });
       }
       if (method === "PUT" && rest.startsWith("/assignee")) {
@@ -646,7 +757,10 @@ export class RestJiraProvider implements JiraProvider {
     fields?: Record<string, unknown>;
   }): JiraIssueLite {
     const fields = raw.fields ?? {};
-    const status = fields.status as { name?: string } | undefined;
+    const status = fields.status as {
+      name?: string;
+      statusCategory?: { key?: string };
+    } | undefined;
     const type = fields.issuetype as RawIssueType | undefined;
     const parent = fields.parent as { key?: string } | undefined;
     const assignee = fields.assignee as JiraUser | undefined;
@@ -668,6 +782,10 @@ export class RestJiraProvider implements JiraProvider {
       labels: Array.isArray(fields.labels) ? (fields.labels as string[]) : [],
       parentKey: parent?.key,
       assignee,
+      statusCategory:
+        typeof status?.statusCategory?.key === "string"
+          ? status.statusCategory.key
+          : undefined,
       fields,
       properties: {},
     };
@@ -857,28 +975,48 @@ export class RestJiraProvider implements JiraProvider {
   }
 
   async getTransitions(key: string): Promise<Transition[]> {
-    const raw = await this.requestJson<{ transitions: Transition[] }>(
+    const raw = await this.requestJson<unknown>(
       "GET",
       `${this.apiPrefix()}/issue/${encodeURIComponent(key)}/transitions`,
     );
-    return raw.transitions ?? [];
+    return parseJiraTransitions(raw).map((t) => ({
+      id: t.id,
+      name: t.name,
+      to: {
+        id: t.toStatusId,
+        name: t.toStatus,
+        statusCategory: t.toStatusCategory
+          ? { key: t.toStatusCategory }
+          : undefined,
+      },
+    }));
   }
 
-  async transitionIssue(key: string, transitionIdOrName: string) {
-    const transitions = await this.getTransitions(key);
-    const hit =
-      transitions.find((t) => t.id === transitionIdOrName) ??
-      transitions.find(
-        (t) => t.name.toLowerCase() === transitionIdOrName.toLowerCase(),
+  async transitionIssue(key: string, transitionId: string) {
+    const id = assertNumericTransitionId(transitionId, { issueKey: key });
+    const available = parseJiraTransitions({
+      transitions: await this.getTransitions(key),
+    });
+    const hit = available.find((t) => t.id === id);
+    if (!hit) {
+      throw new JiraTransitionError(
+        "JIRA_TRANSITION_NOT_AVAILABLE",
+        `transition ${id} is not currently available for ${key}`,
+        {
+          issueKey: key,
+          resolvedValue: id,
+          available: available.map((t) => ({
+            id: t.id,
+            name: t.name,
+            toStatus: t.toStatus,
+          })),
+        },
       );
+    }
     await this.requestJson(
       "POST",
       `${this.apiPrefix()}/issue/${encodeURIComponent(key)}/transitions`,
-      {
-        transition: hit
-          ? { id: hit.id, name: hit.name }
-          : { name: transitionIdOrName },
-      },
+      transitionPostBody(id),
     );
   }
 

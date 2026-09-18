@@ -399,7 +399,18 @@ export {
   RestJiraProvider,
   createMockFetch,
   createMockJiraState,
+  DEFAULT_MOCK_TRANSITIONS,
+  LOCALIZED_RU_TRANSITIONS,
 } from "./rest-provider.js";
+export {
+  JiraTransitionError,
+  parseJiraTransitions,
+  parseNumericTransitionId,
+  assertNumericTransitionId,
+  resolveSemanticTransition,
+  planSemanticIssueTransition,
+  applySemanticIssueTransition,
+} from "./transitions.js";
 export { parseJiraSuccessBody, readJiraResponseJson, isAbortError } from "./http.js";
 export {
   buildIssueTypeMapping,

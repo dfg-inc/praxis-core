@@ -206,7 +206,7 @@ describe.each([["cloud"], ["datacenter"]] as const)(
       await provider.createIssueLink(epicKey, story.key);
       const children = await provider.getChildren(epicKey);
       expect(children.some((c) => c.key === story.key)).toBe(true);
-      await provider.transitionIssue(story.key, "In Progress");
+      await provider.transitionIssue(story.key, "21");
       const after = await provider.getIssue(story.key);
       expect(after.status).toBe("In Progress");
       await provider.assignIssue(story.key, me.accountId);

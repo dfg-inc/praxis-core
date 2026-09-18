@@ -21,6 +21,7 @@ export type JiraIssueLite = {
   labels: string[];
   parentKey?: string;
   assignee?: JiraUser;
+  statusCategory?: string;
   fields: Record<string, unknown>;
   properties: Record<string, unknown>;
 };
@@ -33,7 +34,15 @@ export type JiraLink = {
   outwardKey: string;
 };
 
-export type Transition = { id: string; name: string };
+export type Transition = {
+  id: string;
+  name: string;
+  to?: {
+    id?: string;
+    name?: string;
+    statusCategory?: { id?: number; key?: string; name?: string };
+  };
+};
 
 export type MetadataContext = {
   epicTypeId: string;
@@ -107,7 +116,7 @@ export interface JiraProvider {
   updateIssue(key: string, fields: Record<string, unknown>): Promise<void>;
   assignIssue(key: string, accountId: string): Promise<void>;
   getTransitions(key: string): Promise<Transition[]>;
-  transitionIssue(key: string, transitionIdOrName: string): Promise<void>;
+  transitionIssue(key: string, transitionId: string): Promise<void>;
   addComment(key: string, body: unknown): Promise<{ id: string }>;
   updateComment(
     key: string,

@@ -21,7 +21,7 @@ import { assertRole } from "./role-policy.js";
 import { spawnSync } from "node:child_process";
 import { headingParagraphs, textDocument } from "./rich-text.js";
 import { architectMaterialize } from "./architect-apply.js";
-import { resolveRemoteWpKey } from "./work-package-local.js";
+import { resolveRemoteWpKey, readWpManifest, resolveLocalWorkPackage, writeWpManifest } from "./work-package-local.js";
 import { planAndApplyBaStories, type BaStorySpec, type BaWriteHooks } from "./ba-write.js";
 import { resolveBaArtifactId } from "./artifact-id.js";
 import { readJsonFile, writeJsonAtomic } from "./atomic-json.js";
@@ -35,6 +35,22 @@ import {
   supersededPairs,
 } from "./managed-scope.js";
 import { traced, type PreviewTrace } from "./preview-trace.js";
+import {
+  planSemanticIssueTransition,
+  applySemanticIssueTransition,
+} from "./transitions.js";
+
+export class WorkPackageClaimError extends Error {
+  readonly code = "WORK_PACKAGE_ALREADY_CLAIMED" as const;
+  readonly issueKey?: string;
+  readonly actor?: string;
+  constructor(message: string, details?: { issueKey?: string; actor?: string }) {
+    super(message);
+    this.name = "WorkPackageClaimError";
+    this.issueKey = details?.issueKey;
+    this.actor = details?.actor;
+  }
+}
 
 function loadQualityCommands(repo: string): {
   build?: string;
@@ -502,8 +518,9 @@ export async function claimWorkPackage(opts: {
     existing.state === "active" &&
     existing.jiraAccountId !== opts.accountId
   ) {
-    throw new Error(
-      `claim denied: ${wpKey} is held by ${existing.actor} (token ${existing.claimToken})`,
+    throw new WorkPackageClaimError(
+      `WORK_PACKAGE_ALREADY_CLAIMED: claim denied: ${wpKey} is held by ${existing.actor} (token ${existing.claimToken})`,
+      { issueKey: wpKey, actor: existing.actor },
     );
   }
   if (existing && existing.jiraAccountId === opts.accountId) {
@@ -544,6 +561,16 @@ export async function claimWorkPackage(opts: {
       );
     }
   }
+  const transitionPlans = [];
+  for (const key of [wpKey, ...member]) {
+    transitionPlans.push(
+      await planSemanticIssueTransition(opts.provider, key, "START_DEVELOPMENT"),
+    );
+  }
+  for (const plan of transitionPlans) {
+    if (plan.alreadySatisfied || !plan.id) continue;
+    await opts.provider.transitionIssue(plan.key, plan.id);
+  }
   const claim: WorkPackageClaim = {
     workPackageId: manifest?.id ?? wpKey,
     jiraWorkPackageKey: wpKey,
@@ -556,10 +583,8 @@ export async function claimWorkPackage(opts: {
     state: "active",
   };
   await opts.provider.assignIssue(wpKey, opts.accountId);
-  await opts.provider.transitionIssue(wpKey, "In Progress");
   for (const key of member) {
     await opts.provider.assignIssue(key, opts.accountId);
-    await opts.provider.transitionIssue(key, "In Progress");
   }
   await opts.provider.setIssueProperty(wpKey, "praxis.claim", claim);
   const labels = Array.from(new Set([...remote.labels, "praxis-claimed"]));
@@ -576,6 +601,22 @@ export async function claimWorkPackage(opts: {
     throw new Error(
       `claim race detected on ${wpKey}; package blocked until resolved (not a distributed atomic lock)`,
     );
+  }
+  if (manifest) {
+    await opts.provider.setIssueProperty(wpKey, "praxis.workPackageManifest", {
+      ...manifest,
+      claim,
+    });
+  }
+  const local = resolveLocalWorkPackage(opts.repo, wpKey);
+  if (local) {
+    const prev = readWpManifest(opts.repo, local.id) ?? {};
+    writeWpManifest(opts.repo, {
+      ...prev,
+      id: local.id,
+      jiraIssueKey: wpKey,
+      claim,
+    });
   }
   mkdirSync(join(opts.repo, ".praxis-jira", "claims"), { recursive: true });
   writeFileSync(
@@ -672,7 +713,7 @@ export async function developerCompleteWp(opts: {
       ),
     ),
   );
-  await opts.provider.transitionIssue(wpKey, "Done");
+  await applySemanticIssueTransition(opts.provider, wpKey, "READY_FOR_QA");
   await opts.provider.writePraxisState(wpKey, { lifecycle: "ready-for-qa" });
   for (const key of required) {
     await opts.provider.writePraxisState(key, { lifecycle: "ready-for-qa" });
@@ -971,3 +1012,11 @@ export {
 } from "./work-package-read.js";
 export { createPreviewTrace, traced } from "./preview-trace.js";
 export { baContentFingerprint } from "./ba-write.js";
+export {
+  JiraTransitionError,
+  parseJiraTransitions,
+  assertNumericTransitionId,
+  resolveSemanticTransition,
+  planSemanticIssueTransition,
+  applySemanticIssueTransition,
+} from "./transitions.js";
