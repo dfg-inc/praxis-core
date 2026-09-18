@@ -29,6 +29,7 @@ export const OP_CODES = {
   EXTERNAL_SERVICE_ERROR: "EXTERNAL_SERVICE_ERROR",
   CONFLICT: "CONFLICT",
   LOCAL_RUNTIME_UNAVAILABLE: "LOCAL_RUNTIME_UNAVAILABLE",
+  PRAXIS_RUNTIME_UNAVAILABLE: "PRAXIS_RUNTIME_UNAVAILABLE",
   VALIDATION_FAILED: "VALIDATION_FAILED",
   REPOSITORY_UNAVAILABLE: "REPOSITORY_UNAVAILABLE",
   JIRA_CONFIG_UNAVAILABLE: "JIRA_CONFIG_UNAVAILABLE",
@@ -104,6 +105,27 @@ function requireRepo(repo: string): string {
   return resolved;
 }
 
+export function jiraConfigFlags() {
+  const baseUrlConfigured = Boolean(process.env.PRAXIS_JIRA_BASE_URL);
+  const emailConfigured = Boolean(process.env.PRAXIS_JIRA_EMAIL);
+  const projectKeyConfigured = Boolean(process.env.PRAXIS_JIRA_PROJECT_KEY);
+  const tokenConfigured = Boolean(process.env.PRAXIS_JIRA_TOKEN);
+  const missing: string[] = [];
+  if (!baseUrlConfigured) missing.push("jira_base_url");
+  if (!emailConfigured) missing.push("jira_email");
+  if (!projectKeyConfigured) missing.push("jira_project_key");
+  if (!tokenConfigured) missing.push("jira_token");
+  return {
+    baseUrlConfigured,
+    emailConfigured,
+    projectKeyConfigured,
+    tokenConfigured,
+    missing,
+    configured: missing.length === 0,
+    operationsReady: Boolean(baseUrlConfigured && tokenConfigured && projectKeyConfigured),
+  };
+}
+
 function jiraConfigured(): boolean {
   return Boolean(
     process.env.PRAXIS_JIRA_BASE_URL &&
@@ -112,16 +134,18 @@ function jiraConfigured(): boolean {
   );
 }
 
+function jiraConfigUnavailableMessage(flags = jiraConfigFlags()): string {
+  const missing = flags.missing.length ? flags.missing.join(", ") : "jira_base_url, jira_email, jira_project_key, jira_token";
+  return `JIRA_CONFIG_UNAVAILABLE: missing ${missing}. Open Claude Desktop → Settings → Extensions → Praxis Runtime → Settings, or set PRAXIS_JIRA_* for CLI/CI. Do not paste tokens into chat.`;
+}
+
 async function withProvider<T>(
   ctx: OpContext,
   fn: (p: JiraProvider) => Promise<T>,
 ): Promise<T> {
   if (ctx.provider) return fn(ctx.provider);
   if (!jiraConfigured()) {
-    throw new PraxisOpError(
-      OP_CODES.JIRA_CONFIG_UNAVAILABLE,
-      "JIRA_CONFIG_UNAVAILABLE: set PRAXIS_JIRA_BASE_URL, PRAXIS_JIRA_TOKEN, PRAXIS_JIRA_PROJECT_KEY in local runtime config. Do not paste tokens into chat.",
-    );
+    throw new PraxisOpError(OP_CODES.JIRA_CONFIG_UNAVAILABLE, jiraConfigUnavailableMessage());
   }
   try {
     const config = loadJiraConfig();
@@ -165,34 +189,15 @@ export async function doctorOp(ctx: OpContext, version: string) {
   const project = repoExists
     ? loadProjectConfig(git ?? resolved)
     : { status: "missing" as const, suggestedPath: resolved };
-  const jiraPresent = {
-    baseUrl: Boolean(process.env.PRAXIS_JIRA_BASE_URL),
-    token: Boolean(process.env.PRAXIS_JIRA_TOKEN),
-    email: Boolean(process.env.PRAXIS_JIRA_EMAIL),
-    projectKey: Boolean(process.env.PRAXIS_JIRA_PROJECT_KEY),
-    mode: process.env.PRAXIS_JIRA_MODE || null,
+  const jiraFlags = jiraConfigFlags();
+  const jira = {
+    baseUrlConfigured: jiraFlags.baseUrlConfigured,
+    emailConfigured: jiraFlags.emailConfigured,
+    projectKeyConfigured: jiraFlags.projectKeyConfigured,
+    tokenConfigured: jiraFlags.tokenConfigured,
+    configured: jiraFlags.configured,
+    missing: jiraFlags.missing,
   };
-  let jira: unknown = {
-    configured: jiraPresent.baseUrl && jiraPresent.token && jiraPresent.projectKey,
-  };
-  if (ctx.provider || (jiraPresent.baseUrl && jiraPresent.token && jiraPresent.projectKey)) {
-    try {
-      const provider =
-        ctx.provider ?? createJiraProvider({ config: loadJiraConfig() });
-      const conn = await provider.verifyConnection();
-      jira = {
-        configured: true,
-        connected: conn.ok,
-        displayName: conn.displayName,
-      };
-    } catch (e) {
-      jira = {
-        configured: true,
-        connected: false,
-        error: redact(e instanceof Error ? e.message : String(e)),
-      };
-    }
-  }
   const qualityUrl = process.env.PRAXIS_QUALITY_URL || "http://127.0.0.1:8792/health";
   let quality = { healthy: false, url: qualityUrl };
   try {
@@ -202,9 +207,10 @@ export async function doctorOp(ctx: OpContext, version: string) {
     quality = { healthy: false, url: qualityUrl };
   }
   const capabilities = {
+    praxisRuntime: "ok",
     repository: repoExists ? (git ? "ok" : "no-git") : "unavailable",
     localRuntime: "ok",
-    jiraConfig: jiraPresent.baseUrl && jiraPresent.token && jiraPresent.projectKey ? "ok" : "unavailable",
+    jiraConfig: jiraFlags.operationsReady ? "ok" : "unavailable",
   };
   return {
     version,
@@ -215,15 +221,13 @@ export async function doctorOp(ctx: OpContext, version: string) {
       path: "path" in project ? project.path : undefined,
       suggestedPath: "suggestedPath" in project ? project.suggestedPath : undefined,
     },
-    jiraConfigPresence: jiraPresent,
     jira,
     quality,
     capabilities,
     codes: {
       repository:
         capabilities.repository === "unavailable" ? OP_CODES.REPOSITORY_UNAVAILABLE : undefined,
-      jira:
-        capabilities.jiraConfig === "unavailable" ? OP_CODES.JIRA_CONFIG_UNAVAILABLE : undefined,
+      jira: capabilities.jiraConfig === "unavailable" ? OP_CODES.JIRA_CONFIG_UNAVAILABLE : undefined,
     },
     runtime: {
       node: process.version,

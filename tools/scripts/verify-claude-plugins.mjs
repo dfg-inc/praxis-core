@@ -19,17 +19,8 @@ import {
 import { extractZip } from "./claude-zip.mjs";
 import {
   inspectHostedZipBuffer,
-  parsePluginMcpConfig,
-  resolvePluginPath,
   validateExtractedHostedPlugin,
 } from "./hosted-plugin-policy.mjs";
-import {
-  connectOfficialMcp,
-  hostedCleanEnv,
-  listAndDoctor,
-  MCP_STARTUP_BUDGET_MS,
-  versionNegotiationModern,
-} from "./official-mcp-client.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -80,60 +71,29 @@ export async function verifyClaudePluginZip(zipPath, plugin, version, tmp) {
   const issues = validateExtractedHostedPlugin(unpack, plugin, version);
   if (issues.length) fail(`${plugin.id}\n${issues.join("\n")}`);
 
-  const mcpJson = JSON.parse(readFileSync(join(unpack, ".mcp.json"), "utf8"));
-  const mcp = parsePluginMcpConfig(mcpJson);
-  const args = mcp.args.map((a) => resolvePluginPath(a, unpack));
-  const session = await connectOfficialMcp({
-    command: process.execPath,
-    args,
-    cwd: unpack,
-    env: hostedCleanEnv(unpack),
-    versionNegotiation: versionNegotiationModern(),
-    timeoutMs: MCP_STARTUP_BUDGET_MS,
-    clientVersion: version,
-  });
-  try {
-    if (session.era !== "modern") {
-      fail(`${plugin.id} expected modern era, got ${session.era} ${session.protocolVersion}`);
-    }
-    const { tools, envelope, doctor } = await listAndDoctor(session, unpack);
-    const names = tools.map((t) => t.name);
-    if (!names.includes("praxis_doctor")) fail(`${plugin.id} tools/list missing praxis_doctor`);
-    if (plugin.role === "architect" && names.includes("praxis_developer_complete")) {
-      fail(`${plugin.id} advertised unexpected developer_complete`);
-    }
-    if (plugin.role === "architect" && !names.includes("praxis_architect_preview")) {
-      fail(`${plugin.id} missing praxis_architect_preview`);
-    }
-    if (plugin.role === "ba" && !names.includes("praxis_ba_preview")) {
-      fail(`${plugin.id} missing praxis_ba_preview`);
-    }
-    if (!envelope || envelope.ok !== true) {
-      fail(`${plugin.id} praxis_doctor failed: ${JSON.stringify(doctor)}`);
-    }
-    const combined = `${JSON.stringify(doctor)}\n${session.stderr()}`;
-    if (combined.includes("Cannot find package") || combined.includes("Cannot find module")) {
-      fail(`${plugin.id} bundled MCP missing dependency`);
-    }
-    if (combined.includes("/Users/serg/work/praxis/node_modules")) {
-      fail(`${plugin.id} resolved Praxis monorepo node_modules`);
-    }
-    const claudeCli = runClaudeValidate(unpack);
-    if (claudeCli.status === "FAIL") {
-      fail(`${plugin.id} Claude CLI structural validation FAIL\n${claudeCli.output}`);
-    }
-    return {
-      file: `${plugin.id}.zip`,
-      sha256: sha256File(zipPath),
-      bytes: buf.length,
-      toolCount: names.length,
-      claudeCli: claudeCli.status,
-      tools: names,
-      protocol: { era: session.era, version: session.protocolVersion },
-    };
-  } finally {
-    await session.close();
+  const names = inspected.entries.map((e) => e.name.replace(/\/+$/, ""));
+  if (names.includes(".mcp.json") || names.some((n) => n.startsWith("runtime/"))) {
+    fail(`${plugin.id} still bundles MCP runtime`);
   }
+  if (names.includes("bin") || names.some((n) => n.startsWith("bin/"))) {
+    fail(`${plugin.id} has top-level bin`);
+  }
+  const combined = buf.toString("utf8");
+  if (/PRAXIS_JIRA_TOKEN=\S+/.test(combined) && !combined.includes("<redacted>")) {
+    fail(`${plugin.id} looks like it contains a Jira token`);
+  }
+
+  const claudeCli = runClaudeValidate(unpack);
+  if (claudeCli.status === "FAIL") {
+    fail(`${plugin.id} Claude CLI structural validation FAIL\n${claudeCli.output}`);
+  }
+  return {
+    file: `${plugin.id}.zip`,
+    sha256: sha256File(zipPath),
+    bytes: buf.length,
+    claudeCli: claudeCli.status,
+    skills: plugin.requiredSkills,
+  };
 }
 
 export async function verifyClaudePlugins(
@@ -183,13 +143,8 @@ export async function verifyClaudePlugins(
     proven: [
       "no top-level bin directory",
       "standalone plugin manifest valid",
-      "MCP declaration valid",
-      "MCP runtime bundled",
-      "MCP server initializes",
-      "official MCP SDK client",
-      "modern protocol negotiation",
-      "role tool list valid",
-      "bundled runtime",
+      "skills-only role plugin",
+      "no bundled MCP runtime",
       "no runtime node_modules",
       "no symlink entries",
       "safe archive paths",
@@ -198,6 +153,7 @@ export async function verifyClaudePlugins(
       "skills packaged",
       "no secrets",
       "no absolute paths",
+      "role contract valid",
     ],
     pending: [
       "manual Claude UI upload",

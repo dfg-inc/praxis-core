@@ -259,6 +259,7 @@ function cmdRelease(version) {
   for (const step of [
     "npm run build",
     `node tools/scripts/sync-claude-plugins.mjs --version ${version}`,
+    `node tools/scripts/sync-claude-extension.mjs --version ${version}`,
     "npm run verify",
     "npm run smoke",
     "npm run release:mirror",
@@ -274,7 +275,7 @@ function cmdRelease(version) {
   // Drop generated mirror from index if somehow added
   git(["reset", "HEAD", "--", "dist"], { stdio: "ignore" });
 
-  const addList = [...new Set([...touched, "claude-plugins"])].filter((f) =>
+  const addList = [...new Set([...touched, "claude-plugins", "claude-extensions"])].filter((f) =>
     existsSync(join(root, f)),
   );
   const add = git(["add", "--", ...addList]);

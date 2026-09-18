@@ -1,13 +1,10 @@
 #!/usr/bin/env node
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { PLUGINS, distClaudePluginsDir } from "./claude-plugins-shared.mjs";
-import { packClaudePlugins } from "./pack-claude-plugins.mjs";
-import { extractZip } from "./claude-zip.mjs";
-import { parsePluginMcpConfig, resolvePluginPath } from "./hosted-plugin-policy.mjs";
+import { ensurePackedExtension, extractMcpbRuntime } from "./mcpb-runtime.mjs";
 import {
   connectOfficialMcp,
   hostedCleanEnv,
@@ -37,109 +34,94 @@ if ((tests.status ?? 1) !== 0) {
   fail(`@praxis/mcp tests failed\n${tests.stdout}\n${tests.stderr}`);
 }
 
-const distDir = distClaudePluginsDir(root, version);
-if (!existsSync(join(distDir, "praxis-architect.zip"))) {
-  await packClaudePlugins(version);
-}
-
-const expectedByRole = {
-  ba: "praxis_ba_preview",
-  architect: "praxis_architect_preview",
-  developer: "praxis_developer_claim",
-  quality: "praxis_quality_review",
-};
+const { mcpbPath } = await ensurePackedExtension(root, version);
+const expectedTools = [
+  "praxis_doctor",
+  "praxis_ba_preview",
+  "praxis_architect_preview",
+  "praxis_developer_claim",
+  "praxis_quality_review",
+];
 
 const outside = mkdtempSync(join(tmpdir(), "praxis-mcp-extract-"));
 const sdk = mcpSdkReport();
 const proven = [
   "official MCP SDK client",
   "StdioClientTransport",
-  "final extracted ZIP runtime",
+  "final extracted MCPB runtime",
   "modern protocol negotiation",
   "legacy initialize compatibility",
   "tools/list",
   "typed schemas",
   "praxis_doctor",
+  "shared runtime role catalog",
   "stdout protocol-only",
 ];
 const negotiated = { modern: {}, legacy: {} };
 const startupMs = {};
 
 try {
-  for (const plugin of PLUGINS) {
-    const zipPath = join(distDir, `${plugin.id}.zip`);
-    if (!existsSync(zipPath)) fail(`missing ${zipPath}`);
-    const unpack = join(outside, plugin.id);
-    mkdirSync(unpack, { recursive: true });
-    extractZip(readFileSync(zipPath), unpack);
-    const mcp = parsePluginMcpConfig(JSON.parse(readFileSync(join(unpack, ".mcp.json"), "utf8")));
-    const args = mcp.args.map((a) => resolvePluginPath(a, unpack));
-    const runtime = args.find((a) => a.endsWith("praxis-mcp.cjs"));
-    if (!runtime || !existsSync(runtime) || !lstatSync(runtime).isFile()) {
-      fail(`${plugin.id} runtime path did not resolve to a regular file: ${runtime}`);
-    }
-    const spawnSpec = {
-      command: process.execPath,
-      args,
-      cwd: unpack,
-      env: hostedCleanEnv(unpack),
-      clientVersion: version,
-    };
+  const unpack = join(outside, "praxis-runtime");
+  mkdirSync(unpack, { recursive: true });
+  const extracted = extractMcpbRuntime(mcpbPath, unpack);
+  if (!existsSync(extracted.runtime)) fail(`runtime missing ${extracted.runtime}`);
+  const spawnSpec = {
+    command: process.execPath,
+    args: extracted.args,
+    cwd: extracted.dest,
+    env: hostedCleanEnv(extracted.dest),
+    clientVersion: version,
+  };
 
-    const modern = await connectOfficialMcp({
-      ...spawnSpec,
-      versionNegotiation: versionNegotiationModern(),
-      timeoutMs: MCP_STARTUP_BUDGET_MS,
-    });
-    try {
-      if (modern.startupMs > MCP_STARTUP_BUDGET_MS) {
-        fail(`${plugin.id} modern connect ${modern.startupMs}ms exceeds ${MCP_STARTUP_BUDGET_MS}ms`);
-      }
-      if (modern.era !== "modern" || modern.protocolVersion !== MODERN_PROTOCOL) {
-        fail(
-          `${plugin.id} modern negotiation failed era=${modern.era} protocol=${modern.protocolVersion}`,
-        );
-      }
-      const { tools, envelope } = await listAndDoctor(modern, unpack);
-      if (!tools.length) fail(`${plugin.id} empty tools/list`);
-      if (!tools.every((t) => t.inputSchema)) fail(`${plugin.id} missing typed schemas`);
-      if (!tools.some((t) => t.name === "praxis_doctor")) {
-        fail(`${plugin.id} missing praxis_doctor`);
-      }
-      if (!tools.some((t) => t.name === expectedByRole[plugin.role])) {
-        fail(`${plugin.id} missing ${expectedByRole[plugin.role]}`);
-      }
-      if (!envelope?.ok) fail(`${plugin.id} doctor fixture failed`);
-      if (JSON.stringify(envelope).includes("PRAXIS_JIRA_TOKEN=")) {
-        fail(`${plugin.id} doctor leaked token`);
-      }
-      const stderr = modern.stderr();
-      if (!stderr.includes("[praxis-mcp] ready")) fail(`${plugin.id} missing stderr ready`);
-      if (stderr.includes("PRAXIS_JIRA_TOKEN=")) fail(`${plugin.id} stderr leaked token`);
-      negotiated.modern[plugin.role] = modern.protocolVersion;
-      startupMs[plugin.role] = modern.startupMs;
-    } finally {
-      await modern.close();
+  const modern = await connectOfficialMcp({
+    ...spawnSpec,
+    versionNegotiation: versionNegotiationModern(),
+    timeoutMs: MCP_STARTUP_BUDGET_MS,
+  });
+  try {
+    if (modern.startupMs > MCP_STARTUP_BUDGET_MS) {
+      fail(`runtime modern connect ${modern.startupMs}ms exceeds ${MCP_STARTUP_BUDGET_MS}ms`);
     }
+    if (modern.era !== "modern" || modern.protocolVersion !== MODERN_PROTOCOL) {
+      fail(`runtime modern negotiation failed era=${modern.era} protocol=${modern.protocolVersion}`);
+    }
+    const { tools, envelope } = await listAndDoctor(modern, unpack);
+    if (!tools.length) fail("runtime empty tools/list");
+    if (!tools.every((t) => t.inputSchema)) fail("runtime missing typed schemas");
+    for (const name of expectedTools) {
+      if (!tools.some((t) => t.name === name)) fail(`runtime missing ${name}`);
+    }
+    if (!envelope?.ok) fail("runtime doctor fixture failed");
+    if (JSON.stringify(envelope).includes("PRAXIS_JIRA_TOKEN=")) {
+      fail("runtime doctor leaked token");
+    }
+    const stderr = modern.stderr();
+    if (!stderr.includes("[praxis-mcp] ready")) fail("runtime missing stderr ready");
+    if (!stderr.includes("role=runtime")) fail("runtime missing role=runtime");
+    if (stderr.includes("PRAXIS_JIRA_TOKEN=")) fail("runtime stderr leaked token");
+    negotiated.modern.runtime = modern.protocolVersion;
+    startupMs.runtime = modern.startupMs;
+  } finally {
+    await modern.close();
+  }
 
-    const legacy = await connectOfficialMcp({
-      ...spawnSpec,
-      versionNegotiation: versionNegotiationLegacy(),
-      timeoutMs: MCP_STARTUP_BUDGET_MS,
-    });
-    try {
-      if (legacy.era !== "legacy" || !legacy.protocolVersion) {
-        fail(`${plugin.id} legacy initialize failed era=${legacy.era} protocol=${legacy.protocolVersion}`);
-      }
-      const { tools, envelope } = await listAndDoctor(legacy, unpack);
-      if (!tools.some((t) => t.name === "praxis_doctor")) {
-        fail(`${plugin.id} legacy tools/list missing praxis_doctor`);
-      }
-      if (!envelope?.ok) fail(`${plugin.id} legacy doctor failed`);
-      negotiated.legacy[plugin.role] = legacy.protocolVersion;
-    } finally {
-      await legacy.close();
+  const legacy = await connectOfficialMcp({
+    ...spawnSpec,
+    versionNegotiation: versionNegotiationLegacy(),
+    timeoutMs: MCP_STARTUP_BUDGET_MS,
+  });
+  try {
+    if (legacy.era !== "legacy" || !legacy.protocolVersion) {
+      fail(`runtime legacy initialize failed era=${legacy.era} protocol=${legacy.protocolVersion}`);
     }
+    const { tools, envelope } = await listAndDoctor(legacy, unpack);
+    if (!tools.some((t) => t.name === "praxis_doctor")) {
+      fail("runtime legacy tools/list missing praxis_doctor");
+    }
+    if (!envelope?.ok) fail("runtime legacy doctor failed");
+    negotiated.legacy.runtime = legacy.protocolVersion;
+  } finally {
+    await legacy.close();
   }
 } finally {
   rmSync(outside, { recursive: true, force: true });

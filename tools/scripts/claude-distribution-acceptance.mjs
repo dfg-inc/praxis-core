@@ -1,15 +1,20 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { PLUGINS, PLUGIN_ZIP_FILES } from "./claude-plugins-shared.mjs";
+import { tmpdir } from "node:os";
+import { PLUGIN_ZIP_FILES } from "./claude-plugins-shared.mjs";
 import {
   claudePluginsDir,
   packClaudePlugins,
   repoClaudePluginsDir,
 } from "./pack-claude-plugins.mjs";
 import { verifyClaudePlugins } from "./verify-claude-plugins.mjs";
+import { EXTENSION_FILE, distClaudeExtensionsDir, repoClaudeExtensionsDir } from "./claude-extensions-shared.mjs";
+import { packClaudeExtension } from "./pack-claude-extension.mjs";
+import { verifyClaudeExtension } from "./verify-claude-extension.mjs";
+import { mcpbPayloadFingerprint } from "./mcpb-runtime.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
@@ -65,27 +70,54 @@ if (stale.length) fail(`stale previous-version archives: ${stale.join(", ")}`);
 const repoReport = await verifyClaudePlugins(version, repoDir);
 if (!repoReport.ok) fail("repository verify-claude-plugins failed");
 
+await packClaudeExtension(version);
+const extDist = distClaudeExtensionsDir(root, version);
+const extRepo = repoClaudeExtensionsDir(root);
+const extDistReport = await verifyClaudeExtension(version, extDist);
+if (!extDistReport.ok) fail("dist verify-claude-extension failed");
+if (!existsSync(join(extRepo, EXTENSION_FILE))) {
+  fail(`committed artifact missing: claude-extensions/${EXTENSION_FILE}`);
+}
+if (!existsSync(join(extRepo, "README.md"))) fail("missing claude-extensions/README.md");
+const tmp = mkdtempSync(join(tmpdir(), "praxis-mcpb-dist-"));
+try {
+  const distFp = mcpbPayloadFingerprint(join(extDist, EXTENSION_FILE), join(tmp, "dist"));
+  const repoFp = mcpbPayloadFingerprint(join(extRepo, EXTENSION_FILE), join(tmp, "repo"));
+  if (distFp.sha256 !== repoFp.sha256) {
+    fail(`MCPB payload mismatch dist=${distFp.sha256} repo=${repoFp.sha256}`);
+  }
+} finally {
+  rmSync(tmp, { recursive: true, force: true });
+}
+const extRepoReport = await verifyClaudeExtension(version, extRepo);
+if (!extRepoReport.ok) fail("repository verify-claude-extension failed");
+
 const report = {
   ok: true,
   version,
   distribution: "repository",
-  directory: "claude-plugins",
+  directories: ["claude-plugins", "claude-extensions"],
   plugins: PLUGIN_ZIP_FILES,
+  extension: EXTENSION_FILE,
   proven: [
-    "MCP runtime bundled",
+    "skills-only role plugins",
+    "no bundled MCP runtime",
     "no top-level bin directory",
     "no runtime node_modules",
     "no symlink entries",
     "safe archive paths",
     "deterministic archive structure",
     "valid Claude plugin manifest",
-    "skills packaged",
-    "MCP server initializes from extracted ZIP",
     "repository artifacts match dist hashes",
+    "Praxis Runtime MCPB committed",
     "no secrets",
     "no absolute paths",
   ],
-  pending: ["manual Claude UI upload", "manual Cowork local-workspace E2E"],
+  pending: [
+    "manual Claude UI upload",
+    "manual MCPB installation",
+    "manual Cowork local-workspace E2E",
+  ],
 };
 
 console.log(JSON.stringify(report, null, 2));

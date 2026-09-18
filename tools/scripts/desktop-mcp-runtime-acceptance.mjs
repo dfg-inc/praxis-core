@@ -11,8 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { PLUGINS, distClaudePluginsDir } from "./claude-plugins-shared.mjs";
-import { packClaudePlugins } from "./pack-claude-plugins.mjs";
+import { ensurePackedExtension, extractMcpbRuntime } from "./mcpb-runtime.mjs";
 import { extractZip } from "./claude-zip.mjs";
 import { parsePluginMcpConfig, resolvePluginPath } from "./hosted-plugin-policy.mjs";
 import { mcpInitializeAndList, spawnMcpServer } from "./mcp-stdio-client.mjs";
@@ -22,7 +21,6 @@ import {
   listAndDoctor,
   MCP_STARTUP_BUDGET_MS,
   mcpSdkReport,
-  MODERN_PROTOCOL,
   versionNegotiationAuto,
   versionNegotiationLegacy,
   versionNegotiationModern,
@@ -71,79 +69,48 @@ function parsedMcp(dest) {
   return { mcp, args, runtime };
 }
 
-function extractPlugin(zipPath, dest) {
-  mkdirSync(dest, { recursive: true });
-  extractZip(readFileSync(zipPath), dest);
-  return parsedMcp(dest);
-}
-
-const distDir = distClaudePluginsDir(root, version);
-if (!existsSync(join(distDir, "praxis-architect.zip"))) {
-  await packClaudePlugins(version);
-}
-
+const { mcpbPath } = await ensurePackedExtension(root, version);
 const sdk = mcpSdkReport();
 const outside = mkdtempSync(join(tmpdir(), "praxis-desktop-mcp-"));
 const proven = [
-  "final extracted ZIP runtime",
+  "final extracted MCPB runtime",
   "process spawn",
   "modern protocol negotiation",
   "legacy initialize compatibility",
   "connect under startup budget",
   "tools/list",
   "praxis_doctor",
-  "all four roles",
+  "shared runtime catalog",
   "clean shutdown",
   "stdout protocol-only",
   "stderr diagnostics only",
   "no monorepo dependency",
-  "concurrent four-role startup",
+  "concurrent shared-runtime startup",
   "alpha.29 official-client regression",
+  "expected Desktop process count is one shared Runtime MCP",
 ];
 const startupMs = {};
 const negotiated = { modern: {}, legacy: {} };
-const expectedByRole = {
-  ba: "praxis_ba_preview",
-  architect: "praxis_architect_preview",
-  developer: "praxis_developer_claim",
-  quality: "praxis_quality_review",
-};
 
 let alpha29 = { attempted: false };
 
 try {
-  const unpacked = {};
-  for (const plugin of PLUGINS) {
-    const zipPath = join(distDir, `${plugin.id}.zip`);
-    if (!existsSync(zipPath)) fail(`missing ${zipPath}`);
-    const dest = join(outside, plugin.id);
-    const extracted = extractPlugin(zipPath, dest);
-    if (!extracted.runtime || !existsSync(extracted.runtime)) {
-      fail(`${plugin.id} missing resolved runtime ${extracted.runtime}`);
-    }
-    const st = lstatSync(extracted.runtime);
-    if (!st.isFile() || st.isSymbolicLink()) {
-      fail(`${plugin.id} runtime is not a regular file`);
-    }
-    if (extracted.runtime !== join(dest, "runtime", "praxis-mcp.cjs")) {
-      fail(
-        `${plugin.id} resolved runtime ${extracted.runtime} != ${join(dest, "runtime", "praxis-mcp.cjs")}`,
-      );
-    }
-    const bundled = readFileSync(extracted.runtime, "utf8");
-    if (bundled.includes("node_modules/@praxis") && bundled.includes("createRequire")) {
-      /* bundled CJS may mention strings; require a real missing-module failure instead */
-    }
-    if (bundled.includes("/Users/serg/work/praxis/node_modules")) {
-      fail(`${plugin.id} bundle embeds monorepo node_modules path`);
-    }
-    unpacked[plugin.id] = { plugin, dest, ...extracted };
+  const dest = join(outside, "praxis-runtime");
+  mkdirSync(dest, { recursive: true });
+  const extracted = extractMcpbRuntime(mcpbPath, dest);
+  if (!extracted.runtime || !existsSync(extracted.runtime)) {
+    fail(`missing resolved runtime ${extracted.runtime}`);
+  }
+  const st = lstatSync(extracted.runtime);
+  if (!st.isFile() || st.isSymbolicLink()) fail("runtime is not a regular file");
+  const bundled = readFileSync(extracted.runtime, "utf8");
+  if (bundled.includes("/Users/serg/work/praxis/node_modules")) {
+    fail("bundle embeds monorepo node_modules path");
   }
 
-  const architectRuntime = unpacked["praxis-architect"].runtime;
-  const idleEnv = hostedCleanEnv(unpacked["praxis-architect"].dest);
-  const idle = spawn(process.execPath, [architectRuntime, "--role", "architect"], {
-    cwd: unpacked["praxis-architect"].dest,
+  const idleEnv = hostedCleanEnv(extracted.dest);
+  const idle = spawn(process.execPath, extracted.args, {
+    cwd: extracted.dest,
     env: idleEnv,
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -168,11 +135,15 @@ try {
     idle.kill("SIGTERM");
     fail(`idle stderr missing version:\n${idleStderr}`);
   }
+  if (!idleStderr.includes("role=runtime")) {
+    idle.kill("SIGTERM");
+    fail(`idle stderr missing role=runtime:\n${idleStderr}`);
+  }
   idle.kill("SIGTERM");
   await wait(200);
 
-  const invalid = await spawnCaptured(process.execPath, [architectRuntime, "--role", "nope"], {
-    cwd: unpacked["praxis-architect"].dest,
+  const invalid = await spawnCaptured(process.execPath, [extracted.runtime, "--role", "nope"], {
+    cwd: extracted.dest,
     env: idleEnv,
     timeoutMs: 2000,
   });
@@ -240,64 +211,62 @@ try {
 
   const concurrentStarted = Date.now();
   const concurrent = await Promise.all(
-    PLUGINS.map(async (plugin) => {
-      const u = unpacked[plugin.id];
+    [0, 1, 2, 3].map(async (i) => {
       const session = await connectOfficialMcp({
         command: process.execPath,
-        args: u.args,
-        cwd: u.dest,
-        env: hostedCleanEnv(u.dest),
+        args: extracted.args,
+        cwd: extracted.dest,
+        env: hostedCleanEnv(extracted.dest),
         versionNegotiation: versionNegotiationAuto(),
         timeoutMs: MCP_STARTUP_BUDGET_MS,
         clientVersion: version,
       });
-      return { plugin, session };
+      return { i, session };
     }),
   );
   const concurrentMs = Date.now() - concurrentStarted;
   try {
-    for (const { plugin, session } of concurrent) {
+    for (const { i, session } of concurrent) {
       if (session.startupMs > MCP_STARTUP_BUDGET_MS) {
-        fail(`${plugin.id} concurrent startup ${session.startupMs}ms exceeds budget`);
+        fail(`runtime[${i}] concurrent startup ${session.startupMs}ms exceeds budget`);
       }
-      if (session.era !== "modern") {
-        fail(`${plugin.id} concurrent era ${session.era}`);
+      if (session.era !== "modern") fail(`runtime[${i}] concurrent era ${session.era}`);
+      const { tools, envelope } = await listAndDoctor(session, extracted.dest);
+      if (!tools.some((t) => t.name === "praxis_doctor")) fail(`runtime[${i}] concurrent missing doctor`);
+      if (!tools.some((t) => t.name === "praxis_architect_preview")) {
+        fail(`runtime[${i}] concurrent missing architect preview`);
       }
-      const { tools, envelope } = await listAndDoctor(session, uOr(unpacked, plugin.id));
-      if (!tools.some((t) => t.name === "praxis_doctor")) fail(`${plugin.id} concurrent missing doctor`);
-      if (!tools.some((t) => t.name === expectedByRole[plugin.role])) {
-        fail(`${plugin.id} concurrent missing ${expectedByRole[plugin.role]}`);
+      if (!envelope?.ok) fail(`runtime[${i}] concurrent doctor failed`);
+      if (
+        JSON.stringify({ tools, envelope, stderr: session.stderr() }).includes(
+          "/Users/serg/work/praxis/node_modules",
+        )
+      ) {
+        fail(`runtime[${i}] resolved Praxis monorepo node_modules`);
       }
-      if (!envelope?.ok) fail(`${plugin.id} concurrent doctor failed`);
-      if (JSON.stringify({ tools, envelope, stderr: session.stderr() }).includes("/Users/serg/work/praxis/node_modules")) {
-        fail(`${plugin.id} resolved Praxis monorepo node_modules`);
-      }
-      negotiated.modern[plugin.role] = session.protocolVersion;
-      startupMs[plugin.role] = session.startupMs;
+      negotiated.modern[`runtime-${i}`] = session.protocolVersion;
+      startupMs[`runtime-${i}`] = session.startupMs;
     }
   } finally {
     await Promise.all(concurrent.map(({ session }) => session.close()));
   }
 
-  for (const plugin of PLUGINS) {
-    const u = unpacked[plugin.id];
-    const legacy = await connectOfficialMcp({
-      command: process.execPath,
-      args: u.args,
-      cwd: u.dest,
-      env: hostedCleanEnv(u.dest),
-      versionNegotiation: versionNegotiationLegacy(),
-      timeoutMs: MCP_STARTUP_BUDGET_MS,
-      clientVersion: version,
-    });
-    try {
-      if (legacy.era !== "legacy") fail(`${plugin.id} legacy era ${legacy.era}`);
-      const { envelope } = await listAndDoctor(legacy, u.dest);
-      if (!envelope?.ok) fail(`${plugin.id} legacy doctor failed`);
-      negotiated.legacy[plugin.role] = legacy.protocolVersion;
-    } finally {
-      await legacy.close();
-    }
+  const legacy = await connectOfficialMcp({
+    command: process.execPath,
+    args: extracted.args,
+    cwd: extracted.dest,
+    env: hostedCleanEnv(extracted.dest),
+    versionNegotiation: versionNegotiationLegacy(),
+    timeoutMs: MCP_STARTUP_BUDGET_MS,
+    clientVersion: version,
+  });
+  try {
+    if (legacy.era !== "legacy") fail(`runtime legacy era ${legacy.era}`);
+    const { envelope } = await listAndDoctor(legacy, extracted.dest);
+    if (!envelope?.ok) fail("runtime legacy doctor failed");
+    negotiated.legacy.runtime = legacy.protocolVersion;
+  } finally {
+    await legacy.close();
   }
 
   const nodeLabel = process.version;
@@ -316,7 +285,8 @@ try {
         node: { executable: process.execPath, version: nodeLabel, minimum: ">=20" },
         negotiated,
         startupMs,
-        concurrentFourRoleMs: concurrentMs,
+        concurrentSharedRuntimeMs: concurrentMs,
+        expectedDesktopMcpProcesses: 1,
         alpha29,
         proven,
         pending: ["manual Claude Desktop MCP connection"],
@@ -327,8 +297,4 @@ try {
   );
 } finally {
   rmSync(outside, { recursive: true, force: true });
-}
-
-function uOr(unpacked, id) {
-  return unpacked[id].dest;
 }

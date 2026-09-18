@@ -46,10 +46,9 @@ const hosted = {
   proven: [
     "no top-level bin directory",
     "standalone plugin manifest valid",
-    "MCP declaration valid",
-    "MCP runtime bundled",
-    "MCP server initializes",
-    "role tool list valid",
+    "MCP declaration absent (skills-only)",
+    "no bundled MCP runtime",
+    "role contract valid",
     "safe archive paths",
     "no node_modules",
     "no tgz",

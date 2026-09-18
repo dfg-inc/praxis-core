@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@modelcontextprotocol/client": "^2.0.0",
     "esbuild": "^0.21.5",
     "yaml": "^2.7.0"

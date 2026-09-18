@@ -47,7 +47,46 @@ const FORBIDDEN_CLI = [
   /praxis developer claim/,
   /praxis quality review/,
   /praxis doctor --json/,
+  /launchctl setenv/,
+  /source \.env/,
 ];
+
+const ROLE_FORBIDDEN_TOOLS = {
+  ba: [
+    "praxis_architect_preview",
+    "praxis_architect_apply",
+    "praxis_developer_claim",
+    "praxis_developer_complete",
+    "praxis_quality_review",
+    "praxis_quality_ensure",
+    "praxis_work_package_list",
+    "praxis_work_package_show",
+  ],
+  architect: [
+    "praxis_ba_preview",
+    "praxis_ba_apply",
+    "praxis_developer_claim",
+    "praxis_developer_complete",
+    "praxis_quality_review",
+    "praxis_quality_ensure",
+  ],
+  developer: [
+    "praxis_ba_preview",
+    "praxis_ba_apply",
+    "praxis_architect_preview",
+    "praxis_architect_apply",
+    "praxis_quality_review",
+    "praxis_quality_ensure",
+  ],
+  quality: [
+    "praxis_ba_preview",
+    "praxis_ba_apply",
+    "praxis_architect_preview",
+    "praxis_architect_apply",
+    "praxis_developer_claim",
+    "praxis_developer_complete",
+  ],
+};
 
 function walk(dir, out = []) {
   if (!existsSync(dir)) return out;
@@ -83,6 +122,20 @@ for (const role of ROLES) {
     }
     if (!/praxis_[a-z_]+/.test(text)) {
       violations.push(`${relative(root, file)} does not invoke MCP tools`);
+    }
+    if (!text.includes("PRAXIS_RUNTIME_UNAVAILABLE")) {
+      violations.push(`${relative(root, file)} missing PRAXIS_RUNTIME_UNAVAILABLE`);
+    }
+    if (!text.includes("JIRA_CONFIG_UNAVAILABLE")) {
+      violations.push(`${relative(root, file)} missing JIRA_CONFIG_UNAVAILABLE`);
+    }
+    if (!/Praxis Runtime/.test(text)) {
+      violations.push(`${relative(root, file)} does not mention Praxis Runtime`);
+    }
+    for (const tool of ROLE_FORBIDDEN_TOOLS[role]) {
+      if (text.includes(tool)) {
+        violations.push(`${relative(root, file)} uses other-role tool ${tool}`);
+      }
     }
     if (/preview/.test(skill) || /apply|materialize|analysis|implement|review|claim|plan-jira|jira-analyze|jira-plan|resume/.test(skill)) {
       if (!/approval|confirm|wait|STOP|do not (immediately )?apply|human/i.test(text) && /apply/.test(text)) {

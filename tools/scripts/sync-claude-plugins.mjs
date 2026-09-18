@@ -55,6 +55,8 @@ Upload these files from this folder:
 
 Then open a supported workspace / Cowork project with repository access and invoke the matching Praxis skill.
 
+These ZIPs are skills-only. Install \`claude-extensions/praxis-runtime.mcpb\` first and configure Jira there.
+
 You do not need \`make\`, \`npm\`, or a terminal to install the plugins.
 
 Claude UI upload remains a manual check after each release.

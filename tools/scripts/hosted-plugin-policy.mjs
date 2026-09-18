@@ -56,6 +56,12 @@ export function inspectHostedZipBuffer(buf) {
     if (name === "bin" || name.startsWith("bin/")) {
       issues.push(`${HOSTED_BIN_FORBIDDEN}: ${e.name}`);
     }
+    if (name === ".mcp.json" || name.startsWith(".mcp.json")) {
+      issues.push(`CLAUDE_HOSTED_PLUGIN_ROLE_MCP_FORBIDDEN: ${e.name}`);
+    }
+    if (name === "runtime/praxis-mcp.cjs" || name.startsWith("runtime/")) {
+      issues.push(`CLAUDE_HOSTED_PLUGIN_ROLE_MCP_FORBIDDEN: ${e.name}`);
+    }
     if (name === ".claude-plugin/marketplace.json") {
       issues.push(`CLAUDE_HOSTED_PLUGIN_MARKETPLACE_IN_STANDALONE_ZIP: ${e.name}`);
     }
@@ -88,7 +94,7 @@ export function validateStandalonePluginJson(pluginJson, version, expectedName) 
     issues.push("plugin.json keywords must be an array");
   }
   if (pluginJson.mcpServers) {
-    issues.push("plugin.json should not inline mcpServers; use .mcp.json (standalone hosted plugin)");
+    issues.push("plugin.json must not inline mcpServers; role plugins are skills-only");
   }
   return issues;
 }
@@ -117,36 +123,11 @@ export function validateExtractedHostedPlugin(unpack, plugin, version) {
   issues.push(...validateStandalonePluginJson(pluginJson, version, plugin.id));
   if (!existsSync(join(pluginRoot, "VERSION"))) issues.push("missing VERSION");
   if (!existsSync(join(pluginRoot, "README.md"))) issues.push("missing README.md");
-  if (!existsSync(join(pluginRoot, ".mcp.json"))) issues.push("missing .mcp.json");
-  const mcpPath = join(pluginRoot, ".mcp.json");
-  let mcpJson;
-  try {
-    mcpJson = JSON.parse(readFileSync(mcpPath, "utf8"));
-  } catch (e) {
-    issues.push(`.mcp.json parse failed: ${e}`);
-    mcpJson = null;
+  if (existsSync(join(pluginRoot, ".mcp.json"))) {
+    issues.push("CLAUDE_HOSTED_PLUGIN_ROLE_MCP_FORBIDDEN: .mcp.json (use Praxis Runtime MCPB)");
   }
-  const mcp = mcpJson ? parsePluginMcpConfig(mcpJson) : null;
-  if (!mcp) {
-    issues.push("unsupported MCP declaration: expected mcpServers.praxis.command/args");
-  } else {
-    if (mcp.command !== "node") issues.push(`MCP command must be node, got ${mcp.command}`);
-    const joined = mcp.args.join(" ");
-    if (!joined.includes("${CLAUDE_PLUGIN_ROOT}/runtime/praxis-mcp.cjs")) {
-      issues.push("MCP args must use ${CLAUDE_PLUGIN_ROOT}/runtime/praxis-mcp.cjs");
-    }
-    if (!mcp.args.includes("--role") || !mcp.args.includes(plugin.role)) {
-      issues.push(`MCP args must include --role ${plugin.role}`);
-    }
-    const absLike = [mcp.command, ...mcp.args].some((v) => String(v).startsWith("/Users/"));
-    if (absLike) issues.push("MCP config contains absolute /Users path");
-    const resolvedRuntime = resolvePluginPath(
-      mcp.args.find((a) => a.includes("praxis-mcp.cjs")) || "",
-      pluginRoot,
-    );
-    if (!resolvedRuntime || !existsSync(resolvedRuntime)) {
-      issues.push(`MCP runtime missing: ${resolvedRuntime || "praxis-mcp.cjs"}`);
-    }
+  if (existsSync(join(pluginRoot, "runtime"))) {
+    issues.push("CLAUDE_HOSTED_PLUGIN_ROLE_MCP_FORBIDDEN: runtime/ (use Praxis Runtime MCPB)");
   }
   if (existsSync(join(pluginRoot, "runtime", "node_modules"))) {
     issues.push("runtime/node_modules present");
@@ -167,8 +148,14 @@ export function validateExtractedHostedPlugin(unpack, plugin, version) {
     if (/\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/praxis|\bbin\/praxis\b/.test(raw)) {
       issues.push(`skill ${skill} still instructs bin/praxis`);
     }
+    if (/launchctl setenv|source \.env/.test(raw)) {
+      issues.push(`skill ${skill} still instructs shell env / launchctl`);
+    }
     if (!raw.includes("praxis_doctor") && !raw.includes("praxis_")) {
       issues.push(`skill ${skill} does not mention MCP tools`);
+    }
+    if (!raw.includes("PRAXIS_RUNTIME_UNAVAILABLE")) {
+      issues.push(`skill ${skill} missing PRAXIS_RUNTIME_UNAVAILABLE`);
     }
   }
   const prompts = join(pluginRoot, "prompts");
