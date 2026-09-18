@@ -19,8 +19,8 @@ import {
   releaseWorkPackage,
   resolveLocalWorkPackage,
   resolveRemoteWpKey,
+  createPreviewTrace,
 } from "@praxis/jira/workflow";
-import { ensureQuality } from "./quality-ensure.js";
 
 export const OP_CODES = {
   INVALID_INPUT: "INVALID_INPUT",
@@ -33,16 +33,32 @@ export const OP_CODES = {
   VALIDATION_FAILED: "VALIDATION_FAILED",
   REPOSITORY_UNAVAILABLE: "REPOSITORY_UNAVAILABLE",
   JIRA_CONFIG_UNAVAILABLE: "JIRA_CONFIG_UNAVAILABLE",
+  BA_PREVIEW_TIMEOUT: "BA_PREVIEW_TIMEOUT",
+  ARCHITECT_PREVIEW_TIMEOUT: "ARCHITECT_PREVIEW_TIMEOUT",
+  JIRA_READ_TIMEOUT: "JIRA_READ_TIMEOUT",
+  LOCAL_WP_READ_FAILED: "LOCAL_WP_READ_FAILED",
+  DESIGN_READ_FAILED: "DESIGN_READ_FAILED",
+  ARCHITECT_PLAN_BUILD_FAILED: "ARCHITECT_PLAN_BUILD_FAILED",
 } as const;
 
 export type OpCode = (typeof OP_CODES)[keyof typeof OP_CODES];
 
+export const PREVIEW_DEADLINE_MS = 15_000;
+
 export class PraxisOpError extends Error {
   readonly code: OpCode;
-  constructor(code: OpCode, message: string) {
+  readonly stage?: string;
+  readonly durationMs?: number;
+  constructor(
+    code: OpCode,
+    message: string,
+    details?: { stage?: string; durationMs?: number },
+  ) {
     super(message);
     this.name = "PraxisOpError";
     this.code = code;
+    this.stage = details?.stage;
+    this.durationMs = details?.durationMs;
   }
 }
 
@@ -67,6 +83,8 @@ export type OpContext = {
   actor?: string;
   provider?: JiraProvider;
   requirePreviewFingerprint?: boolean;
+  signal?: AbortSignal;
+  deadlineMs?: number;
 };
 
 export function loadPraxisDotenv(repo: string): void {
@@ -88,6 +106,7 @@ function gitRoot(cwd: string): string | undefined {
   const r = spawnSync("git", ["rev-parse", "--show-toplevel"], {
     cwd,
     encoding: "utf8",
+    timeout: 2000,
   });
   if ((r.status ?? 1) !== 0) return undefined;
   return r.stdout.trim() || undefined;
@@ -149,11 +168,87 @@ async function withProvider<T>(
   }
   try {
     const config = loadJiraConfig();
-    return await fn(createJiraProvider({ config }));
+    return await fn(
+      createJiraProvider({
+        config,
+        signal: ctx.signal,
+      }),
+    );
   } catch (e) {
     const msg = redact(e instanceof Error ? e.message : String(e));
     if (e instanceof PraxisOpError) throw e;
+    if (/timeout|aborted/i.test(msg)) {
+      throw new PraxisOpError(OP_CODES.JIRA_READ_TIMEOUT, `JIRA_READ_TIMEOUT: ${msg}`);
+    }
     throw new PraxisOpError(OP_CODES.EXTERNAL_SERVICE_ERROR, msg);
+  }
+}
+
+function previewDeadlineMs(ctx: OpContext): number {
+  const fromEnv = Number(process.env.PRAXIS_PREVIEW_DEADLINE_MS);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+  if (typeof ctx.deadlineMs === "number" && ctx.deadlineMs > 0) return ctx.deadlineMs;
+  return PREVIEW_DEADLINE_MS;
+}
+
+async function withPreviewDeadline<T extends object>(opts: {
+  op: "ba-preview" | "architect-preview";
+  code: typeof OP_CODES.BA_PREVIEW_TIMEOUT | typeof OP_CODES.ARCHITECT_PREVIEW_TIMEOUT;
+  ctx: OpContext;
+  run: (args: {
+    signal: AbortSignal;
+    trace: ReturnType<typeof createPreviewTrace>;
+  }) => Promise<T>;
+}): Promise<T & { durationMs: number; stages: Record<string, number> }> {
+  const deadlineMs = previewDeadlineMs(opts.ctx);
+  const trace = createPreviewTrace(opts.op);
+  const tag = opts.op === "ba-preview" ? "praxis-ba-preview" : "praxis-architect-preview";
+  console.error(`[${tag}] start`);
+  const started = Date.now();
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), deadlineMs);
+  const onExternalAbort = () => ac.abort();
+  opts.ctx.signal?.addEventListener("abort", onExternalAbort);
+  let lastStage = "start";
+  const innerLog = trace.log.bind(trace);
+  trace.log = (event) => {
+    if (event.phase === "start") lastStage = event.stage;
+    innerLog(event);
+  };
+  try {
+    const result = await Promise.race([
+      opts.run({ signal: ac.signal, trace }),
+      new Promise<never>((_, reject) => {
+        ac.signal.addEventListener("abort", () => {
+          const durationMs = Date.now() - started;
+          reject(
+            new PraxisOpError(
+              opts.code,
+              `${opts.code}: stage=${lastStage} durationMs=${durationMs}`,
+              { stage: lastStage, durationMs },
+            ),
+          );
+        });
+      }),
+    ]);
+    const durationMs = Date.now() - started;
+    console.error(`[${tag}] done durationMs=${durationMs}`);
+    return { ...result, durationMs, stages: { ...trace.stages } };
+  } catch (e) {
+    if (e instanceof PraxisOpError) throw e;
+    const durationMs = Date.now() - started;
+    const msg = redact(e instanceof Error ? e.message : String(e));
+    if (/timeout|aborted/i.test(msg)) {
+      throw new PraxisOpError(
+        opts.code,
+        `${opts.code}: stage=${lastStage} durationMs=${durationMs}`,
+        { stage: lastStage, durationMs },
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    opts.ctx.signal?.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -181,6 +276,22 @@ function requireFingerprint(expected: string, got: string | undefined, what: str
   }
 }
 
+async function tracedFingerprint(
+  trace: ReturnType<typeof createPreviewTrace>,
+  plan: unknown,
+): Promise<string> {
+  const t0 = Date.now();
+  trace.log({ op: trace.op, stage: "fingerprint", phase: "start" });
+  const fp = previewFingerprint(plan);
+  trace.log({
+    op: trace.op,
+    stage: "fingerprint",
+    phase: "done",
+    durationMs: Date.now() - t0,
+  });
+  return fp;
+}
+
 export async function doctorOp(ctx: OpContext, version: string) {
   loadPraxisDotenv(ctx.repo);
   const resolved = resolve(ctx.repo);
@@ -201,7 +312,9 @@ export async function doctorOp(ctx: OpContext, version: string) {
   const qualityUrl = process.env.PRAXIS_QUALITY_URL || "http://127.0.0.1:8792/health";
   let quality = { healthy: false, url: qualityUrl };
   try {
-    const r = await fetch(qualityUrl);
+    const r = await fetch(qualityUrl, {
+      signal: AbortSignal.timeout(1500),
+    });
     quality = { healthy: r.ok, url: qualityUrl };
   } catch {
     quality = { healthy: false, url: qualityUrl };
@@ -324,14 +437,22 @@ export async function baPreviewOp(ctx: OpContext) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "ba preview requires epic");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
-    const result = await baAnalyzeEpic({
-      provider: p,
-      epicKey: ctx.epic!,
-      repo,
-      dryRun: true,
-    });
-    return { ...result, previewFingerprint: previewFingerprint(result.plan) };
+  return withPreviewDeadline({
+    op: "ba-preview",
+    code: OP_CODES.BA_PREVIEW_TIMEOUT,
+    ctx,
+    run: ({ signal, trace }) =>
+      withProvider({ ...ctx, repo, signal }, async (p) => {
+        const result = await baAnalyzeEpic({
+          provider: p,
+          epicKey: ctx.epic!,
+          repo,
+          dryRun: true,
+          trace,
+        });
+        const fingerprint = await tracedFingerprint(trace, result.plan);
+        return { ...result, previewFingerprint: fingerprint };
+      }),
   });
 }
 
@@ -375,14 +496,39 @@ export async function architectPreviewOp(ctx: OpContext) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "architect preview requires epic");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
-    const result = await architectPlanEpic({
-      provider: p,
-      epicKey: ctx.epic!,
-      repo,
-      dryRun: true,
-    });
-    return { ...result, previewFingerprint: previewFingerprint(result.plan) };
+  return withPreviewDeadline({
+    op: "architect-preview",
+    code: OP_CODES.ARCHITECT_PREVIEW_TIMEOUT,
+    ctx,
+    run: ({ signal, trace }) =>
+      withProvider({ ...ctx, repo, signal }, async (p) => {
+        try {
+          const result = await architectPlanEpic({
+            provider: p,
+            epicKey: ctx.epic!,
+            repo,
+            dryRun: true,
+            trace,
+          });
+          const fingerprint = await tracedFingerprint(trace, result.plan);
+          return { ...result, previewFingerprint: fingerprint };
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (/ARCHITECT_DESIGN_MISSING|ENOENT|design/i.test(msg)) {
+            throw new PraxisOpError(
+              OP_CODES.DESIGN_READ_FAILED,
+              `DESIGN_READ_FAILED: ${redact(msg)}`,
+            );
+          }
+          if (/plan/i.test(msg) && !/timeout/i.test(msg)) {
+            throw new PraxisOpError(
+              OP_CODES.ARCHITECT_PLAN_BUILD_FAILED,
+              `ARCHITECT_PLAN_BUILD_FAILED: ${redact(msg)}`,
+            );
+          }
+          throw e;
+        }
+      }),
   });
 }
 
@@ -508,11 +654,13 @@ export async function developerCompleteOp(ctx: OpContext) {
 
 export async function qualityStatusOp(ctx: OpContext) {
   const repo = requireRepo(ctx.repo);
+  const { ensureQuality } = await import("./quality-ensure.js");
   return ensureQuality({ repo });
 }
 
 export async function qualityEnsureOp(ctx: OpContext) {
   const repo = requireRepo(ctx.repo);
+  const { ensureQuality } = await import("./quality-ensure.js");
   const ensured = await ensureQuality({ repo });
   if (ensured.status === "unavailable") {
     throw new PraxisOpError(

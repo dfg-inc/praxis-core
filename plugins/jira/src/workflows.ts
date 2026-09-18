@@ -34,6 +34,7 @@ import {
   loadEpicIssueFlags,
   supersededPairs,
 } from "./managed-scope.js";
+import { traced, type PreviewTrace } from "./preview-trace.js";
 
 function loadQualityCommands(repo: string): {
   build?: string;
@@ -219,6 +220,7 @@ export async function baAnalyzeEpic(opts: {
   proposal?: JiraBaProposal;
   dryRun?: boolean;
   hooks?: BaWriteHooks;
+  trace?: PreviewTrace;
 }): Promise<{
   ok: boolean;
   reason?: string;
@@ -231,9 +233,15 @@ export async function baAnalyzeEpic(opts: {
   migration?: string;
 }> {
   assertRole("ba", "read-epic");
-  await opts.provider.getIssue(opts.epicKey);
-  const children = await opts.provider.getChildren(opts.epicKey);
-  const flags = await loadEpicIssueFlags(opts.provider, opts.epicKey);
+  const { epicIssue, children, flags } = await traced(opts.trace, "jira-status", async () => {
+    const epicIssue = await opts.provider.getIssue(opts.epicKey);
+    const children = await opts.provider.getChildren(opts.epicKey);
+    const flags = await loadEpicIssueFlags(opts.provider, opts.epicKey, children);
+    return { epicIssue, children, flags };
+  });
+  const remoteHandoff = epicIssue.properties?.["praxis.baHandoff"] as
+    | JiraBaHandoff
+    | undefined;
 
   let specs = opts.stories;
   let proposalReady = false;
@@ -242,7 +250,9 @@ export async function baAnalyzeEpic(opts: {
     proposalReady = true;
   }
   if (!specs) {
-    const loaded = loadBaProposal(opts.repo, opts.epicKey);
+    const loaded = await traced(opts.trace, "proposal-read", async () =>
+      loadBaProposal(opts.repo, opts.epicKey),
+    );
     if (loaded.ok) {
       specs = proposalToSpecs(loaded.proposal);
       proposalReady = true;
@@ -251,12 +261,14 @@ export async function baAnalyzeEpic(opts: {
     proposalReady = true;
   }
 
-  const adoption = await adoptLegacyStories({
-    provider: opts.provider,
-    epicKey: opts.epicKey,
-    flags,
-    children,
-  });
+  const adoption = await traced(opts.trace, "canonical-resolution", () =>
+    adoptLegacyStories({
+      provider: opts.provider,
+      epicKey: opts.epicKey,
+      flags,
+      children,
+    }),
+  );
   if (adoption.status === "conflict") {
     const handoff = emptyHandoff(opts.epicKey, {
       openQuestions: [`MIGRATION_CONFLICT: ${adoption.candidates.join(", ")}`],
@@ -310,14 +322,17 @@ export async function baAnalyzeEpic(opts: {
   }
 
   if (!opts.dryRun) assertRole("ba", "create-story");
-  const result = await planAndApplyBaStories({
-    provider: opts.provider,
-    epicKey: opts.epicKey,
-    repo: opts.repo,
-    specs,
-    dryRun: opts.dryRun,
-    hooks: opts.hooks,
-  });
+  const result = await traced(opts.trace, "plan-build", () =>
+    planAndApplyBaStories({
+      provider: opts.provider,
+      epicKey: opts.epicKey,
+      repo: opts.repo,
+      specs,
+      dryRun: opts.dryRun,
+      hooks: opts.hooks,
+      flags,
+    }),
+  );
   const canonical = result.applied
     .filter((a) => a.action !== "SUPERSEDED" && a.jiraIssueKey)
     .map((a) => a.jiraIssueKey!)
@@ -333,6 +348,9 @@ export async function baAnalyzeEpic(opts: {
   const pending = result.applied.length === 0 && !opts.dryRun;
   const remoteReady =
     !opts.dryRun && canonical.length > 0 && !blocking && !pending;
+  const readyForArchitecture = opts.dryRun
+    ? remoteHandoff?.readyForArchitecture === true
+    : remoteReady;
   const handoff = JiraBaHandoffSchema.parse({
     contract: "jira.ba.architect.handoff",
     version: "1.0.0",
@@ -350,27 +368,29 @@ export async function baAnalyzeEpic(opts: {
       ? specs.map((s) => s.acceptanceCriteria).join("\n")
       : "legacy remote BA content",
     dependencies: [],
-    proposalReady,
-    readyForArchitecture: remoteReady,
+    proposalReady: proposalReady || remoteHandoff?.proposalReady === true,
+    readyForArchitecture,
   });
-  persistPreview(
-    opts.repo,
-    opts.epicKey,
-    {
-      proposalReady,
-      readyForArchitecture: false,
-      remoteReadyForArchitecture: false,
-      canonicalStoryKeys: canonical,
-      supersededStoryKeys: superseded,
-      plan: result.plan,
-    },
-    result.planText,
-  );
-  mkdirSync(join(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
-  writeFileSync(
-    join(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`),
-    `${result.planText}\n`,
-  );
+  if (!opts.dryRun) {
+    persistPreview(
+      opts.repo,
+      opts.epicKey,
+      {
+        proposalReady,
+        readyForArchitecture: false,
+        remoteReadyForArchitecture: false,
+        canonicalStoryKeys: canonical,
+        supersededStoryKeys: superseded,
+        plan: result.plan,
+      },
+      result.planText,
+    );
+    mkdirSync(join(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
+    writeFileSync(
+      join(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`),
+      `${result.planText}\n`,
+    );
+  }
   if (opts.dryRun) {
     return {
       ok: true,
@@ -425,6 +445,7 @@ export async function architectPlanEpic(opts: {
   epicKey: string;
   repo: string;
   dryRun?: boolean;
+  trace?: PreviewTrace;
 }): Promise<{
   workPackages: PraxisWorkPackage[];
   taskKeys: string[];
@@ -927,3 +948,5 @@ export {
   resolveRemoteWpKey,
 } from "./work-package-local.js";
 export { architectMaterialize } from "./architect-apply.js";
+export { createPreviewTrace, traced } from "./preview-trace.js";
+export { baContentFingerprint } from "./ba-write.js";

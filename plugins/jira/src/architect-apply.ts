@@ -2,15 +2,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PraxisWorkPackage } from "@praxis/contracts";
 import { textDocument } from "./rich-text.js";
-import type { JiraProvider } from "./provider.js";
+import type { JiraIssueLite, JiraProvider } from "./provider.js";
 import { assertRole } from "./role-policy.js";
-import { ARTIFACT_PROP, assertCanonicalMembers, isSupersededFlags, loadEpicIssueFlags } from "./managed-scope.js";
+import { ARTIFACT_PROP, isSupersededFlags, loadEpicIssueFlags } from "./managed-scope.js";
 import { writeJsonAtomic } from "./atomic-json.js";
 import {
   discoverLocalWorkPackages,
   writeWpManifest,
   type LocalWorkPackage,
 } from "./work-package-local.js";
+import { traced, type PreviewTrace } from "./preview-trace.js";
 
 export type ArchitectPlanItem = {
   action: "CREATE" | "UPDATE" | "UNCHANGED" | "LINK" | "IGNORED";
@@ -50,20 +51,14 @@ function designSummary(local: LocalWorkPackage, storyKeys: string[]): string {
   ].join("\n");
 }
 
-async function findExistingWp(
-  provider: JiraProvider,
-  epicKey: string,
+function findExistingWpFromChildren(
+  children: JiraIssueLite[],
   localId: string,
-): Promise<string | undefined> {
+): string | undefined {
   const artifactId = `wp:${localId}`;
-  const children = await provider.getChildren(epicKey);
   for (const c of children) {
-    const aid = await provider.getIssueProperty<string>(c.key, ARTIFACT_PROP);
-    if (aid === artifactId) return c.key;
-    const wp = await provider.getIssueProperty<{ id?: string } | boolean>(
-      c.key,
-      WP_PROP,
-    );
+    if (c.properties?.["praxis.artifactId"] === artifactId) return c.key;
+    const wp = c.properties?.["praxis.workPackage"] as { id?: string } | boolean | undefined;
     if (wp && typeof wp === "object" && wp.id === localId) return c.key;
   }
   return undefined;
@@ -102,6 +97,7 @@ export async function architectMaterialize(opts: {
   epicKey: string;
   repo: string;
   dryRun?: boolean;
+  trace?: PreviewTrace;
 }): Promise<{
   ok: boolean;
   reason?: string;
@@ -112,17 +108,23 @@ export async function architectMaterialize(opts: {
   readyForDevelopment: boolean;
 }> {
   assertRole("architect", "read-epic");
-  const remoteHandoff = await opts.provider.getIssueProperty<{
-    readyForArchitecture?: boolean;
-    canonicalStoryKeys?: string[];
-    storyKeys?: string[];
-  }>(opts.epicKey, "praxis.baHandoff");
+  const remoteHandoff = await traced(opts.trace, "jira-status", () =>
+    opts.provider.getIssueProperty<{
+      readyForArchitecture?: boolean;
+      canonicalStoryKeys?: string[];
+      storyKeys?: string[];
+    }>(opts.epicKey, "praxis.baHandoff"),
+  );
   if (!remoteHandoff?.readyForArchitecture) {
     throw new Error(
       `BA_REMOTE_APPLY_INCOMPLETE: remote BA apply is not complete for ${opts.epicKey} (Architect skipped)`,
     );
   }
-  const flags = await loadEpicIssueFlags(opts.provider, opts.epicKey);
+  const { flags, children } = await traced(opts.trace, "canonical-story", async () => {
+    const children = await opts.provider.getChildren(opts.epicKey);
+    const flags = await loadEpicIssueFlags(opts.provider, opts.epicKey, children);
+    return { flags, children };
+  });
   const fromHandoff =
     remoteHandoff.canonicalStoryKeys?.length
       ? remoteHandoff.canonicalStoryKeys
@@ -142,7 +144,9 @@ export async function architectMaterialize(opts: {
     });
   }
 
-  const locals = discoverLocalWorkPackages(opts.repo);
+  const locals = await traced(opts.trace, "local-wp", async () =>
+    discoverLocalWorkPackages(opts.repo),
+  );
   if (locals.length === 0) {
     return {
       ok: false,
@@ -158,21 +162,27 @@ export async function architectMaterialize(opts: {
 
   const hoursCap = opts.provider.config.workPackageMaxHours;
   const packages: PraxisWorkPackage[] = [];
-  const meta = await opts.provider.discoverMetadata();
-  const wpTypeId = meta.workPackageTypeId || meta.taskTypeId;
-  const labels = meta.workPackageTypeId
-    ? ["praxis-managed"]
-    : ["praxis-managed", "praxis-work-package"];
+  let wpTypeId: string | undefined;
+  let labels = ["praxis-managed", "praxis-work-package"];
+  if (!opts.dryRun) {
+    const meta = await opts.provider.discoverMetadata();
+    wpTypeId = meta.workPackageTypeId || meta.taskTypeId;
+    labels = meta.workPackageTypeId
+      ? ["praxis-managed"]
+      : ["praxis-managed", "praxis-work-package"];
+  }
+
+  const planBuildStarted = Date.now();
+  opts.trace?.log({ op: opts.trace.op, stage: "plan-build", phase: "start" });
 
   for (const local of locals) {
+    await traced(opts.trace, "design-read", async () => {
+      void local.indexMd;
+    });
     const artifactId = `wp:${local.id}`;
-    const existing = await findExistingWp(
-      opts.provider,
-      opts.epicKey,
-      local.id,
-    );
+    const existing = findExistingWpFromChildren(children, local.id);
     const title = `[${local.id}] ${clip(local.indexMd?.split("\n")[0]?.replace(/^#\s*/, "") || "Work package", 80)}`;
-    const members = await assertCanonicalMembers(opts.provider, storyKeys);
+    const members = storyKeys;
     if (!existing) {
       plan.push({
         action: "CREATE",
@@ -198,10 +208,11 @@ export async function architectMaterialize(opts: {
         ),
     );
     for (const storyKey of members) {
-      const story = await opts.provider.getIssue(storyKey);
+      const storySummary =
+        flags.find((f) => f.key === storyKey)?.summary ?? storyKey;
       const approach = clip(
         local.indexMd ??
-          `Implement ${story.summary} per ${local.id} design package.`,
+          `Implement ${storySummary} per ${local.id} design package.`,
         2000,
       );
       const commentBody = [
@@ -213,11 +224,13 @@ export async function architectMaterialize(opts: {
           ? `\n## Diagram\n\n\`\`\`mermaid\n${usefulMermaid[0]}\n\`\`\``
           : "",
       ].join("\n");
-      const comment = await ensureManagedComment(
-        opts.provider,
-        storyKey,
-        commentBody,
-        Boolean(opts.dryRun),
+      const comment = await traced(opts.trace, "jira-read", () =>
+        ensureManagedComment(
+          opts.provider,
+          storyKey,
+          commentBody,
+          Boolean(opts.dryRun),
+        ),
       );
       plan.push({
         action: comment.action,
@@ -358,6 +371,12 @@ export async function architectMaterialize(opts: {
   }
   lines.push("CREATE TECHNICAL TASKS:");
   lines.push("  none");
+  opts.trace?.log({
+    op: opts.trace.op,
+    stage: "plan-build",
+    phase: "done",
+    durationMs: Date.now() - planBuildStarted,
+  });
   const ready = !opts.dryRun && packages.every((p) => p.jiraIssueKey && p.jiraIssueKey !== "PLANNED");
   return {
     ok: true,

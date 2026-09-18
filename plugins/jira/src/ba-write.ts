@@ -44,6 +44,10 @@ export type AppliedStory = {
   superseded?: string[];
 };
 
+export function baContentFingerprint(spec: BaStorySpec): string {
+  return contentFingerprint(spec);
+}
+
 function contentFingerprint(spec: BaStorySpec): string {
   return createHash("sha256")
     .update(
@@ -144,13 +148,15 @@ export async function planAndApplyBaStories(opts: {
   specs: BaStorySpec[];
   dryRun?: boolean;
   hooks?: BaWriteHooks;
+  flags?: IssueScopeFlags[];
 }): Promise<{
   plan: BaJiraWritePlanItem[];
   planText: string;
   applied: AppliedStory[];
   flags: IssueScopeFlags[];
 }> {
-  const flags = await loadEpicIssueFlags(opts.provider, opts.epicKey);
+  const flags =
+    opts.flags ?? (await loadEpicIssueFlags(opts.provider, opts.epicKey));
   const claimed = new Set<string>();
   const plan: BaJiraWritePlanItem[] = [];
   const applied: AppliedStory[] = [];
@@ -171,6 +177,7 @@ export async function planAndApplyBaStories(opts: {
       artifactId,
       opts.repo,
       opts.epicKey,
+      { dryRun: opts.dryRun },
     );
     for (const s of looked.superseded) {
       plan.push({
@@ -276,6 +283,7 @@ export async function planAndApplyBaStories(opts: {
       artifactId,
       opts.repo,
       opts.epicKey,
+      { dryRun: opts.dryRun },
     );
     if (recheck.canonical) {
       advanceWriteOp(opts.repo, operationId, {
@@ -342,6 +350,6 @@ export async function planAndApplyBaStories(opts: {
     plan,
     planText: formatBaWritePlan(plan),
     applied,
-    flags: await loadEpicIssueFlags(opts.provider, opts.epicKey),
+    flags: opts.dryRun ? flags : await loadEpicIssueFlags(opts.provider, opts.epicKey),
   };
 }

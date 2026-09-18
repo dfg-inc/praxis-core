@@ -10,13 +10,16 @@ import type {
   MetadataContext,
   Transition,
 } from "./provider.js";
-import { PRAXIS_ISSUE_PROPERTIES } from "./provider.js";
 import type { PraxisRichTextDocument } from "@praxis/contracts";
 import { renderRichText } from "./rich-text.js";
 import {
   contextualTransportError,
+  isAbortError,
+  isHttpNotFound,
   isTransientError,
   isTransientHttp,
+  jiraRequestTimeoutMs,
+  mergeAbortSignals,
   readJiraResponseJson,
   sleepBackoff,
 } from "./http.js";
@@ -405,16 +408,22 @@ export class RestJiraProvider implements JiraProvider {
   readonly flavor: "cloud" | "datacenter";
   readonly config: JiraConfig;
   private readonly fetchImpl: typeof fetch;
+  private readonly abortSignal?: AbortSignal;
+  private readonly timeoutMs: number;
   private meta?: MetadataContext;
   private typeMapping?: IssueTypeMapping;
 
   constructor(opts: {
     config: JiraConfig;
     fetchImpl?: typeof fetch;
+    signal?: AbortSignal;
+    timeoutMs?: number;
   }) {
     this.config = opts.config;
     this.flavor = opts.config.mode;
     this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.abortSignal = opts.signal;
+    this.timeoutMs = opts.timeoutMs ?? jiraRequestTimeoutMs();
   }
 
   private apiPrefix(): string {
@@ -447,6 +456,14 @@ export class RestJiraProvider implements JiraProvider {
     return String((this.headers() as Record<string, string>).Authorization);
   }
 
+  private requestSignal(): AbortSignal | undefined {
+    const timeout =
+      typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(this.timeoutMs)
+        : undefined;
+    return mergeAbortSignals([this.abortSignal, timeout]);
+  }
+
   private async requestJson<T>(
     method: string,
     path: string,
@@ -462,6 +479,7 @@ export class RestJiraProvider implements JiraProvider {
           method,
           headers: this.headers(),
           body: body === undefined ? undefined : JSON.stringify(body),
+          signal: this.requestSignal(),
         });
         if (
           !res.ok &&
@@ -475,6 +493,14 @@ export class RestJiraProvider implements JiraProvider {
         return await readJiraResponseJson<T>(res, method, path);
       } catch (err) {
         lastErr = err;
+        if (isAbortError(err)) {
+          throw contextualTransportError(err, {
+            provider: this.flavor,
+            method,
+            path,
+            attempt,
+          });
+        }
         if (
           isTransientError(err) &&
           (!write || retryWrites) &&
@@ -662,24 +688,25 @@ export class RestJiraProvider implements JiraProvider {
         `${this.apiPrefix()}/issue/${encodeURIComponent(key)}/properties`,
       );
       return (raw.keys ?? []).map((k) => k.key);
-    } catch {
-      return [...PRAXIS_ISSUE_PROPERTIES];
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      return [];
     }
   }
 
   private async loadPraxisProperties(
     key: string,
   ): Promise<Record<string, unknown>> {
-    const names = await this.listIssueProperties(key);
-    const wanted = new Set<string>([
-      ...PRAXIS_ISSUE_PROPERTIES,
-      ...names.filter((n) => n.startsWith("praxis.")),
-    ]);
+    const names = (await this.listIssueProperties(key)).filter((n) =>
+      n.startsWith("praxis."),
+    );
     const properties: Record<string, unknown> = {};
-    for (const name of wanted) {
-      const value = await this.getIssueProperty(key, name);
-      if (value !== undefined) properties[name] = value;
-    }
+    await Promise.all(
+      names.map(async (name) => {
+        const value = await this.getIssueProperty(key, name);
+        if (value !== undefined) properties[name] = value;
+      }),
+    );
     return properties;
   }
 
@@ -960,7 +987,9 @@ export class RestJiraProvider implements JiraProvider {
         `${this.apiPrefix()}/issue/${encodeURIComponent(key)}/properties/${encodeURIComponent(propertyKey)}`,
       );
       return raw?.value;
-    } catch {
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      if (isHttpNotFound(err)) return undefined;
       return undefined;
     }
   }
@@ -987,6 +1016,8 @@ export class RestJiraProvider implements JiraProvider {
 export function createJiraProvider(opts: {
   config: JiraConfig;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): JiraProvider {
   return new RestJiraProvider(opts);
 }

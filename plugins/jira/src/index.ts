@@ -400,7 +400,7 @@ export {
   createMockFetch,
   createMockJiraState,
 } from "./rest-provider.js";
-export { parseJiraSuccessBody, readJiraResponseJson } from "./http.js";
+export { parseJiraSuccessBody, readJiraResponseJson, isAbortError } from "./http.js";
 export {
   buildIssueTypeMapping,
   resolveSemanticType,

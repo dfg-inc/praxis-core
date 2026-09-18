@@ -45,7 +45,54 @@ export function isTransientHttp(status: number): boolean {
   return status === 429 || status === 502 || status === 503 || status === 504;
 }
 
+export const DEFAULT_JIRA_REQUEST_TIMEOUT_MS = 8000;
+
+export function jiraRequestTimeoutMs(): number {
+  const n = Number(process.env.PRAXIS_JIRA_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_JIRA_REQUEST_TIMEOUT_MS;
+}
+
+export function isAbortError(err: unknown): boolean {
+  const name =
+    err && typeof err === "object" && "name" in err
+      ? String((err as { name?: string }).name ?? "")
+      : "";
+  if (name === "AbortError" || name === "TimeoutError") return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /AbortError|TimeoutError|The operation was aborted|aborted due to timeout/i.test(
+    msg,
+  );
+}
+
+export function isHttpNotFound(err: unknown): boolean {
+  return /HTTP 404\b/.test(err instanceof Error ? err.message : String(err));
+}
+
+export function mergeAbortSignals(
+  signals: Array<AbortSignal | undefined>,
+): AbortSignal | undefined {
+  const live = signals.filter((s): s is AbortSignal => Boolean(s));
+  if (live.length === 0) return undefined;
+  if (live.length === 1) return live[0];
+  const any = (
+    AbortSignal as typeof AbortSignal & {
+      any?: (input: AbortSignal[]) => AbortSignal;
+    }
+  ).any;
+  if (typeof any === "function") return any(live);
+  const ac = new AbortController();
+  for (const s of live) {
+    if (s.aborted) {
+      ac.abort(s.reason);
+      break;
+    }
+    s.addEventListener("abort", () => ac.abort(s.reason), { once: true });
+  }
+  return ac.signal;
+}
+
 export function isTransientError(err: unknown): boolean {
+  if (isAbortError(err)) return false;
   const code =
     err && typeof err === "object" && "code" in err
       ? String((err as { code?: string }).code ?? "")

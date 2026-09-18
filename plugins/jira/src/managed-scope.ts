@@ -36,10 +36,39 @@ export function isSupersededFlags(flags: IssueScopeFlags): boolean {
   );
 }
 
+export function flagsFromIssue(issue: JiraIssueLite): IssueScopeFlags {
+  const props = issue.properties ?? {};
+  const artifactId =
+    typeof props["praxis.artifactId"] === "string"
+      ? props["praxis.artifactId"]
+      : undefined;
+  const supersededRaw = props["praxis.superseded"];
+  const supersededByProp =
+    typeof props["praxis.supersededBy"] === "string"
+      ? props["praxis.supersededBy"]
+      : undefined;
+  const historical = parseHistoricalSupersededBy(issue.summary);
+  const supersededBy = supersededByProp || historical;
+  return {
+    key: issue.key,
+    artifactId,
+    superseded: supersededRaw === true || Boolean(supersededBy),
+    supersededBy,
+    issueType: issue.issueType,
+    semanticType: issue.semanticType,
+    parentKey: issue.parentKey,
+    labels: issue.labels,
+    summary: issue.summary,
+  };
+}
+
 export async function loadIssueScopeFlags(
   provider: JiraProvider,
   issue: JiraIssueLite,
 ): Promise<IssueScopeFlags> {
+  if (issue.properties !== undefined) {
+    return flagsFromIssue(issue);
+  }
   const artifactId = await provider.getIssueProperty<string>(
     issue.key,
     ARTIFACT_PROP,
@@ -70,10 +99,11 @@ export async function loadIssueScopeFlags(
 export async function loadEpicIssueFlags(
   provider: JiraProvider,
   epicKey: string,
+  children?: JiraIssueLite[],
 ): Promise<IssueScopeFlags[]> {
-  const children = await provider.getChildren(epicKey);
+  const list = children ?? (await provider.getChildren(epicKey));
   const out: IssueScopeFlags[] = [];
-  for (const c of children) {
+  for (const c of list) {
     out.push(await loadIssueScopeFlags(provider, c));
   }
   return out;
@@ -138,6 +168,7 @@ export async function recoverDuplicatesForArtifact(
   flags: IssueScopeFlags[],
   artifactId: string,
   repo: string,
+  opts?: { dryRun?: boolean },
 ): Promise<{ canonical?: string; superseded: string[] }> {
   const matches = flags.filter((f) => f.artifactId === artifactId);
   if (matches.length === 0) return { superseded: [] };
@@ -147,7 +178,7 @@ export async function recoverDuplicatesForArtifact(
   if (!canonical) return { superseded };
   for (const m of matches) {
     if (m.key === canonical) continue;
-    if (!isSupersededFlags(m)) {
+    if (!isSupersededFlags(m) && !opts?.dryRun) {
       await markSuperseded(provider, m.key, canonical);
     }
     superseded.push(m.key);
@@ -161,12 +192,14 @@ export async function lookupByArtifactId(
   artifactId: string,
   repo: string,
   epicKey: string,
+  opts?: { dryRun?: boolean },
 ): Promise<{ canonical?: string; superseded: string[] }> {
   const recovered = await recoverDuplicatesForArtifact(
     provider,
     flags,
     artifactId,
     repo,
+    opts,
   );
   if (recovered.canonical) return recovered;
   const aliases = artifactIdAliases(artifactId);
@@ -177,6 +210,7 @@ export async function lookupByArtifactId(
         flags,
         alt,
         repo,
+        opts,
       );
       if (viaLegacy.canonical) return viaLegacy;
     }

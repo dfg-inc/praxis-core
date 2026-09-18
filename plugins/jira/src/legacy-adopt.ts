@@ -80,12 +80,14 @@ export async function adoptLegacyStories(opts: {
   flags: IssueScopeFlags[];
   children: JiraIssueLite[];
 }): Promise<LegacyAdoption> {
-  const handoffKeys = await parseEpicHandoffStoryKeys(
-    opts.provider,
-    opts.epicKey,
-  );
   const byKey = new Map(opts.children.map((c) => [c.key, c]));
   const flagged = new Map(opts.flags.map((f) => [f.key, f]));
+  const metadataResolved = opts.flags.some(
+    (f) => Boolean(f.artifactId) && !isSupersededFlags(f),
+  );
+  const handoffKeys = metadataResolved
+    ? []
+    : await parseEpicHandoffStoryKeys(opts.provider, opts.epicKey);
 
   const superseded = opts.flags.filter((f) => isSupersededFlags(f));
   const active = opts.flags.filter(
@@ -165,29 +167,6 @@ export async function hydrateFlags(
 ): Promise<IssueScopeFlags[]> {
   const out: IssueScopeFlags[] = [];
   for (const c of children) {
-    if (c.properties && Object.keys(c.properties).length) {
-      const historical = parseHistoricalSupersededBy(c.summary);
-      const supersededBy =
-        (typeof c.properties["praxis.supersededBy"] === "string"
-          ? c.properties["praxis.supersededBy"]
-          : undefined) || historical;
-      out.push({
-        key: c.key,
-        artifactId:
-          typeof c.properties["praxis.artifactId"] === "string"
-            ? c.properties["praxis.artifactId"]
-            : undefined,
-        superseded:
-          c.properties["praxis.superseded"] === true || Boolean(supersededBy),
-        supersededBy,
-        issueType: c.issueType,
-        semanticType: c.semanticType,
-        parentKey: c.parentKey,
-        labels: c.labels,
-        summary: c.summary,
-      });
-      continue;
-    }
     out.push(await loadIssueScopeFlags(provider, c));
   }
   return out;
