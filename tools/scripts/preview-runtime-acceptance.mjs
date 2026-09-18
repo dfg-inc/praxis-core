@@ -113,7 +113,7 @@ try {
   const archRaw = await Promise.race([
     session.client.callTool({
       name: "praxis_architect_preview",
-      arguments: { epic: seeded.epicKey, repo },
+      arguments: { epic: seeded.epicKey, repo, workPackageId: "WP-20260914-002" },
     }),
     timeout(HOST_LIKE_TIMEOUT_MS, "praxis_architect_preview"),
   ]);

@@ -20,6 +20,7 @@ import {
   resolveLocalWorkPackage,
   resolveRemoteWpKey,
   createPreviewTrace,
+  WorkPackageScopeError,
 } from "@praxis/jira/workflow";
 
 export const OP_CODES = {
@@ -39,6 +40,12 @@ export const OP_CODES = {
   LOCAL_WP_READ_FAILED: "LOCAL_WP_READ_FAILED",
   DESIGN_READ_FAILED: "DESIGN_READ_FAILED",
   ARCHITECT_PLAN_BUILD_FAILED: "ARCHITECT_PLAN_BUILD_FAILED",
+  WORK_PACKAGE_NOT_FOUND: "WORK_PACKAGE_NOT_FOUND",
+  WORK_PACKAGE_OUT_OF_SCOPE: "WORK_PACKAGE_OUT_OF_SCOPE",
+  WORK_PACKAGE_SUPERSEDED: "WORK_PACKAGE_SUPERSEDED",
+  WORK_PACKAGE_INVALID_STATE: "WORK_PACKAGE_INVALID_STATE",
+  WORK_PACKAGE_TITLE_INVALID: "WORK_PACKAGE_TITLE_INVALID",
+  WORK_PACKAGE_SCOPE_AMBIGUOUS: "WORK_PACKAGE_SCOPE_AMBIGUOUS",
 } as const;
 
 export type OpCode = (typeof OP_CODES)[keyof typeof OP_CODES];
@@ -491,6 +498,13 @@ export async function architectStatusOp(ctx: OpContext) {
   return withProvider({ ...ctx, repo }, (p) => collectEpicStatus(p, ctx.epic!));
 }
 
+function mapArchitectWpError(e: unknown): never {
+  if (e instanceof WorkPackageScopeError) {
+    throw new PraxisOpError(e.code as OpCode, e.message);
+  }
+  throw e as Error;
+}
+
 export async function architectPreviewOp(ctx: OpContext) {
   if (!ctx.epic) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "architect preview requires epic");
@@ -509,11 +523,18 @@ export async function architectPreviewOp(ctx: OpContext) {
             repo,
             dryRun: true,
             trace,
+            workPackageId: ctx.wp,
           });
           const fingerprint = await tracedFingerprint(trace, result.plan);
           return { ...result, previewFingerprint: fingerprint };
         } catch (e) {
+          if (e instanceof WorkPackageScopeError) mapArchitectWpError(e);
           const msg = e instanceof Error ? e.message : String(e);
+          if (/WORK_PACKAGE_/.test(msg)) {
+            const code = (msg.match(/^(WORK_PACKAGE_[A-Z_]+)/)?.[1] ??
+              OP_CODES.VALIDATION_FAILED) as OpCode;
+            throw new PraxisOpError(code, redact(msg));
+          }
           if (/ARCHITECT_DESIGN_MISSING|ENOENT|design/i.test(msg)) {
             throw new PraxisOpError(
               OP_CODES.DESIGN_READ_FAILED,
@@ -539,23 +560,30 @@ export async function architectApplyOp(ctx: OpContext) {
   }
   const repo = requireRepo(ctx.repo);
   return withProvider({ ...ctx, repo }, async (p) => {
-    const preview = await architectPlanEpic({
-      provider: p,
-      epicKey: ctx.epic!,
-      repo,
-      dryRun: true,
-    });
-    const fp = previewFingerprint(preview.plan);
-    if (ctx.requirePreviewFingerprint || ctx.previewFingerprint) {
-      requireFingerprint(fp, ctx.previewFingerprint, "architect apply");
+    try {
+      const preview = await architectPlanEpic({
+        provider: p,
+        epicKey: ctx.epic!,
+        repo,
+        dryRun: true,
+        workPackageId: ctx.wp,
+      });
+      const fp = previewFingerprint(preview.plan);
+      if (ctx.requirePreviewFingerprint || ctx.previewFingerprint) {
+        requireFingerprint(fp, ctx.previewFingerprint, "architect apply");
+      }
+      const result = await architectPlanEpic({
+        provider: p,
+        epicKey: ctx.epic!,
+        repo,
+        dryRun: false,
+        workPackageId: ctx.wp,
+      });
+      return { ...result, previewFingerprint: previewFingerprint(result.plan) };
+    } catch (e) {
+      if (e instanceof WorkPackageScopeError) mapArchitectWpError(e);
+      throw e;
     }
-    const result = await architectPlanEpic({
-      provider: p,
-      epicKey: ctx.epic!,
-      repo,
-      dryRun: false,
-    });
-    return { ...result, previewFingerprint: previewFingerprint(result.plan) };
   });
 }
 

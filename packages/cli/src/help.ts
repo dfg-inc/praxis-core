@@ -117,11 +117,13 @@ Required: --epic, --confirm YES. Write after human approval.
 `,
   architect: `USAGE
   praxis architect status --epic KEY [--json]
-  praxis architect preview --epic KEY [--repo PATH] [--json]
-  praxis architect apply --epic KEY --confirm YES [--repo PATH] [--json]
+  praxis architect preview --epic KEY [--wp WP-ID] [--repo PATH] [--json]
+  praxis architect apply --epic KEY --confirm YES [--wp WP-ID] [--fingerprint SHA] [--repo PATH] [--json]
 
 preview returns the actual future Jira mutations (not empty dry-run arrays).
-apply materializes the canonical local Work Package (e.g. WP-20260914-002).
+--wp is the explicit materialization scope (not a hint). If omitted and
+multiple materializable WPs exist, preview fails with WORK_PACKAGE_SCOPE_AMBIGUOUS.
+apply materializes the exact fingerprinted WP (e.g. WP-20260914-002).
 Does not invent generic technical tasks or placeholder diagrams.
 apply requires --confirm YES.
 `,
@@ -130,12 +132,12 @@ apply requires --confirm YES.
 Required: --epic. Read-only.
 `,
   "architect preview": `USAGE
-  praxis architect preview --epic KEY [--repo PATH] [--json]
-Required: --epic. Optional: --repo. Dry-run of apply. Read-only.
+  praxis architect preview --epic KEY [--wp WP-ID] [--repo PATH] [--json]
+Required: --epic. Optional: --wp (hard scope). Dry-run of apply. Read-only.
 `,
   "architect apply": `USAGE
-  praxis architect apply --epic KEY --confirm YES [--repo PATH] [--json]
-Required: --epic, --confirm YES. Write. Idempotent Jira Work Package.
+  praxis architect apply --epic KEY --confirm YES [--wp WP-ID] [--fingerprint SHA] [--repo PATH] [--json]
+Required: --epic, --confirm YES. Write. Uses the same --wp scope as preview.
 `,
   "work-package": `USAGE
   praxis work-package list [--repo PATH] [--json]

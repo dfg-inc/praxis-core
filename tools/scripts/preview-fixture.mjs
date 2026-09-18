@@ -13,6 +13,9 @@ import {
 import { baContentFingerprint } from "@praxis/jira/workflow";
 
 export const WP_ID = "WP-20260914-002";
+export const HISTORICAL_WP_ID = "WP-20260901-001";
+export const LIVE_WP_TITLE = "Add reset() to the counter library";
+export const HISTORICAL_WP_TITLE = "Add decrement(value) to the counter library";
 
 export const JIRA_CFG = {
   mode: "cloud",
@@ -39,6 +42,29 @@ const STORY_SPEC = {
   requirementIds: ["E2-FR1"],
 };
 
+function writeWpManifest(repo, id, extra = {}) {
+  const dir = join(repo, "work-packages", id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "manifest.json"),
+    `${JSON.stringify({ id, status: "ready", jiraIssueKey: "PLANNED", ...extra }, null, 2)}\n`,
+  );
+}
+
+function writeCanonWpIndex(repo, id, extraFrontmatter = {}) {
+  const dir = join(repo, "wp", id);
+  mkdirSync(dir, { recursive: true });
+  const fm = {
+    id,
+    type: "wp",
+    role: "developer",
+    status: "ready",
+    ...extraFrontmatter,
+  };
+  const lines = ["---", ...Object.entries(fm).map(([k, v]) => `${k}: ${v}`), "---", ""];
+  writeFileSync(join(dir, "index.md"), `${lines.join("\n")}\n`);
+}
+
 export function writeCanonicalRepo(repo) {
   writeFileSync(
     join(repo, ".project"),
@@ -59,13 +85,37 @@ quality:
   mkdirSync(design, { recursive: true });
   writeFileSync(
     join(design, "index.md"),
-    "# Counter Reset\n\nadd reset() to src/counter.js and one test in src/counter.test.js\n",
+    "reset() returns the counter to zero.\n",
   );
-  writeFileSync(join(design, "change-spec.json"), `${JSON.stringify({ id: WP_ID, files: ["src/counter.js", "src/counter.test.js"] }, null, 2)}\n`);
+  writeFileSync(
+    join(design, "change-spec.json"),
+    `${JSON.stringify(
+      {
+        id: WP_ID,
+        files: ["src/counter.js", "src/counter.test.js"],
+        design: { title: LIVE_WP_TITLE },
+      },
+      null,
+      2,
+    )}\n`,
+  );
   writeFileSync(
     join(design, "architect-developer.handoff.json"),
     `${JSON.stringify({ contract: "architect.developer.handoff", version: "1.0.0", workPackageId: WP_ID }, null, 2)}\n`,
   );
+  writeCanonWpIndex(repo, WP_ID, { plan: `wp/${WP_ID}/plan.md` });
+  writeWpManifest(repo, WP_ID);
+
+  const oldDesign = join(repo, "design", HISTORICAL_WP_ID);
+  mkdirSync(oldDesign, { recursive: true });
+  writeFileSync(join(oldDesign, "index.md"), "historically delivered decrement.\n");
+  writeFileSync(
+    join(oldDesign, "change-spec.json"),
+    `${JSON.stringify({ id: HISTORICAL_WP_ID, design: { title: HISTORICAL_WP_TITLE } }, null, 2)}\n`,
+  );
+  writeCanonWpIndex(repo, HISTORICAL_WP_ID, { phasesComplete: true });
+  writeWpManifest(repo, HISTORICAL_WP_ID);
+
   const proposalDir = join(repo, ".praxis-jira", "proposals");
   mkdirSync(proposalDir, { recursive: true });
   writeFileSync(

@@ -288,13 +288,13 @@ async function architectCmd(sub: string | undefined, ctx: OpContext) {
   }
   if (sub === "preview") {
     if (!ctx.epic) {
-      throw new PraxisOpError("INVALID_INPUT", "usage: praxis architect preview --epic KEY");
+      throw new PraxisOpError("INVALID_INPUT", "usage: praxis architect preview --epic KEY [--wp WP-ID]");
     }
     return architectPreviewOp(ctx);
   }
   if (sub === "apply") {
     if (!ctx.epic) {
-      throw new PraxisOpError("INVALID_INPUT", "usage: praxis architect apply --epic KEY");
+      throw new PraxisOpError("INVALID_INPUT", "usage: praxis architect apply --epic KEY [--wp WP-ID]");
     }
     return architectApplyOp(ctx);
   }

@@ -147,6 +147,14 @@ for (const role of ROLES) {
         violations.push(`${relative(root, file)} write tool without human gate language`);
       }
     }
+    if (role === "architect" && text.includes("praxis_architect_preview")) {
+      if (!/workPackageId/.test(text)) {
+        violations.push(`${relative(root, file)} calls praxis_architect_preview without workPackageId scope`);
+      }
+      if (!/scope|explicit|not a hint/i.test(text)) {
+        violations.push(`${relative(root, file)} does not treat workPackageId as explicit scope`);
+      }
+    }
   }
 }
 

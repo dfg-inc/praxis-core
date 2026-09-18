@@ -446,6 +446,7 @@ export async function architectPlanEpic(opts: {
   repo: string;
   dryRun?: boolean;
   trace?: PreviewTrace;
+  workPackageId?: string;
 }): Promise<{
   workPackages: PraxisWorkPackage[];
   taskKeys: string[];
@@ -454,6 +455,13 @@ export async function architectPlanEpic(opts: {
   readyForDevelopment?: boolean;
   ok?: boolean;
   reason?: string;
+  workPackage?: {
+    id: string;
+    title: string;
+    titleSource: string;
+    lifecycle: string;
+  };
+  outOfScopeWorkPackages?: Array<{ id: string; lifecycle: string }>;
 }> {
   const result = await architectMaterialize(opts);
   if (!result.ok && result.reason) {
@@ -469,6 +477,8 @@ export async function architectPlanEpic(opts: {
     readyForDevelopment: result.readyForDevelopment,
     ok: result.ok,
     reason: result.reason,
+    workPackage: result.workPackage,
+    outOfScopeWorkPackages: result.outOfScopeWorkPackages,
   };
 }
 
@@ -948,5 +958,16 @@ export {
   resolveRemoteWpKey,
 } from "./work-package-local.js";
 export { architectMaterialize } from "./architect-apply.js";
+export {
+  classifyWpLifecycle,
+  isInvalidWpTitle,
+  isMaterializableLifecycle,
+  jiraWpSummary,
+  listNormalizedWorkPackages,
+  readNormalizedWorkPackage,
+  resolveWorkPackageTitle,
+  selectArchitectWorkPackages,
+  WorkPackageScopeError,
+} from "./work-package-read.js";
 export { createPreviewTrace, traced } from "./preview-trace.js";
 export { baContentFingerprint } from "./ba-write.js";
