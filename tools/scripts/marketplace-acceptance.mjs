@@ -19,7 +19,7 @@ function fail(msg) {
 
 function walk(dir, acc = []) {
   for (const name of readdirSync(dir)) {
-    if (name === ".vitepress" || name === "node_modules") continue;
+    if (name === ".vitepress" || name === "node_modules" || name === "user-guide") continue;
     const p = join(dir, name);
     const st = statSync(p);
     if (st.isDirectory()) walk(p, acc);

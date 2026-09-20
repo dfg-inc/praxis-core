@@ -282,5 +282,18 @@ export const QualityWpReportSchema = ContractMeta.extend({
   addedTests: z.array(z.string()),
   sourceChangesGuard: z.enum(["pass", "fail"]),
   overallVerdict: z.enum(["pass", "fail", "blocked"]),
+  developerEvidence: z
+    .object({
+      workPackageId: z.string().optional(),
+      jiraWorkPackageKey: z.string().optional(),
+      canonicalStoryKeys: z.array(z.string()).optional(),
+      requirementIds: z.array(z.string()).optional(),
+      hasCompletionEvidence: z.boolean(),
+      hasQualityHandoff: z.boolean(),
+      readyForQuality: z.boolean().optional(),
+      evidencePath: z.string().optional(),
+      qualityHandoffPath: z.string().optional(),
+    })
+    .optional(),
 });
 export type QualityWpReport = z.infer<typeof QualityWpReportSchema>;

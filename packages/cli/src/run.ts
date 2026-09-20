@@ -13,6 +13,8 @@ import {
   baStatusOp,
   developerClaimOp,
   developerCompleteOp,
+  developerCompleteRecoveryPreviewOp,
+  developerCompleteRecoveryApplyOp,
   developerReleaseOp,
   developerStatusOp,
   doctorOp,
@@ -320,9 +322,11 @@ async function developerCmd(sub: string | undefined, ctx: OpContext) {
   if (sub === "claim") return developerClaimOp(ctx);
   if (sub === "release") return developerReleaseOp(ctx);
   if (sub === "complete") return developerCompleteOp(ctx);
+  if (sub === "complete-recovery-preview") return developerCompleteRecoveryPreviewOp(ctx);
+  if (sub === "complete-recovery-apply") return developerCompleteRecoveryApplyOp(ctx);
   throw new PraxisOpError(
     "INVALID_INPUT",
-    "usage: praxis developer status|claim|release|complete",
+    "usage: praxis developer status|claim|release|complete|complete-recovery-preview|complete-recovery-apply",
   );
 }
 

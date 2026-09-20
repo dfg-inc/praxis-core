@@ -192,9 +192,37 @@ export const DeveloperToQualityHandoffSchema = ContractMetaSchema.extend({
   verification: VerificationSchema,
   /** Optional machine AC checks Quality can execute against the product tree. */
   acceptanceChecks: z.array(AcceptanceCheckSchema).optional(),
+  jiraWorkPackageKey: z.string().optional(),
+  canonicalStoryKeys: z.array(z.string()).optional(),
+  evidencePath: z.string().optional(),
 });
 export type DeveloperToQualityHandoff = z.infer<
   typeof DeveloperToQualityHandoffSchema
+>;
+
+export const DeveloperCompletionEvidenceSchema = ContractMetaSchema.extend({
+  contract: z.literal("developer.completion.evidence"),
+  workPackageId: z.string().min(1),
+  jiraWorkPackageKey: z.string().min(1),
+  canonicalStoryKeys: z.array(z.string()),
+  requirementIds: z.array(z.string()),
+  implementationScope: z.array(z.string()),
+  changedProductFiles: z.array(z.string()),
+  acceptanceChecks: z.array(AcceptanceCheckSchema),
+  verification: z.object({
+    command: z.string().min(1),
+    exitCode: z.number(),
+    ok: z.boolean(),
+    passed: z.number().optional(),
+    failed: z.number().optional(),
+    total: z.number().optional(),
+    timestamp: z.string().min(1),
+  }),
+  implementationStatus: z.literal("complete"),
+  readyForQuality: z.literal(true),
+});
+export type DeveloperCompletionEvidence = z.infer<
+  typeof DeveloperCompletionEvidenceSchema
 >;
 
 /** Quality ← local CI / Developer MR payload (WBS 6.2). Live remote provider is out of band. */

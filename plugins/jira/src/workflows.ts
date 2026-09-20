@@ -39,6 +39,7 @@ import {
   planSemanticIssueTransition,
   applySemanticIssueTransition,
 } from "./transitions.js";
+import { discoverQualityInputs } from "./developer-complete.js";
 
 export class WorkPackageClaimError extends Error {
   readonly code = "WORK_PACKAGE_ALREADY_CLAIMED" as const;
@@ -657,69 +658,6 @@ export async function releaseWorkPackage(opts: {
   }
 }
 
-export async function developerCompleteWp(opts: {
-  provider: JiraProvider;
-  wpKey: string;
-  repo: string;
-  evidence: {
-    branch?: string;
-    commits?: string[];
-    tests?: string;
-    verification: { ok: boolean };
-  };
-}): Promise<void> {
-  const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
-
-  assertRole("developer", "developer-evidence");
-  const manifest = await opts.provider.getIssueProperty<PraxisWorkPackage>(
-    wpKey,
-    "praxis.workPackageManifest",
-  );
-  if (!manifest) throw new Error(`missing work package manifest on ${wpKey}`);
-  const required = await assertCanonicalMembers(opts.provider, [
-    ...manifest.storyKeys,
-    ...manifest.taskKeys,
-  ]);
-  if (required.length === 0) {
-    throw new Error("work package has no member issues");
-  }
-  if (!opts.evidence.verification.ok) {
-    throw new Error("cannot mark Ready for QA: verification failed");
-  }
-  const claim = await opts.provider.getIssueProperty<WorkPackageClaim>(
-    wpKey,
-    "praxis.claim",
-  );
-  if (claim) {
-    await opts.provider.setIssueProperty(wpKey, "praxis.claim", {
-      ...claim,
-      state: "implementation-complete",
-    });
-  }
-  assertRole("developer", "transition-ready-for-qa");
-  await opts.provider.addComment(
-    wpKey,
-    opts.provider.renderDescription(
-      textDocument(
-        [
-          "Implementation completed",
-          opts.evidence.branch ? `branch: ${opts.evidence.branch}` : "",
-          opts.evidence.tests ? `tests: ${opts.evidence.tests}` : "",
-          "Verification result: pass",
-          "Ready for QA",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      ),
-    ),
-  );
-  await applySemanticIssueTransition(opts.provider, wpKey, "READY_FOR_QA");
-  await opts.provider.writePraxisState(wpKey, { lifecycle: "ready-for-qa" });
-  for (const key of required) {
-    await opts.provider.writePraxisState(key, { lifecycle: "ready-for-qa" });
-  }
-}
-
 const TEST_WRITE_RE =
   /(^|\/)(test|tests|__tests__|fixtures)\//i;
 
@@ -857,9 +795,14 @@ export async function qaVerifyWorkPackage(opts: {
     );
   } else if (build.ok && test.ok) {
     assertRole("qa", "qa-pass");
-    await opts.provider.writePraxisState(wpKey, { lifecycle: "qa-passed" });
+    await applySemanticIssueTransition(opts.provider, wpKey, "QUALITY_APPROVED");
+    await opts.provider.writePraxisState(wpKey, {
+      lifecycle: "qa-passed",
+      qualityState: "approved",
+    });
   }
 
+  const qualityInputs = discoverQualityInputs(opts.repo, manifest?.id ?? wpKey);
   const report: QualityWpReport = {
     contract: "quality.work-package.report",
     version: "1.0.0",
@@ -881,10 +824,23 @@ export async function qaVerifyWorkPackage(opts: {
       : "quality.start not configured",
     findings,
     blockingFindings: blocking,
-    potentialRisks: [],
+    potentialRisks: qualityInputs.hasHandoff
+      ? []
+      : ["Developer quality handoff missing; Quality must not treat Jira Done as review readiness"],
     addedTests: opts.addTests ?? [],
     sourceChangesGuard: "pass",
     overallVerdict: blocking.length ? "blocked" : build.ok && test.ok ? "pass" : "fail",
+    developerEvidence: {
+      workPackageId: qualityInputs.workPackageId,
+      jiraWorkPackageKey: qualityInputs.jiraWorkPackageKey ?? wpKey,
+      canonicalStoryKeys: qualityInputs.canonicalStoryKeys,
+      requirementIds: qualityInputs.requirementIds,
+      hasCompletionEvidence: qualityInputs.hasEvidence,
+      hasQualityHandoff: qualityInputs.hasHandoff,
+      readyForQuality: qualityInputs.readyForQuality,
+      evidencePath: qualityInputs.hasEvidence ? qualityInputs.evidencePath : undefined,
+      qualityHandoffPath: qualityInputs.hasHandoff ? qualityInputs.qualityHandoffPath : undefined,
+    },
   };
   const outDir = join(opts.repo, ".praxis-jira", "quality");
   mkdirSync(outDir, { recursive: true });
@@ -1020,3 +976,16 @@ export {
   planSemanticIssueTransition,
   applySemanticIssueTransition,
 } from "./transitions.js";
+export {
+  developerCompleteWp,
+  previewDeveloperCompleteRecovery,
+  applyDeveloperCompleteRecovery,
+  inspectDeveloperCompletion,
+  discoverQualityInputs,
+  DeveloperCompleteError,
+} from "./developer-complete.js";
+export type {
+  DeveloperCompleteResult,
+  CompleteRecoveryPreview,
+  ProjectVerification,
+} from "./developer-complete.js";

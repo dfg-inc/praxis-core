@@ -164,8 +164,11 @@ Required: --wp. Read-only.
   praxis developer claim --wp ID_OR_KEY [--repo PATH] [--json]
   praxis developer release --wp ID_OR_KEY --confirm YES [--repo PATH] [--json]
   praxis developer complete --wp ID_OR_KEY --confirm YES [--repo PATH] [--json]
+  praxis developer complete-recovery-preview --wp ID_OR_KEY [--repo PATH] [--json]
+  praxis developer complete-recovery-apply --wp ID_OR_KEY --confirm YES --fingerprint sha256:... [--repo PATH] [--json]
 
-claim writes Jira claim. complete marks Ready for QA (verification required).
+claim writes Jira claim. complete verifies, persists evidence and Quality handoff, and keeps Jira In Progress.
+complete does not mark the issue Done and does not start Quality.
 release requires --confirm YES.
 `,
   "developer status": `USAGE
@@ -182,7 +185,15 @@ Required: --confirm YES. Write.
 `,
   "developer complete": `USAGE
   praxis developer complete --wp ID_OR_KEY --confirm YES [--repo PATH] [--json]
-Required: --confirm YES. Write. Marks Ready for QA after verification.
+Required: --confirm YES. Write. Runs required tests, writes completion evidence and Developer→Quality handoff. Does not mark Jira Done.
+`,
+  "developer complete-recovery-preview": `USAGE
+  praxis developer complete-recovery-preview --wp ID_OR_KEY [--repo PATH] [--json]
+Read-only preview of premature Done / missing evidence recovery. Does not write.
+`,
+  "developer complete-recovery-apply": `USAGE
+  praxis developer complete-recovery-apply --wp ID_OR_KEY --confirm YES --fingerprint sha256:... [--repo PATH] [--json]
+Required: --confirm YES and matching preview fingerprint. Restores development status then reconciles completion evidence.
 `,
   quality: `USAGE
   praxis quality status [--json]

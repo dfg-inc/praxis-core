@@ -21,6 +21,12 @@ import {
   resolveRemoteWpKey,
   createPreviewTrace,
   WorkPackageScopeError,
+  previewDeveloperCompleteRecovery,
+  applyDeveloperCompleteRecovery,
+  inspectDeveloperCompletion,
+  discoverQualityInputs,
+  type DeveloperCompleteResult,
+  type CompleteRecoveryPreview,
 } from "@praxis/jira/workflow";
 
 export const OP_CODES = {
@@ -49,6 +55,11 @@ export const OP_CODES = {
   JIRA_TRANSITION_ID_INVALID: "JIRA_TRANSITION_ID_INVALID",
   JIRA_TRANSITION_NOT_AVAILABLE: "JIRA_TRANSITION_NOT_AVAILABLE",
   WORK_PACKAGE_ALREADY_CLAIMED: "WORK_PACKAGE_ALREADY_CLAIMED",
+  VERIFICATION_FAILED: "VERIFICATION_FAILED",
+  PREMATURE_JIRA_DONE: "PREMATURE_JIRA_DONE",
+  EVIDENCE_PERSIST_FAILED: "EVIDENCE_PERSIST_FAILED",
+  HANDOFF_FAILED: "HANDOFF_FAILED",
+  JIRA_PROPERTY_UPDATE_FAILED: "JIRA_PROPERTY_UPDATE_FAILED",
 } as const;
 
 export type OpCode = (typeof OP_CODES)[keyof typeof OP_CODES];
@@ -188,6 +199,17 @@ function mapJiraWorkflowError(err: unknown): never {
   if (code === "WORK_PACKAGE_ALREADY_CLAIMED") {
     throw new PraxisOpError(OP_CODES.WORK_PACKAGE_ALREADY_CLAIMED, redact(err instanceof Error ? err.message : String(err)), {
       details: { issueKey: rec?.issueKey, actor: rec?.actor },
+    });
+  }
+  if (
+    code === "VERIFICATION_FAILED" ||
+    code === "PREMATURE_JIRA_DONE" ||
+    code === "EVIDENCE_PERSIST_FAILED" ||
+    code === "HANDOFF_FAILED" ||
+    code === "JIRA_PROPERTY_UPDATE_FAILED"
+  ) {
+    throw new PraxisOpError(code as OpCode, redact(err instanceof Error ? err.message : String(err)), {
+      details: rec?.details && typeof rec.details === "object" ? (rec.details as Record<string, unknown>) : rec,
     });
   }
   throw err;
@@ -656,11 +678,12 @@ export async function developerStatusOp(ctx: OpContext) {
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer status requires workPackage");
   }
+  const wp = ctx.wp;
   const repo = requireRepo(ctx.repo);
-  const local = resolveLocalWorkPackage(repo, ctx.wp);
-  const jiraIssueKey = resolveRemoteWpKey(repo, ctx.wp);
+  const local = resolveLocalWorkPackage(repo, wp);
+  const jiraIssueKey = resolveRemoteWpKey(repo, wp);
   const base = {
-    wp: ctx.wp,
+    wp,
     local: local?.id,
     jiraIssueKey,
   };
@@ -672,11 +695,26 @@ export async function developerStatusOp(ctx: OpContext) {
       transitions: await p.getTransitions(jiraIssueKey),
     });
     const claim = await p.getIssueProperty(jiraIssueKey, "praxis.claim");
+    const wpId = local?.id ?? wp;
+    const inspection = inspectDeveloperCompletion(repo, wpId);
+    const qualityInputs = discoverQualityInputs(repo, wpId);
     return {
       ...base,
       jiraStatus: issue.status,
       jiraStatusCategory: issue.statusCategory,
       claim: claim ?? null,
+      claimState:
+        claim && typeof claim === "object" && "state" in claim
+          ? (claim as { state?: string }).state
+          : null,
+      implementationState: inspection.implementationState ?? null,
+      readyForQuality: inspection.readyForQuality === true,
+      qualityState: inspection.localStatus === "ready-for-qa" ? "pending" : null,
+      hasCompletionEvidence: inspection.hasEvidence,
+      hasQualityHandoff: inspection.hasHandoff,
+      evidencePath: inspection.hasEvidence ? inspection.evidencePath : undefined,
+      qualityHandoffPath: inspection.hasHandoff ? inspection.qualityHandoffPath : undefined,
+      qualityInputs,
       availableTransitions: available.map((t) => ({
         id: t.id,
         name: t.name,
@@ -719,21 +757,63 @@ export async function developerReleaseOp(ctx: OpContext) {
   });
 }
 
-export async function developerCompleteOp(ctx: OpContext) {
+export async function developerCompleteOp(ctx: OpContext): Promise<DeveloperCompleteResult> {
   requireConfirm(ctx.confirmation, "developer complete");
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer complete requires workPackage");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
-    await developerCompleteWp({
+  const wp = ctx.wp;
+  return withProvider({ ...ctx, repo }, (p) =>
+    developerCompleteWp({
       provider: p,
-      wpKey: ctx.wp!,
+      wpKey: wp,
       repo,
-      evidence: { verification: { ok: true } },
-    });
-    return { completed: true, wp: ctx.wp };
-  });
+    }),
+  );
+}
+
+export async function developerCompleteRecoveryPreviewOp(
+  ctx: OpContext,
+): Promise<CompleteRecoveryPreview> {
+  if (!ctx.wp) {
+    throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer complete recovery preview requires workPackage");
+  }
+  const repo = requireRepo(ctx.repo);
+  const wp = ctx.wp;
+  return withProvider({ ...ctx, repo }, (p) =>
+    previewDeveloperCompleteRecovery({
+      provider: p,
+      wpKey: wp,
+      repo,
+    }),
+  );
+}
+
+export async function developerCompleteRecoveryApplyOp(
+  ctx: OpContext,
+): Promise<DeveloperCompleteResult> {
+  requireConfirm(ctx.confirmation, "developer complete recovery");
+  if (!ctx.wp) {
+    throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer complete recovery apply requires workPackage");
+  }
+  if (!ctx.previewFingerprint) {
+    throw new PraxisOpError(
+      OP_CODES.CONFIRMATION_REQUIRED,
+      "developer complete recovery apply requires previewFingerprint from the matching preview",
+    );
+  }
+  const repo = requireRepo(ctx.repo);
+  const wp = ctx.wp;
+  const previewFingerprint = ctx.previewFingerprint;
+  return withProvider({ ...ctx, repo }, (p) =>
+    applyDeveloperCompleteRecovery({
+      provider: p,
+      wpKey: wp,
+      repo,
+      previewFingerprint,
+    }),
+  );
 }
 
 export async function qualityStatusOp(ctx: OpContext) {
@@ -760,11 +840,14 @@ export async function qualityReviewOp(ctx: OpContext) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "quality review requires workPackage");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, (p) =>
-    qaVerifyWorkPackage({
+  return withProvider({ ...ctx, repo }, async (p) => {
+    const report = await qaVerifyWorkPackage({
       provider: p,
       wpKey: ctx.wp!,
       repo,
-    }),
-  );
+    });
+    const local = resolveLocalWorkPackage(repo, ctx.wp!);
+    const qualityInputs = discoverQualityInputs(repo, local?.id ?? ctx.wp!);
+    return { ...report, qualityInputs };
+  });
 }

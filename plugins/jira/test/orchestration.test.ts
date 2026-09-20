@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -360,14 +360,26 @@ describe("jira workflow orchestration", () => {
         evidence: { verification: { ok: false } },
       }),
     ).rejects.toThrow(/verification/);
-    await developerCompleteWp({
+    writeFileSync(join(repo, "_praxis_verify.mjs"), "console.log('Tests 5 passed'); process.exit(0);\n");
+    writeFileSync(
+      join(repo, ".project"),
+      "stack: [node]\nquality:\n  test: node _praxis_verify.mjs\n",
+    );
+    const result = await developerCompleteWp({
       provider,
       wpKey,
       repo,
       evidence: { verification: { ok: true }, tests: "npm test", branch: "feat/wp" },
     });
-    const state = await provider.readPraxisState<{ lifecycle: string }>(wpKey);
+    const state = await provider.readPraxisState<{ lifecycle: string; readyForQuality?: boolean }>(wpKey);
     expect(state?.lifecycle).toBe("ready-for-qa");
+    expect(result.readyForQuality).toBe(true);
+    expect(result.qualityStarted).toBe(false);
+    expect(result.claimState).toBe("active");
+    const issue = await provider.getIssue(wpKey);
+    expect(issue.statusCategory).not.toBe("done");
+    expect(existsSync(result.evidencePath)).toBe(true);
+    expect(existsSync(result.qualityHandoffPath)).toBe(true);
   });
 
   it("QA coverage/source-guard/bug dedupe/block", async () => {
@@ -713,9 +725,10 @@ describe("canonical/superseded downstream", () => {
       accountId: "acct-a",
     });
     expect(claim.memberIssueKeys).not.toContain(superseded.key);
+    writeFileSync(join(repo, "_praxis_verify.mjs"), "process.exit(0);\n");
     writeFileSync(
       join(repo, ".project"),
-      "stack: [node]\nquality:\n  build: \"node -e process.exit(0)\"\n  test: \"node -e process.exit(0)\"\n",
+      "stack: [node]\nquality:\n  build: node _praxis_verify.mjs\n  test: node _praxis_verify.mjs\n",
     );
     await developerCompleteWp({
       provider,

@@ -1,4 +1,7 @@
-export type SemanticTransition = "START_DEVELOPMENT" | "READY_FOR_QA";
+export type SemanticTransition =
+  | "START_DEVELOPMENT"
+  | "READY_FOR_QA"
+  | "QUALITY_APPROVED";
 
 export type TransitionInfo = {
   id: string;
@@ -44,12 +47,14 @@ export class JiraTransitionError extends Error {
 
 const TARGET_CATEGORY: Record<SemanticTransition, string> = {
   START_DEVELOPMENT: "indeterminate",
-  READY_FOR_QA: "done",
+  READY_FOR_QA: "indeterminate",
+  QUALITY_APPROVED: "done",
 };
 
 const MAPPING_KEYS: Record<SemanticTransition, string[]> = {
   START_DEVELOPMENT: ["in-progress", "ready-for-dev"],
-  READY_FOR_QA: ["ready-for-qa", "done"],
+  READY_FOR_QA: ["ready-for-qa", "in-progress"],
+  QUALITY_APPROVED: ["done", "ready-for-qa"],
 };
 
 export function parseNumericTransitionId(raw: unknown): string | undefined {
