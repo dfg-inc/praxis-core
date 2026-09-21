@@ -1,6 +1,6 @@
 {
   "name": "@praxis/cli",
-  "version": "0.1.0-alpha.43",
+  "version": "0.1.0-alpha.44",
   "private": true,
   "type": "module",
   "description": "Public Praxis CLI — canonical machine/runtime interface for agents, CI, and plugins",
