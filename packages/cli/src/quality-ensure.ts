@@ -40,9 +40,12 @@ export type QualityErrorCode = (typeof QUALITY_CODES)[keyof typeof QUALITY_CODES
 
 export type QualityProbeStatus =
   | "not_started"
+  | "starting"
   | "healthy"
   | "unavailable"
-  | "failed";
+  | "failed"
+  | "stopped"
+  | "unknown";
 
 export type QualityEnsureResult = {
   status: "healthy" | "started" | QualityProbeStatus;
@@ -57,6 +60,12 @@ export type QualityEnsureResult = {
   port?: number;
   runtimeMode?: "process" | "worker";
   sqliteBackend?: string;
+  lastKnownPid?: number;
+  lastHealthyAt?: string;
+  lastExitCode?: number | null;
+  lastExitSignal?: string | null;
+  lastExitAt?: string;
+  diagnostic?: string;
 };
 
 type QualityStateFile = {
@@ -67,6 +76,11 @@ type QualityStateFile = {
   allowedRoot?: string;
   startedAt?: string;
   runtimeMode?: "process" | "worker";
+  lastHealthyAt?: string;
+  lastKnownPid?: number;
+  lastExitCode?: number | null;
+  lastExitSignal?: string | null;
+  lastExitAt?: string;
 };
 
 type HealthBody = {
@@ -330,6 +344,48 @@ function writeState(repo: string, state: QualityStateFile): void {
   mkdirSync(qualityDir(repo), { recursive: true });
   writeFileSync(qualityStatePath(repo), `${JSON.stringify(state, null, 2)}\n`);
   if (state.pid) writeFileSync(qualityPidPath(repo), `${state.pid}\n`);
+}
+
+function patchState(repo: string, patch: Partial<QualityStateFile>): void {
+  const prev = readState(repo) ?? {};
+  writeState(repo, { ...prev, ...patch });
+}
+
+function appendSupervisorLog(repo: string, line: string): void {
+  try {
+    const p = qualityLogPath(repo);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(
+      p,
+      `[praxis-quality-supervisor] ${new Date().toISOString()} ${line}\n`,
+      { flag: "a" },
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+let supervisorHooksInstalled = false;
+function installSupervisorHooks(): void {
+  if (supervisorHooksInstalled) return;
+  supervisorHooksInstalled = true;
+  const persist = (reason: string) => {
+    for (const [key] of workers) {
+      appendSupervisorLog(key, `quality.supervisor ${reason} pid=${process.pid}`);
+      try {
+        patchState(key, {
+          lastKnownPid: process.pid,
+          lastExitAt: new Date().toISOString(),
+          lastExitSignal: reason.includes("SIG") ? reason.replace(/^.*SIG/, "SIG") : null,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+  process.on("exit", () => persist("host exit"));
+  process.on("SIGTERM", () => persist("received signal SIGTERM"));
+  process.on("SIGINT", () => persist("received signal SIGINT"));
 }
 
 function isAlive(pid: number | undefined): boolean {
@@ -680,6 +736,7 @@ function startQualityWorker(opts: {
   logPath: string;
   env: NodeJS.ProcessEnv;
 }): Worker {
+  installSupervisorHooks();
   const key = repoKey(opts.repo);
   const existing = workers.get(key);
   if (existing) {
@@ -704,12 +761,26 @@ function startQualityWorker(opts: {
   });
   worker.stdout?.on("data", (chunk: Buffer) => log.write(chunk));
   worker.stderr?.on("data", (chunk: Buffer) => log.write(chunk));
-  worker.on("exit", () => {
+  worker.on("exit", (code) => {
+    const line = `quality.worker.exit code=${code ?? "none"} pid=${process.pid}`;
+    try {
+      log.write(`${line}\n`);
+    } catch {
+      /* ignore */
+    }
+    appendSupervisorLog(opts.repo, line);
+    patchState(opts.repo, {
+      lastKnownPid: process.pid,
+      lastExitCode: code ?? null,
+      lastExitAt: new Date().toISOString(),
+    });
     log.end();
     if (workers.get(key) === worker) workers.delete(key);
   });
   worker.on("error", (err) => {
-    qlog(`quality.worker error ${safeErrorMessage(err)}`);
+    const msg = `quality.worker error ${safeErrorMessage(err)}`;
+    qlog(msg);
+    appendSupervisorLog(opts.repo, msg);
   });
   workers.set(key, worker);
   return worker;
@@ -744,29 +815,40 @@ export async function probeQuality(opts: { repo: string }): Promise<QualityEnsur
   const url = state?.url ?? urlForPort(port);
   const db = state?.db ?? (existsSync(opts.repo) ? qualityDbPath(repo) : undefined);
   const logPath = existsSync(opts.repo) ? qualityLogPath(repo) : undefined;
+  const extras = {
+    lastKnownPid: state?.lastKnownPid ?? state?.pid,
+    lastHealthyAt: state?.lastHealthyAt,
+    lastExitCode: state?.lastExitCode,
+    lastExitSignal: state?.lastExitSignal,
+    lastExitAt: state?.lastExitAt,
+    logPath,
+    port,
+    runtimeMode: state?.runtimeMode,
+  };
   const health = await fetchHealth(url);
   if (health && (rootsMatch(health.allowedRoot, repo) || (state?.pid && health.pid === state.pid))) {
+    patchState(repo, { lastHealthyAt: new Date().toISOString(), lastKnownPid: health.pid ?? state?.pid });
     return {
       status: "healthy",
       pid: health.pid ?? state?.pid,
       url,
       db,
       reused: true,
-      logPath,
-      port,
-      runtimeMode: state?.runtimeMode,
       sqliteBackend: health.sqliteEngine ?? undefined,
+      ...extras,
+      lastHealthyAt: new Date().toISOString(),
     };
   }
+  const workerLive = Boolean(workers.get(repo));
   if (state?.pid && !isAlive(state.pid)) {
     return {
-      status: "failed",
+      status: "stopped",
       pid: state.pid,
       url,
       db,
       reused: false,
-      logPath,
-      port,
+      diagnostic: "last known Quality pid is not running; exit reason was not recorded by this process",
+      ...extras,
     };
   }
   if (health && health.service === "quality-service" && !rootsMatch(health.allowedRoot, repo)) {
@@ -775,8 +857,32 @@ export async function probeQuality(opts: { repo: string }): Promise<QualityEnsur
       url,
       db,
       reused: false,
-      logPath,
-      port,
+      diagnostic: "Quality is healthy for a different repository",
+      ...extras,
+    };
+  }
+  if (state?.runtimeMode === "worker" && !workerLive && !health) {
+    if (state.lastExitCode != null && state.lastExitCode !== 0) {
+      return {
+        status: "failed",
+        pid: state.pid,
+        url,
+        db,
+        reused: false,
+        diagnostic: "Quality worker exited; see lastExitCode and logPath",
+        ...extras,
+      };
+    }
+    return {
+      status: state.lastExitAt ? "stopped" : "unknown",
+      pid: state.pid,
+      url,
+      db,
+      reused: false,
+      diagnostic: state.lastExitAt
+        ? "Quality worker is no longer in this Runtime process"
+        : "Quality worker is not answering /health; cause is not recorded",
+      ...extras,
     };
   }
   if (!state && !health) {
@@ -788,8 +894,8 @@ export async function probeQuality(opts: { repo: string }): Promise<QualityEnsur
     url,
     db,
     reused: false,
-    logPath,
-    port,
+    diagnostic: health ? undefined : "Quality /health is not answering",
+    ...extras,
   };
 }
 
@@ -1113,6 +1219,17 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
     if (health && (rootsMatch(health.allowedRoot, repo) || health.pid === pid)) {
       qlog("quality.health ready");
       qlog(`quality.ensure.done durationMs=${Date.now() - t0}`);
+      writeState(repo, {
+        pid,
+        port,
+        url,
+        db,
+        allowedRoot: repo,
+        startedAt: readState(repo)?.startedAt ?? new Date().toISOString(),
+        lastHealthyAt: new Date().toISOString(),
+        lastKnownPid: pid,
+        runtimeMode,
+      });
       return {
         status: "started",
         pid,

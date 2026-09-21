@@ -405,6 +405,68 @@ try {
   rmSync(helperDir, { recursive: true, force: true });
 }
 
+{
+  const workerRepo = consumerRepo("praxis-q-worker-session-");
+  const workerPort = await freePort();
+  const workerSession = await connectOfficialMcp({
+    command: process.execPath,
+    args: extracted.args,
+    cwd: extracted.dest,
+    env: {
+      ...hostedCleanEnv(extracted.dest),
+      PRAXIS_QUALITY_PORT: String(workerPort),
+      PRAXIS_QUALITY_SIMULATED_EXEC_PATH: helperExec,
+    },
+    versionNegotiation: versionNegotiationModern(),
+    timeoutMs: MCP_STARTUP_BUDGET_MS,
+    clientVersion: version,
+  });
+  try {
+    const ensureRaw = await workerSession.client.callTool({
+      name: "praxis_quality_ensure",
+      arguments: { repo: workerRepo },
+    });
+    const ensureEnv = envelopeFromTool(ensureRaw);
+    if (!ensureEnv?.ok) fail(`worker-session ensure ${JSON.stringify(ensureEnv)}`);
+    if (ensureEnv.data?.runtimeMode !== "worker") fail("worker-session expected worker mode");
+  } finally {
+    await workerSession.close();
+  }
+  const afterClose = await probeQuality({ repo: workerRepo });
+  if (afterClose.status === "healthy") {
+    fail(`worker-session Quality still healthy after MCP host exit ${JSON.stringify(afterClose)}`);
+  }
+  const recover = await connectOfficialMcp({
+    command: process.execPath,
+    args: extracted.args,
+    cwd: extracted.dest,
+    env: {
+      ...hostedCleanEnv(extracted.dest),
+      PRAXIS_QUALITY_PORT: String(workerPort),
+      PRAXIS_QUALITY_SIMULATED_EXEC_PATH: helperExec,
+    },
+    versionNegotiation: versionNegotiationModern(),
+    timeoutMs: MCP_STARTUP_BUDGET_MS,
+    clientVersion: version,
+  });
+  try {
+    const ensure2 = envelopeFromTool(
+      await recover.client.callTool({
+        name: "praxis_quality_ensure",
+        arguments: { repo: workerRepo },
+      }),
+    );
+    if (!ensure2?.ok) fail(`worker-session recover ${JSON.stringify(ensure2)}`);
+    if (ensure2.data?.reused === true && afterClose.status !== "healthy") {
+      fail("worker-session recovered by claiming reuse of a dead worker");
+    }
+  } finally {
+    await recover.close();
+    stopQuality(workerRepo);
+    rmSync(workerRepo, { recursive: true, force: true });
+  }
+}
+
 const consumer = consumerRepo("praxis-q-consumer-");
 const port = await freePort();
 const pids = [];
@@ -616,6 +678,11 @@ try {
   }
 
   stopQuality(consumer);
+  const afterStop = await probeQuality({ repo: consumer });
+  if (afterStop.status === "healthy") fail(`stop: still healthy ${JSON.stringify(afterStop)}`);
+  if (!["stopped", "failed", "unknown", "unavailable", "not_started"].includes(afterStop.status)) {
+    fail(`stop: unexpected status ${JSON.stringify(afterStop)}`);
+  }
   const waitUntil = Date.now() + 2000;
   while (isAlive(startedPid) && Date.now() < waitUntil) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
