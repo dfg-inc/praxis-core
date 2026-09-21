@@ -29,6 +29,19 @@ function fail(msg) {
   process.exit(1);
 }
 
+async function freePort() {
+  const { createServer } = await import("node:net");
+  return new Promise((resolvePromise, reject) => {
+    const server = createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = addr && typeof addr === "object" ? addr.port : 0;
+      server.close((err) => (err ? reject(err) : resolvePromise(port)));
+    });
+    server.on("error", reject);
+  });
+}
+
 const built = spawnSync(
   "npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira -w @praxis/quality-service -w @praxis/cli -w @praxis/mcp",
   { cwd: root, shell: true, encoding: "utf8" },
@@ -292,6 +305,7 @@ const proven = [];
   if (issue.statusCategory === "done") fail("L: still Done after recovery");
   const paths = evidencePaths(repo);
   if (!existsSync(paths.evidence) || !existsSync(paths.handoff)) fail("L: missing reconciled artifacts");
+  process.env.PRAXIS_QUALITY_PORT = String(await freePort());
   const qa = await qualityReviewOp({
     repo,
     wp: WP_ID,
