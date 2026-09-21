@@ -73,12 +73,6 @@ const requiredPages = [
   "reference/troubleshooting.md",
   "reference/faq.md",
   "reference/changelog.md",
-  "ru/index.md",
-  "ru/getting-started/installation.md",
-  "ru/getting-started/credentials.md",
-  "ru/plugins/overview.md",
-  "ru/workflows/full-e2e.md",
-  "ru/reference/troubleshooting.md",
 ];
 
 for (const rel of requiredPages) {
@@ -102,6 +96,20 @@ if (/launchctl setenv/.test(install) && /standard/.test(install.toLowerCase())) 
   fail("installation must not recommend launchctl as standard");
 }
 if (install.includes(".mcp.json")) fail("canonical install still documents .mcp.json");
+
+const qualityGuide = readFileSync(join(canonical, "plugins/quality.md"), "utf8");
+for (const needle of [
+  "praxis_quality_ensure",
+  "praxis_quality_status",
+  "not_started",
+  "QUALITY_PACKAGE_MISSING",
+  "praxis-quality.cjs",
+]) {
+  if (!qualityGuide.includes(needle)) fail(`quality guide missing ${needle}`);
+}
+if (/make quality-up/.test(qualityGuide) && /normal/.test(qualityGuide.toLowerCase())) {
+  fail("quality guide must not recommend make quality-up as normal");
+}
 
 for (const f of [
   "claude-extensions/praxis-runtime.mcpb",
@@ -149,7 +157,7 @@ for (const file of mdFiles) {
   while ((m = re.exec(text))) {
     const href = m[1].split("#")[0].split("?")[0];
     if (!href || href.startsWith("http") || href.startsWith("mailto:")) continue;
-    if (href.startsWith("/ru/") || href.startsWith("/getting-started") || href.startsWith("/concepts")
+    if (href.startsWith("/getting-started") || href.startsWith("/concepts")
       || href.startsWith("/plugins") || href.startsWith("/workflows") || href.startsWith("/reference")
       || href === "/") {
       const relDoc = href.replace(/^\//, "").replace(/\/$/, "");

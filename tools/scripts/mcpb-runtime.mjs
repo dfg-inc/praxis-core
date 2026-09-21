@@ -43,13 +43,16 @@ export function extractMcpbRuntime(mcpbPath, dest) {
   mkdirSync(dest, { recursive: true });
   extractZip(readFileSync(mcpbPath), dest);
   const runtime = join(dest, "server", "praxis-mcp.cjs");
+  const quality = join(dest, "server", "praxis-quality.cjs");
   const manifestPath = join(dest, "manifest.json");
   if (!existsSync(runtime)) throw new Error(`MCPB missing ${runtime}`);
+  if (!existsSync(quality)) throw new Error(`MCPB missing ${quality}`);
   if (!existsSync(manifestPath)) throw new Error(`MCPB missing ${manifestPath}`);
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   return {
     dest,
     runtime,
+    quality,
     manifest,
     args: [runtime, "--role", "runtime"],
   };

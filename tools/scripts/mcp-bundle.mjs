@@ -42,8 +42,37 @@ export async function bundlePraxisMcp(outfile, version) {
     define: {
       "process.env.PRAXIS_BUNDLE_VERSION": JSON.stringify(version),
     },
-    external: ["@praxis/quality-service"],
+    // Quality HTTP service is a sibling CJS file, not inlined (must outlive MCP requests).
+    external: [],
   });
   if (!existsSync(outfile)) fail(`esbuild did not write ${outfile}`);
+  return outfile;
+}
+
+/** Bundle Quality HTTP service next to the MCP runtime. Uses node:sqlite (Node 22+). */
+export async function bundlePraxisQuality(outfile, version) {
+  const entry = join(root, "apps/quality-service/dist/main.js");
+  if (!existsSync(entry)) {
+    run("npm run build -w @praxis/contracts -w @praxis/knowledge -w @praxis/quality-service");
+  }
+  if (!existsSync(entry)) fail(`missing Quality service build ${entry}`);
+  mkdirSync(dirname(outfile), { recursive: true });
+  await esbuild.build({
+    absWorkingDir: root,
+    entryPoints: [entry],
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    target: "node22",
+    outfile,
+    legalComments: "none",
+    minify: false,
+    sourcemap: false,
+    logLevel: "silent",
+    define: {
+      "process.env.PRAXIS_BUNDLE_VERSION": JSON.stringify(version),
+    },
+  });
+  if (!existsSync(outfile)) fail(`esbuild did not write Quality bundle ${outfile}`);
   return outfile;
 }

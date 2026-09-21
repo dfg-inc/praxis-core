@@ -55,6 +55,7 @@ export async function verifyClaudeExtension(version, dir = distClaudeExtensionsD
   const tmp = mkdtempSync(join(tmpdir(), "praxis-mcpb-verify-"));
   try {
     const extracted = extractMcpbRuntime(mcpbPath, join(tmp, "unpack"));
+    if (!existsSync(extracted.quality)) fail("MCPB missing bundled Quality service");
     const packedManifest = extracted.manifest;
     if (packedManifest.manifest_version !== MCPB_MANIFEST_VERSION) {
       fail(`packed manifest_version ${packedManifest.manifest_version}`);

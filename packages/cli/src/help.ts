@@ -201,16 +201,18 @@ Required: --confirm YES and matching preview fingerprint. Restores development s
   praxis quality review --wp ID_OR_KEY [--repo PATH] [--json]
   praxis quality report --wp ID_OR_KEY [--repo PATH] [--json]
 
-ensure starts the local Quality service if it is not healthy (no duplicate spawn).
-review runs the QA workflow. Does not require make quality-up in normal UI flow.
+ensure starts the Quality service bundled in Praxis Runtime and waits until /health is ready.
+It does not run Quality Review, create Jira Bugs, or mark Done. Safe reuse when already healthy.
+review runs the QA workflow after ensure. Does not require make quality-up in Claude Desktop.
 `,
   "quality status": `USAGE
-  praxis quality status [--json]
-Read-only health.
+  praxis quality status [--json] [--repo PATH]
+Read-only health. Does not start Quality.
 `,
   "quality ensure": `USAGE
-  praxis quality ensure [--json]
-Starts Quality if needed. Safe reuse when already healthy.
+  praxis quality ensure [--json] [--repo PATH]
+Starts the bundled Quality service if needed, waits for health, reuses a healthy instance.
+Does not run review or write Jira.
 `,
   "quality review": `USAGE
   praxis quality review --wp ID_OR_KEY [--repo PATH] [--json]

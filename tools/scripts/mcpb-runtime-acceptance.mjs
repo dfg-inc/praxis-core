@@ -68,6 +68,9 @@ const proven = [];
 
 try {
   const extracted = extractMcpbRuntime(mcpbPath, join(outside, "unpack"));
+  if (!extracted.quality || !existsSync(extracted.quality)) {
+    fail("MCPB missing bundled Quality service server/praxis-quality.cjs");
+  }
   const manifest = extracted.manifest;
   if (manifest.manifest_version !== MCPB_MANIFEST_VERSION) {
     fail(`manifest_version ${manifest.manifest_version} != ${MCPB_MANIFEST_VERSION}`);

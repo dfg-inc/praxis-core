@@ -60,6 +60,13 @@ export const OP_CODES = {
   EVIDENCE_PERSIST_FAILED: "EVIDENCE_PERSIST_FAILED",
   HANDOFF_FAILED: "HANDOFF_FAILED",
   JIRA_PROPERTY_UPDATE_FAILED: "JIRA_PROPERTY_UPDATE_FAILED",
+  QUALITY_PACKAGE_MISSING: "QUALITY_PACKAGE_MISSING",
+  QUALITY_STARTUP_FAILED: "QUALITY_STARTUP_FAILED",
+  QUALITY_PROCESS_EXITED: "QUALITY_PROCESS_EXITED",
+  QUALITY_PORT_UNAVAILABLE: "QUALITY_PORT_UNAVAILABLE",
+  QUALITY_DB_INIT_FAILED: "QUALITY_DB_INIT_FAILED",
+  QUALITY_HEALTH_TIMEOUT: "QUALITY_HEALTH_TIMEOUT",
+  QUALITY_RUNTIME_UNREACHABLE: "QUALITY_RUNTIME_UNREACHABLE",
 } as const;
 
 export type OpCode = (typeof OP_CODES)[keyof typeof OP_CODES];
@@ -373,16 +380,17 @@ export async function doctorOp(ctx: OpContext, version: string) {
     configured: jiraFlags.configured,
     missing: jiraFlags.missing,
   };
-  const qualityUrl = process.env.PRAXIS_QUALITY_URL || "http://127.0.0.1:8792/health";
-  let quality = { healthy: false, url: qualityUrl };
-  try {
-    const r = await fetch(qualityUrl, {
-      signal: AbortSignal.timeout(1500),
-    });
-    quality = { healthy: r.ok, url: qualityUrl };
-  } catch {
-    quality = { healthy: false, url: qualityUrl };
-  }
+  const { probeQuality } = await import("./quality-ensure.js");
+  const qualityProbe = repoExists
+    ? await probeQuality({ repo: git ?? resolved })
+    : { status: "not_started" as const, url: process.env.PRAXIS_QUALITY_URL || "http://127.0.0.1:8792/health", reused: false };
+  const quality = {
+    healthy: qualityProbe.status === "healthy",
+    status: qualityProbe.status,
+    url: qualityProbe.url,
+    pid: qualityProbe.pid,
+    db: qualityProbe.db,
+  };
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? (git ? "ok" : "no-git") : "unavailable",
@@ -818,21 +826,25 @@ export async function developerCompleteRecoveryApplyOp(
 
 export async function qualityStatusOp(ctx: OpContext) {
   const repo = requireRepo(ctx.repo);
-  const { ensureQuality } = await import("./quality-ensure.js");
-  return ensureQuality({ repo });
+  const { probeQuality } = await import("./quality-ensure.js");
+  return probeQuality({ repo });
 }
 
 export async function qualityEnsureOp(ctx: OpContext) {
   const repo = requireRepo(ctx.repo);
-  const { ensureQuality } = await import("./quality-ensure.js");
-  const ensured = await ensureQuality({ repo });
-  if (ensured.status === "unavailable") {
-    throw new PraxisOpError(
-      OP_CODES.WORKFLOW_BLOCKED,
-      "workflow blocked: Quality service unavailable",
-    );
+  const { ensureQuality, QualityStartupError } = await import("./quality-ensure.js");
+  try {
+    return await ensureQuality({ repo });
+  } catch (err) {
+    if (err instanceof QualityStartupError) {
+      throw new PraxisOpError(err.code as OpCode, err.message, {
+        stage: err.stage,
+        durationMs: err.durationMs,
+        details: err.details,
+      });
+    }
+    throw err;
   }
-  return ensured;
 }
 
 export async function qualityReviewOp(ctx: OpContext) {

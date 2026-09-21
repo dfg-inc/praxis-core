@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { bundlePraxisMcp } from "./mcp-bundle.mjs";
+import { bundlePraxisMcp, bundlePraxisQuality } from "./mcp-bundle.mjs";
 import {
   EXTENSION_CONTRACT,
   EXTENSION_FILE,
@@ -57,6 +57,9 @@ export async function packClaudeExtension(version) {
   const runtime = join(staging, "server", "praxis-mcp.cjs");
   await bundlePraxisMcp(runtime, version);
   chmodSync(runtime, 0o644);
+  const quality = join(staging, "server", "praxis-quality.cjs");
+  await bundlePraxisQuality(quality, version);
+  chmodSync(quality, 0o644);
   const manifest = praxisRuntimeManifest(version);
   writeFileSync(join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   const validate = spawnSync(process.execPath, [mcpbBin(), "validate", join(staging, "manifest.json")], {
