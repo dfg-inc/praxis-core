@@ -236,8 +236,8 @@ if (existsSync("/Users/serg/work/praxis-acceptance/praxis-test/.git")) {
   git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test.git"]);
   const ssh = "git@github.com:hisagedru/praxis-acceptance-test.git";
   const preview = previewConnect({ repo, workPackageId: WP, remoteUrl: ssh, providerKind: "github" });
-  const config = join(repo, ".git", "config");
-  spawnSync("chflags", ["uchg", config], { encoding: "utf8" });
+  const gitDir = join(repo, ".git");
+  spawnSync("chmod", ["a-w", gitDir], { encoding: "utf8" });
   let failed = false;
   try {
     applyConnect({
@@ -251,7 +251,7 @@ if (existsSync("/Users/serg/work/praxis-acceptance/praxis-test/.git")) {
   } catch {
     failed = true;
   } finally {
-    spawnSync("chflags", ["nouchg", config], { encoding: "utf8" });
+    spawnSync("chmod", ["u+w", gitDir], { encoding: "utf8" });
   }
   if (!failed) fail("failed write did not error");
   if (listRemotes(repo)[0]?.protocol !== "https") fail("failed write changed origin");

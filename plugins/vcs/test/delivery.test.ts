@@ -310,8 +310,8 @@ describe("git status / connect", () => {
       remoteUrl: next,
       providerKind: "github",
     });
-    const config = join(repo, ".git", "config");
-    spawnSync("chflags", ["uchg", config], { encoding: "utf8" });
+    const gitDir = join(repo, ".git");
+    spawnSync("chmod", ["a-w", gitDir], { encoding: "utf8" });
     try {
       applyConnect({
         repo,
@@ -323,11 +323,12 @@ describe("git status / connect", () => {
       });
       throw new Error("expected connect write to fail");
     } catch (err) {
+      spawnSync("chmod", ["u+w", gitDir], { encoding: "utf8" });
       if (err instanceof Error && err.message === "expected connect write to fail") throw err;
       expect((err as { code?: string }).code).toBe(VCS_CODES.GIT_TRANSPORT_FAILED);
       expect(listRemotes(repo)[0]?.protocol).toBe("https");
     } finally {
-      spawnSync("chflags", ["nouchg", config], { encoding: "utf8" });
+      spawnSync("chmod", ["u+w", gitDir], { encoding: "utf8" });
     }
   });
 
