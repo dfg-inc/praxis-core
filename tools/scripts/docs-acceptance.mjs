@@ -110,6 +110,9 @@ for (const needle of [
   "praxis-quality.cjs",
   "sql.js",
   "QUALITY_SPAWN_FAILED",
+  "QUALITY_PREVIEW_STALE",
+  "QUALITY_RECONCILIATION_REQUIRED",
+  "previewFingerprint",
 ]) {
   if (!qualityGuide.includes(needle)) fail(`quality guide missing ${needle}`);
 }
