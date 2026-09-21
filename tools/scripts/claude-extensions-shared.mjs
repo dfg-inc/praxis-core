@@ -33,6 +33,32 @@ export const JIRA_USER_CONFIG = {
     required: true,
     sensitive: true,
   },
+  github_token: {
+    type: "string",
+    title: "GitHub Token",
+    description: "GitHub personal access token with repo scope for Pull Requests and Actions status. PAT, not OAuth. Stored in OS secret vault. Never paste into chat.",
+    required: false,
+    sensitive: true,
+  },
+  github_api_url: {
+    type: "string",
+    title: "GitHub API URL",
+    description: "Optional. Default https://api.github.com. GitHub Enterprise: https://HOST/api/v3",
+    required: false,
+  },
+  gitlab_token: {
+    type: "string",
+    title: "GitLab Token",
+    description: "GitLab personal access token (api scope) for Merge Requests. PAT, not OAuth. Optional if you only use GitHub. Never paste into chat.",
+    required: false,
+    sensitive: true,
+  },
+  gitlab_base_url: {
+    type: "string",
+    title: "GitLab Base URL",
+    description: "Optional. GitLab.com or Self-Managed origin, for example https://gitlab.example.com. No trailing slash.",
+    required: false,
+  },
 };
 
 export const JIRA_ENV_MAP = {
@@ -40,6 +66,10 @@ export const JIRA_ENV_MAP = {
   PRAXIS_JIRA_EMAIL: "${user_config.jira_email}",
   PRAXIS_JIRA_PROJECT_KEY: "${user_config.jira_project_key}",
   PRAXIS_JIRA_TOKEN: "${user_config.jira_token}",
+  PRAXIS_GITHUB_TOKEN: "${user_config.github_token}",
+  PRAXIS_GITHUB_API_URL: "${user_config.github_api_url}",
+  PRAXIS_GITLAB_TOKEN: "${user_config.gitlab_token}",
+  PRAXIS_GITLAB_BASE_URL: "${user_config.gitlab_base_url}",
 };
 
 export function praxisRuntimeManifest(version) {
@@ -52,7 +82,7 @@ export function praxisRuntimeManifest(version) {
     description:
       "Shared Praxis MCP runtime for Claude Desktop. Configure Jira once; role plugins use these tools.",
     long_description:
-      "Praxis Runtime is the single local MCP server for Praxis BA, Architect, Developer, and Quality.\n\nConfigure Jira in this extension's settings. The API token is marked sensitive and stored in OS secure storage. Role plugins contain Skills only and do not launch duplicate MCP servers.\n\nCLI and CI continue to use `PRAXIS_JIRA_*` environment variables. Desktop injected env wins over repository `.env` files.",
+      "Praxis Runtime is the single local MCP server for Praxis BA, Architect, Developer, and Quality.\n\nConfigure Jira in this extension's settings. Optionally configure a GitHub token (MVP Git Delivery) or GitLab token. Tokens are marked sensitive and stored in OS secure storage. Role plugins contain Skills only and do not launch duplicate MCP servers.\n\nCLI and CI continue to use `PRAXIS_JIRA_*` / `PRAXIS_GITHUB_*` / `PRAXIS_GITLAB_*`. Desktop injected env wins over repository `.env` files.",
     author: { name: "dfuture-co" },
     license: "Apache-2.0",
     keywords: ["praxis", "jira", "mcp", "runtime"],

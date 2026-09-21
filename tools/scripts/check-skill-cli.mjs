@@ -33,6 +33,13 @@ const UI_SKILLS = {
     "resume-work-package",
     "developer-status",
     "claim-work-package",
+    "git-status",
+    "connect-git",
+    "prepare-git-delivery",
+    "commit-approved-changes",
+    "publish-branch",
+    "create-merge-request",
+    "check-delivery-status",
   ],
   quality: ["review-work-package", "resume-qa", "quality-status", "verify-work-package"],
 };
@@ -154,7 +161,7 @@ for (const role of ROLES) {
         violations.push(`${relative(root, file)} missing human approval gate`);
       }
     }
-    if (/(praxis_ba_apply|praxis_architect_apply|praxis_developer_claim|praxis_quality_apply)/.test(text)) {
+    if (/(praxis_ba_apply|praxis_architect_apply|praxis_developer_claim|praxis_quality_apply|praxis_developer_git_commit|praxis_developer_git_publish|praxis_developer_git_connect_apply|praxis_developer_git_merge_request)/.test(text)) {
       if (!/approval|confirm|wait|STOP|Do not .*apply/i.test(text)) {
         violations.push(`${relative(root, file)} write tool without human gate language`);
       }

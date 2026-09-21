@@ -28,7 +28,8 @@
   "dependencies": {
     "@praxis/contracts": "*",
     "@praxis/jira": "*",
-    "@praxis/project-config": "*"
+    "@praxis/project-config": "*",
+    "@praxis/vcs": "*"
   },
   "files": [
     "dist",

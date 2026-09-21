@@ -63,6 +63,9 @@ export async function verifyClaudeExtension(version, dir = distClaudeExtensionsD
     if (packedManifest.user_config?.jira_token?.sensitive !== true) {
       fail("packed jira_token.sensitive !== true");
     }
+    if (packedManifest.user_config?.github_token && packedManifest.user_config.github_token.sensitive !== true) {
+      fail("packed github_token.sensitive !== true");
+    }
     for (const [envName, subst] of Object.entries(JIRA_ENV_MAP)) {
       if (packedManifest.server?.mcp_config?.env?.[envName] !== subst) {
         fail(`packed mcp_config.env.${envName} must be ${subst}`);

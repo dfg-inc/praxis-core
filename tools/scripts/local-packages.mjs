@@ -28,6 +28,7 @@ export const PLUGIN_WORKSPACES = [
   "@praxis/architect",
   "@praxis/developer",
   "@praxis/jira",
+  "@praxis/vcs",
   "@praxis/quality",
 ];
 

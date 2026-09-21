@@ -166,10 +166,15 @@ Required: --wp. Read-only.
   praxis developer complete --wp ID_OR_KEY --confirm YES [--repo PATH] [--json]
   praxis developer complete-recovery-preview --wp ID_OR_KEY [--repo PATH] [--json]
   praxis developer complete-recovery-apply --wp ID_OR_KEY --confirm YES --fingerprint sha256:... [--repo PATH] [--json]
+  praxis developer git-status --wp ID_OR_KEY [--json]
+  praxis developer git-preview --wp ID_OR_KEY [--json]
+  praxis developer git-commit --wp ID_OR_KEY --confirm YES --fingerprint sha256:... [--json]
+  praxis developer git-publish --wp ID_OR_KEY --confirm YES --fingerprint sha256:... [--mode baseline|branch] [--json]
+  praxis developer git-merge-request --wp ID_OR_KEY --confirm YES [--json]
 
 claim writes Jira claim. complete verifies, persists evidence and Quality handoff, and keeps Jira In Progress.
 complete does not mark the issue Done and does not start Quality.
-release requires --confirm YES.
+git-* is GitHub-MVP delivery (no force-push, no merge). release requires --confirm YES.
 `,
   "developer status": `USAGE
   praxis developer status --wp ID_OR_KEY [--repo PATH] [--json]

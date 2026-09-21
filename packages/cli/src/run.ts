@@ -33,6 +33,19 @@ import {
   qualityApplyStatusOp,
   qualityReviewShowOp,
   qualityStatusOp,
+  developerGitStatusOp,
+  developerGitConnectPreviewOp,
+  developerGitConnectApplyOp,
+  developerGitIdentityPreviewOp,
+  developerGitIdentityApplyOp,
+  developerGitPreviewOp,
+  developerGitCommitOp,
+  developerGitPublishPreviewOp,
+  developerGitPublishOp,
+  developerGitMergeRequestOp,
+  developerGitDeliveryStatusOp,
+  developerGitLinkJiraPreviewOp,
+  developerGitLinkJiraApplyOp,
   redact,
   workPackageListOp,
   workPackageShowOp,
@@ -65,6 +78,16 @@ export type Flags = {
   help: boolean;
   version: boolean;
   fingerprint?: string;
+  remoteName?: string;
+  remoteUrl?: string;
+  branch?: string;
+  targetBranch?: string;
+  files?: string[];
+  commitMessage?: string;
+  gitUserName?: string;
+  gitUserEmail?: string;
+  gitPublishMode?: "baseline" | "branch";
+  providerKind?: "github" | "gitlab";
   argv: string[];
 };
 
@@ -95,6 +118,16 @@ export function parseFlags(argv: string[]): Flags {
     else if (a === "--wp") flags.wp = argv[++i];
     else if (a === "--actor") flags.actor = argv[++i];
     else if (a === "--fingerprint") flags.fingerprint = argv[++i];
+    else if (a === "--remote") flags.remoteName = argv[++i];
+    else if (a === "--url") flags.remoteUrl = argv[++i];
+    else if (a === "--branch") flags.branch = argv[++i];
+    else if (a === "--target-branch") flags.targetBranch = argv[++i];
+    else if (a === "--files") flags.files = (argv[++i] ?? "").split(",").filter(Boolean);
+    else if (a === "--message") flags.commitMessage = argv[++i];
+    else if (a === "--git-name") flags.gitUserName = argv[++i];
+    else if (a === "--git-email") flags.gitUserEmail = argv[++i];
+    else if (a === "--mode") flags.gitPublishMode = argv[++i] === "baseline" ? "baseline" : "branch";
+    else if (a === "--provider") flags.providerKind = argv[++i] === "gitlab" ? "gitlab" : "github";
     else if (a.startsWith("-")) flags.argv.push(a);
     else flags.argv.push(a);
   }
@@ -144,6 +177,16 @@ function ctxFrom(flags: Flags, repo: string): OpContext {
     previewFingerprint: flags.fingerprint,
     infer: flags.infer,
     actor: flags.actor,
+    remoteName: flags.remoteName,
+    remoteUrl: flags.remoteUrl,
+    branch: flags.branch,
+    targetBranch: flags.targetBranch,
+    files: flags.files,
+    commitMessage: flags.commitMessage,
+    gitUserName: flags.gitUserName,
+    gitUserEmail: flags.gitUserEmail,
+    gitPublishMode: flags.gitPublishMode,
+    providerKind: flags.providerKind,
   };
 }
 
@@ -328,9 +371,22 @@ async function developerCmd(sub: string | undefined, ctx: OpContext) {
   if (sub === "complete") return developerCompleteOp(ctx);
   if (sub === "complete-recovery-preview") return developerCompleteRecoveryPreviewOp(ctx);
   if (sub === "complete-recovery-apply") return developerCompleteRecoveryApplyOp(ctx);
+  if (sub === "git-status") return developerGitStatusOp(ctx);
+  if (sub === "git-connect-preview") return developerGitConnectPreviewOp(ctx);
+  if (sub === "git-connect") return developerGitConnectApplyOp(ctx);
+  if (sub === "git-identity-preview") return developerGitIdentityPreviewOp(ctx);
+  if (sub === "git-identity") return developerGitIdentityApplyOp(ctx);
+  if (sub === "git-preview") return developerGitPreviewOp(ctx);
+  if (sub === "git-commit") return developerGitCommitOp(ctx);
+  if (sub === "git-publish-preview") return developerGitPublishPreviewOp(ctx);
+  if (sub === "git-publish") return developerGitPublishOp(ctx);
+  if (sub === "git-merge-request") return developerGitMergeRequestOp(ctx);
+  if (sub === "git-delivery-status") return developerGitDeliveryStatusOp(ctx);
+  if (sub === "git-link-jira-preview") return developerGitLinkJiraPreviewOp(ctx);
+  if (sub === "git-link-jira") return developerGitLinkJiraApplyOp(ctx);
   throw new PraxisOpError(
     "INVALID_INPUT",
-    "usage: praxis developer status|claim|release|complete|complete-recovery-preview|complete-recovery-apply",
+    "usage: praxis developer status|claim|release|complete|complete-recovery-preview|complete-recovery-apply|git-status|git-connect-preview|git-connect|git-preview|git-commit|git-publish-preview|git-publish|git-merge-request|git-delivery-status",
   );
 }
 

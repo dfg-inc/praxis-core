@@ -35,6 +35,21 @@ import {
   type QualityLifecycleSnapshot,
   type QualityCommentReadback,
 } from "@praxis/jira/workflow";
+import { VcsError, githubTokenFlags, gitlabTokenFlags } from "@praxis/vcs";
+import {
+  gitCommitData,
+  gitConnectApplyData,
+  gitConnectPreviewData,
+  gitDeliveryStatusData,
+  gitIdentityApplyData,
+  gitIdentityPreviewData,
+  gitMergeRequestData,
+  gitPreviewData,
+  gitPublishData,
+  gitPublishPreviewData,
+  gitStatusData,
+  type GitOpContext,
+} from "./git-delivery-ops.js";
 
 export const OP_CODES = {
   INVALID_INPUT: "INVALID_INPUT",
@@ -92,6 +107,24 @@ export const OP_CODES = {
   QUALITY_POSTCONDITION_FAILED: "QUALITY_POSTCONDITION_FAILED",
   QUALITY_STORE_SYNC_PENDING: "QUALITY_STORE_SYNC_PENDING",
   QUALITY_APPLY_INCOMPLETE: "QUALITY_APPLY_INCOMPLETE",
+  GIT_REPOSITORY_UNAVAILABLE: "GIT_REPOSITORY_UNAVAILABLE",
+  GIT_IDENTITY_REQUIRED: "GIT_IDENTITY_REQUIRED",
+  GIT_REMOTE_REQUIRED: "GIT_REMOTE_REQUIRED",
+  GIT_REMOTE_SELECTION_REQUIRED: "GIT_REMOTE_SELECTION_REQUIRED",
+  GIT_PROVIDER_UNKNOWN: "GIT_PROVIDER_UNKNOWN",
+  GIT_PROVIDER_UNSUPPORTED: "GIT_PROVIDER_UNSUPPORTED",
+  GIT_PREVIEW_STALE: "GIT_PREVIEW_STALE",
+  GIT_QUALITY_SNAPSHOT_MISMATCH: "GIT_QUALITY_SNAPSHOT_MISMATCH",
+  GIT_STAGING_BLOCKED: "GIT_STAGING_BLOCKED",
+  GIT_FOREIGN_STAGED: "GIT_FOREIGN_STAGED",
+  GIT_PUSH_BLOCKED: "GIT_PUSH_BLOCKED",
+  GIT_FORCE_PUSH_FORBIDDEN: "GIT_FORCE_PUSH_FORBIDDEN",
+  GIT_BASELINE_REQUIRED: "GIT_BASELINE_REQUIRED",
+  GIT_REMOTE_HISTORY_CONFLICT: "GIT_REMOTE_HISTORY_CONFLICT",
+  GITHUB_TOKEN_UNAVAILABLE: "GITHUB_TOKEN_UNAVAILABLE",
+  GITLAB_TOKEN_UNAVAILABLE: "GITLAB_TOKEN_UNAVAILABLE",
+  GIT_TRANSPORT_FAILED: "GIT_TRANSPORT_FAILED",
+  GIT_COMMIT_DIVERGED: "GIT_COMMIT_DIVERGED",
 } as const;
 
 export type OpCode = (typeof OP_CODES)[keyof typeof OP_CODES];
@@ -124,6 +157,8 @@ export function previewFingerprint(plan: unknown): string {
 export function redact(text: string): string {
   return text
     .replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>")
+    .replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>")
+    .replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>")
     .replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>")
     .replace(/Bearer\s+\S+/g, "Bearer <redacted>");
 }
@@ -141,6 +176,18 @@ export type OpContext = {
   signal?: AbortSignal;
   deadlineMs?: number;
   reviewId?: number;
+  remoteName?: string;
+  remoteUrl?: string;
+  branch?: string;
+  targetBranch?: string;
+  files?: string[];
+  commitMessage?: string;
+  gitUserName?: string;
+  gitUserEmail?: string;
+  gitPublishMode?: "baseline" | "branch";
+  providerKind?: "github" | "gitlab";
+  vcsFetchImpl?: typeof fetch;
+  vcsProvider?: import("@praxis/vcs").VcsProvider;
 };
 
 export function loadPraxisDotenv(repo: string): void {
@@ -433,6 +480,8 @@ export async function doctorOp(ctx: OpContext, version: string) {
       suggestedPath: "suggestedPath" in project ? project.suggestedPath : undefined,
     },
     jira,
+    github: githubTokenFlags(),
+    gitlab: gitlabTokenFlags(),
     quality,
     capabilities,
     codes: {
@@ -1099,5 +1148,205 @@ export async function qualityApplyOp(ctx: OpContext): Promise<QualityApplyResult
     } catch (err) {
       mapQualityReviewError(err);
     }
+  });
+}
+
+function gitCtx(ctx: OpContext): GitOpContext {
+  const repo = requireRepo(ctx.repo);
+  const workPackageId = ctx.wp ? resolveLocalWorkPackage(repo, ctx.wp)?.id ?? ctx.wp : "";
+  const resolved = ctx.wp ? resolveRemoteWpKey(repo, workPackageId) : undefined;
+  const jiraKey =
+    ctx.wp && /^[A-Z][A-Z0-9]+-\d+$/i.test(ctx.wp)
+      ? ctx.wp
+      : resolved && /^[A-Z][A-Z0-9]+-\d+$/i.test(resolved)
+        ? resolved
+        : undefined;
+  return {
+    repo,
+    workPackageId,
+    jiraWorkPackageKey: jiraKey,
+    remoteName: ctx.remoteName,
+    remoteUrl: ctx.remoteUrl,
+    branch: ctx.branch,
+    targetBranch: ctx.targetBranch,
+    files: ctx.files,
+    commitMessage: ctx.commitMessage,
+    gitUserName: ctx.gitUserName,
+    gitUserEmail: ctx.gitUserEmail,
+    providerKind: ctx.providerKind,
+    vcsProvider: ctx.vcsProvider,
+    fetchImpl: ctx.vcsFetchImpl,
+    confirmation: ctx.confirmation,
+    previewFingerprint: ctx.previewFingerprint,
+    gitPublishMode: ctx.gitPublishMode,
+  };
+}
+
+function mapVcs(err: unknown): never {
+  if (err instanceof VcsError) {
+    const code = (OP_CODES as Record<string, OpCode>)[err.code] ?? OP_CODES.WORKFLOW_BLOCKED;
+    throw new PraxisOpError(code, redact(err.message), { details: err.details });
+  }
+  throw err;
+}
+
+function requireGitWp(ctx: OpContext): void {
+  if (!ctx.wp) throw new PraxisOpError(OP_CODES.INVALID_INPUT, "git delivery requires workPackage");
+}
+
+export async function developerGitStatusOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  try {
+    return await gitStatusData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitConnectPreviewOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  try {
+    return gitConnectPreviewData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitConnectApplyOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  requireConfirm(ctx.confirmation, "git connect");
+  if (!ctx.previewFingerprint) {
+    throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git connect requires previewFingerprint");
+  }
+  try {
+    return gitConnectApplyData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitIdentityPreviewOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  try {
+    return gitIdentityPreviewData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitIdentityApplyOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  requireConfirm(ctx.confirmation, "git identity");
+  if (!ctx.previewFingerprint) {
+    throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git identity requires previewFingerprint");
+  }
+  try {
+    return gitIdentityApplyData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitPreviewOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  try {
+    return await gitPreviewData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitCommitOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  requireConfirm(ctx.confirmation, "git commit");
+  if (!ctx.previewFingerprint) {
+    throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git commit requires previewFingerprint");
+  }
+  try {
+    return await gitCommitData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitPublishPreviewOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  try {
+    return gitPublishPreviewData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitPublishOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  requireConfirm(ctx.confirmation, "git publish");
+  if (!ctx.previewFingerprint) {
+    throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git publish requires previewFingerprint");
+  }
+  try {
+    return await gitPublishData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitMergeRequestOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  requireConfirm(ctx.confirmation, "git merge request");
+  try {
+    return await gitMergeRequestData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitDeliveryStatusOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  try {
+    return gitDeliveryStatusData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitLinkJiraPreviewOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  const data = gitDeliveryStatusData(gitCtx(ctx));
+  const url = data.journal?.mergeRequestUrl;
+  const key = data.journal?.jiraWorkPackageKey;
+  return {
+    jiraIssueKey: key ?? null,
+    mergeRequestUrl: url ?? null,
+    proposedComment: url && key ? `Praxis Git Delivery: ${url}` : null,
+    transitions: [],
+    qualityApply: false,
+    previewFingerprint: previewFingerprint({ key, url, comment: true }),
+    jiraMutated: false as const,
+  };
+}
+
+export async function developerGitLinkJiraApplyOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  requireConfirm(ctx.confirmation, "git link jira");
+  if (!ctx.previewFingerprint) {
+    throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git link jira requires previewFingerprint");
+  }
+  const preview = await developerGitLinkJiraPreviewOp(ctx);
+  if (preview.previewFingerprint !== ctx.previewFingerprint) {
+    throw new PraxisOpError(OP_CODES.GIT_PREVIEW_STALE, "git link jira previewFingerprint mismatch");
+  }
+  if (!preview.jiraIssueKey || !preview.proposedComment) {
+    throw new PraxisOpError(OP_CODES.GIT_PUSH_BLOCKED, "No merge/pull request URL to link");
+  }
+  return withProvider(ctx, async (p) => {
+    await p.addComment(preview.jiraIssueKey!, preview.proposedComment);
+    return {
+      jiraMutated: true,
+      issueKey: preview.jiraIssueKey,
+      comment: preview.proposedComment,
+      transitioned: false,
+      qualityApply: false,
+    };
   });
 }
