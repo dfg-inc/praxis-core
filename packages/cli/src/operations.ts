@@ -26,8 +26,10 @@ import {
   discoverQualityInputs,
   previewQualityApply,
   applyQualityReview,
+  QualityApplyError,
   type DeveloperCompleteResult,
   type CompleteRecoveryPreview,
+  type QualityApplyResult,
 } from "@praxis/jira/workflow";
 
 export const OP_CODES = {
@@ -81,6 +83,11 @@ export const OP_CODES = {
   QUALITY_MANIFEST_MISSING: "QUALITY_MANIFEST_MISSING",
   QUALITY_INPUTS_INCONSISTENT: "QUALITY_INPUTS_INCONSISTENT",
   QUALITY_REVIEW_MISSING: "QUALITY_REVIEW_MISSING",
+  QUALITY_PREVIEW_STALE: "QUALITY_PREVIEW_STALE",
+  QUALITY_RECONCILIATION_REQUIRED: "QUALITY_RECONCILIATION_REQUIRED",
+  QUALITY_POSTCONDITION_FAILED: "QUALITY_POSTCONDITION_FAILED",
+  QUALITY_STORE_SYNC_PENDING: "QUALITY_STORE_SYNC_PENDING",
+  QUALITY_APPLY_INCOMPLETE: "QUALITY_APPLY_INCOMPLETE",
 } as const;
 
 export type OpCode = (typeof OP_CODES)[keyof typeof OP_CODES];
@@ -868,6 +875,10 @@ export async function qualityEnsureOp(ctx: OpContext) {
 }
 
 function mapQualityReviewError(err: unknown): never {
+  if (err instanceof QualityApplyError) {
+    const code = (err.code in OP_CODES ? err.code : OP_CODES.CONFLICT) as OpCode;
+    throw new PraxisOpError(code, err.message, { details: err.details });
+  }
   if (err instanceof Error && /QUALITY_/.test(err.message)) {
     const raw = err.message.match(/^(QUALITY_[A-Z_]+)/)?.[1];
     const code = (raw && raw in OP_CODES ? raw : OP_CODES.CONFLICT) as OpCode;
@@ -946,7 +957,7 @@ export async function qualityApplyPreviewOp(ctx: OpContext) {
   });
 }
 
-export async function qualityApplyOp(ctx: OpContext) {
+export async function qualityApplyOp(ctx: OpContext): Promise<QualityApplyResult & { jiraMutated: boolean }> {
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "quality apply requires workPackage");
   }
@@ -961,24 +972,27 @@ export async function qualityApplyOp(ctx: OpContext) {
   const workPackageId = resolveLocalWorkPackage(repo, ctx.wp)?.id ?? ctx.wp;
   return withProvider({ ...ctx, repo }, async (p) => {
     try {
+      const { markQualityReviewApplied } = await import("./quality-lifecycle.js");
+      const { ensureQuality } = await import("./quality-ensure.js");
       const applied = await applyQualityReview({
         provider: p,
         repo,
         workPackageId,
         previewFingerprint: ctx.previewFingerprint!,
+        syncQualityStore: async ({ reviewId, payload }) => {
+          try {
+            if (!process.env.PRAXIS_QUALITY_URL) {
+              await ensureQuality({ repo });
+            }
+            return await markQualityReviewApplied({ repo, reviewId, payload });
+          } catch (err) {
+            return {
+              ok: false as const,
+              reason: err instanceof Error ? err.message : String(err),
+            };
+          }
+        },
       });
-      if (applied.ok) {
-        const { markQualityReviewApplied } = await import("./quality-lifecycle.js");
-        await markQualityReviewApplied({
-          repo,
-          reviewId: applied.reviewId,
-          payload: {
-            previewFingerprint: applied.previewFingerprint,
-            completed: applied.completed,
-            bugsCreated: applied.bugsCreated,
-          },
-        }).catch(() => undefined);
-      }
       return { ...applied, jiraMutated: applied.completed.length > 0 };
     } catch (err) {
       mapQualityReviewError(err);

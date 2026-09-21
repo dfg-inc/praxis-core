@@ -924,9 +924,11 @@ export {
   qualityApplyFingerprint,
   QUALITY_COMMENT_MARK,
   QUALITY_APPLIED_REVIEW_PROP,
+  QualityApplyError,
 } from "./quality-apply.js";
 export type {
   QualityApplyPlan,
   QualityApplyAction,
   QualityReviewEvidence,
+  QualityApplyResult,
 } from "./quality-apply.js";

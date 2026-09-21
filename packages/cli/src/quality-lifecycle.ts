@@ -142,16 +142,34 @@ export async function markQualityReviewApplied(opts: {
   repo: string;
   reviewId: number;
   payload: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
   const { probeQuality } = await import("./quality-ensure.js");
   const override = process.env.PRAXIS_QUALITY_URL;
   if (!override) {
     const probe = await probeQuality({ repo: opts.repo });
-    if (probe.status !== "healthy") return;
-    await postJson(`${qualityApiBase(probe.url)}/reviews/${opts.reviewId}/applied`, opts.payload);
-    return;
+    if (probe.status !== "healthy") {
+      return {
+        ok: false,
+        reason: `Quality Service is ${probe.status}; Jira/local Apply may already be complete`,
+      };
+    }
+    const { status, json } = await postJson(
+      `${qualityApiBase(probe.url)}/reviews/${opts.reviewId}/applied`,
+      opts.payload,
+    );
+    if (status >= 400) {
+      return { ok: false, reason: String(json.message ?? `HTTP ${status}`) };
+    }
+    return { ok: true };
   }
-  await postJson(`${qualityApiBase(override)}/reviews/${opts.reviewId}/applied`, opts.payload);
+  const { status, json } = await postJson(
+    `${qualityApiBase(override)}/reviews/${opts.reviewId}/applied`,
+    opts.payload,
+  );
+  if (status >= 400) {
+    return { ok: false, reason: String(json.message ?? `HTTP ${status}`) };
+  }
+  return { ok: true };
 }
 
 export function qualityReviewStatus(repo: string, workPackageId: string): {

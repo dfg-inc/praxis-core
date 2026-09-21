@@ -100,6 +100,7 @@ describe("localized bug type", () => {
       repo,
       workPackageId: "WP-20260914-002",
       previewFingerprint: preview.previewFingerprint,
+      syncQualityStore: async () => ({ ok: true }),
     });
     expect(report.ok).toBe(true);
     expect(report.bugsCreated.length).toBeGreaterThan(0);

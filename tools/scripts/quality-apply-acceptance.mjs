@@ -31,7 +31,7 @@ function fail(msg) {
 }
 
 const built = spawnSync(
-  "npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira -w @praxis/cli -w @praxis/mcp",
+  "npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira -w @praxis/quality-service -w @praxis/cli -w @praxis/mcp",
   { cwd: root, shell: true, encoding: "utf8" },
 );
 if ((built.status ?? 1) !== 0) fail(`build failed\n${built.stderr || built.stdout}`);
@@ -42,7 +42,7 @@ const {
   qualityApplyOp,
   PraxisOpError,
 } = await import("@praxis/cli/operations");
-const { writeQualityEvidence } = await import("@praxis/jira/workflow");
+const { writeQualityEvidence, applyQualityReview } = await import("@praxis/jira/workflow");
 const { packClaudeExtension } = await import("./pack-claude-extension.mjs");
 const { ensurePackedExtension, extractMcpbRuntime } = await import("./mcpb-runtime.mjs");
 const {
@@ -128,7 +128,14 @@ if (transition?.transitionId === "31" && transition?.transitionName !== "Гот�
   /* 31 is valid if live discovery returned it; do not hardcode as the only allowed id */
 }
 if (preview.plan.bugsProposed !== 0) fail("N: PASS preview proposed bugs");
+const disclosed = preview.plan.actions.map((a) => a.propertyKey).filter(Boolean);
+if (!disclosed.includes("praxis.qualityAppliedReviewId") || !disclosed.includes("praxis.qualityCommentId")) {
+  fail("O: preview missing bookkeeping properties");
+}
+if (!preview.plan.actions.some((a) => a.kind === "sqlite")) fail("O: preview missing SQLite action");
+if (!preview.plan.currentStatus) fail("O: preview missing currentStatus");
 proven.push("A-C preview read-only fingerprint");
+proven.push("O preview discloses bookkeeping writes");
 console.error("quality-apply: confirmation gates");
 
 try {
@@ -164,17 +171,161 @@ try {
   if (!String(e).includes("QUALITY_REVIEW_STALE")) fail(`G: ${e}`);
 }
 write(repo, "src/counter.js", "export function reset() {\n  return 0;\n}\n");
+console.error("quality-apply: snapshot freshness on apply");
+{
+  const snapWp = await provider.createIssue({ summary: "snapshot", issueType: "Task" });
+  const snapRepo = mkdtempSync(join(tmpdir(), "praxis-qapply-snap-"));
+  write(snapRepo, "src/counter.js", "export function reset() {\n  return 0;\n}\n");
+  const snapDigest = fileDigest(snapRepo);
+  seedRepo(snapRepo, snapWp.key, {
+    digest: snapDigest,
+    snapshot: { digest: snapDigest, files: [{ path: "src/counter.js" }] },
+  });
+  const snapPreview = await qualityApplyPreviewOp({ repo: snapRepo, wp: WP, provider });
+  const commentsBeforeSnap = (await provider.getComments(snapWp.key)).length;
+  write(snapRepo, "src/counter.js", "export function reset() {\n  return 9;\n}\n");
+  try {
+    await applyQualityReview({
+      provider,
+      repo: snapRepo,
+      workPackageId: WP,
+      previewFingerprint: snapPreview.previewFingerprint,
+      syncQualityStore: async () => ({ ok: true }),
+    });
+    fail("F: changed snapshot still applied");
+  } catch (e) {
+    if (!String(e).includes("QUALITY_REVIEW_STALE") && !String(e).includes("QUALITY_PREVIEW_STALE") && !String(e).includes("QUALITY_FINGERPRINT")) {
+      fail(`F: ${e}`);
+    }
+  }
+  if ((await provider.getComments(snapWp.key)).length !== commentsBeforeSnap) {
+    fail("F: wrote Jira after snapshot change");
+  }
+  proven.push("F product snapshot change rejected before writes");
+}
+console.error("quality-apply: drift checks");
+{
+  const driftWp = await provider.createIssue({ summary: "drift", issueType: "Task" });
+  const driftRepo = mkdtempSync(join(tmpdir(), "praxis-qapply-drift-"));
+  write(driftRepo, "src/counter.js", "export function reset() {\n  return 0;\n}\n");
+  const driftDigest = fileDigest(driftRepo);
+  seedRepo(driftRepo, driftWp.key, {
+    digest: driftDigest,
+    snapshot: { digest: driftDigest, files: [{ path: "src/counter.js" }] },
+  });
+  const driftPreview = await qualityApplyPreviewOp({ repo: driftRepo, wp: WP, provider });
+  const commentsBeforeDrift = (await provider.getComments(driftWp.key)).length;
+  state.issues.get(driftWp.key).status = "Blocked";
+  try {
+    await applyQualityReview({
+      provider,
+      repo: driftRepo,
+      workPackageId: WP,
+      previewFingerprint: driftPreview.previewFingerprint,
+      syncQualityStore: async () => ({ ok: true }),
+    });
+    fail("B: status drift accepted");
+  } catch (e) {
+    if (!String(e).includes("QUALITY_PREVIEW_STALE")) fail(`B: ${e}`);
+  }
+  if ((await provider.getComments(driftWp.key)).length !== commentsBeforeDrift) {
+    fail("B: wrote Jira after status drift");
+  }
+  state.issues.get(driftWp.key).status = driftPreview.plan.currentStatus;
+  const idGone = [...LOCALIZED_RU_TRANSITIONS.filter((t) => t.id !== "31")];
+  idGone.push({
+    id: "41",
+    name: "Закрыть",
+    to: { id: "10009", name: "Закрыто", statusCategory: { key: "done", name: "Закрыто" } },
+  });
+  state.availableTransitions.splice(0, state.availableTransitions.length, ...idGone);
+  try {
+    await applyQualityReview({
+      provider,
+      repo: driftRepo,
+      workPackageId: WP,
+      previewFingerprint: driftPreview.previewFingerprint,
+      syncQualityStore: async () => ({ ok: true }),
+    });
+    fail("C: missing approved transition accepted");
+  } catch (e) {
+    if (!String(e).includes("QUALITY_PREVIEW_STALE")) fail(`C: ${e}`);
+  }
+  state.availableTransitions.splice(0, state.availableTransitions.length, ...LOCALIZED_RU_TRANSITIONS);
+  const retarget = LOCALIZED_RU_TRANSITIONS.map((t) =>
+    t.id === "31"
+      ? { ...t, to: { ...t.to, name: "Closed" } }
+      : t,
+  );
+  state.availableTransitions.splice(0, state.availableTransitions.length, ...retarget);
+  try {
+    await applyQualityReview({
+      provider,
+      repo: driftRepo,
+      workPackageId: WP,
+      previewFingerprint: driftPreview.previewFingerprint,
+      syncQualityStore: async () => ({ ok: true }),
+    });
+    fail("D: transition target change accepted");
+  } catch (e) {
+    if (!String(e).includes("QUALITY_PREVIEW_STALE")) fail(`D: ${e}`);
+  }
+  state.availableTransitions.splice(0, state.availableTransitions.length, ...LOCALIZED_RU_TRANSITIONS);
+  proven.push("B-D Jira drift rejected before writes");
+}
+
+{
+  const extraState = createMockJiraState({ availableTransitions: [...LOCALIZED_RU_TRANSITIONS] });
+  const extraProvider = createJiraProvider({
+    config: JIRA_CFG,
+    fetchImpl: createMockFetch(extraState, { flavor: "cloud", projectKey: "PRX" }),
+  });
+  const extraWp = await extraProvider.createIssue({ summary: "extra-done", issueType: "Task" });
+  const extraRepo = mkdtempSync(join(tmpdir(), "praxis-qapply-extra-"));
+  write(extraRepo, "src/counter.js", "export function reset() {\n  return 0;\n}\n");
+  const extraDigest = fileDigest(extraRepo);
+  seedRepo(extraRepo, extraWp.key, {
+    digest: extraDigest,
+    snapshot: { digest: extraDigest, files: [{ path: "src/counter.js" }] },
+  });
+  const extraPreview = await qualityApplyPreviewOp({ repo: extraRepo, wp: WP, provider: extraProvider });
+  const approvedId = extraPreview.plan.actions.find((a) => a.kind === "transition")?.transitionId;
+  extraState.availableTransitions.push({
+    id: "41",
+    name: "Закрыть",
+    to: { id: "10009", name: "Закрыто", statusCategory: { key: "done", name: "Закрыто" } },
+  });
+  const extraApply = await applyQualityReview({
+    provider: extraProvider,
+    repo: extraRepo,
+    workPackageId: WP,
+    previewFingerprint: extraPreview.previewFingerprint,
+    syncQualityStore: async () => ({ ok: true }),
+  });
+  if (!extraApply.ok) fail(`E: extra Done apply failed ${JSON.stringify(extraApply)}`);
+  const extraPosts = extraState.transitionPosts.filter((p) => p.key === extraWp.key);
+  if (!extraPosts.some((p) => JSON.stringify(p.body).includes(`"${approvedId}"`))) {
+    fail("E: approved transition not executed");
+  }
+  if (extraPosts.some((p) => JSON.stringify(p.body).includes('"41"'))) {
+    fail("E: silently substituted another Done transition");
+  }
+  proven.push("E no silent Done substitution");
+}
+
 console.error("quality-apply: apply start");
 const preview2 = await qualityApplyPreviewOp({ repo, wp: WP, provider });
-const applied = await qualityApplyOp({
-  repo,
-  wp: WP,
+const applied = await applyQualityReview({
   provider,
-  confirmation: "YES",
+  repo,
+  workPackageId: WP,
   previewFingerprint: preview2.previewFingerprint,
+  syncQualityStore: async () => ({ ok: true }),
 });
 if (!applied.ok) fail(`H: apply failed ${JSON.stringify(applied)}`);
-if ((applied.bugsCreated ?? []).length) fail("N: bugs on PASS");
+if ((applied.bugsCreated ?? []).length) fail("P: bugs on PASS");
+if (applied.jiraTransitioned !== true) fail("A: not jiraTransitioned");
+if (applied.localStateReconciled !== true) fail("L: local not reconciled");
 const issue = await provider.getIssue(wp.key);
 if (issue.statusCategory !== "done") fail("I: not Done after PASS apply");
 const report = await provider.getIssueProperty(wp.key, "praxis.qualityReport");
@@ -186,14 +337,19 @@ if (!comments.some((c) => JSON.stringify(c.body ?? "").includes("Praxis: Quality
 const manifest = JSON.parse(readFileSync(join(repo, "work-packages", WP, "manifest.json"), "utf8"));
 if (manifest.qualityState !== "approved") fail(`L: local qualityState ${manifest.qualityState}`);
 if (!existsSync(join(repo, "design", WP, "qa", "quality-apply.json"))) fail("M: missing apply artifact");
+const storyAfter = await provider.getIssue(story.key);
+if (storyAfter.statusCategory === "done") fail("Q: unrelated Story moved to Done");
+const storyReport = await provider.getIssueProperty(story.key, "praxis.qualityReport");
+if (storyReport) fail("Q: unrelated Story received QA report");
 proven.push("H-M approved apply / report / comment / local state");
+proven.push("Q no unrelated Jira issues touched");
 
-const retry = await qualityApplyOp({
-  repo,
-  wp: WP,
+const retry = await applyQualityReview({
   provider,
-  confirmation: "YES",
+  repo,
+  workPackageId: WP,
   previewFingerprint: preview2.previewFingerprint,
+  syncQualityStore: async () => ({ ok: true }),
 });
 if (!retry.alreadyApplied && (await provider.getComments(wp.key)).length !== comments.length) {
   fail("Q: duplicate comment on retry");
@@ -233,29 +389,165 @@ seedRepo(failRepo, failWp.key, {
 const failPreview = await qualityApplyPreviewOp({ repo: failRepo, wp: WP, provider: failProvider });
 if (failPreview.plan.actions.some((a) => a.kind === "transition")) fail("O: FAILED preview proposed Done");
 if (failPreview.plan.bugsProposed !== 1) fail("O: missing bug proposal");
-const failApply = await qualityApplyOp({
-  repo: failRepo,
-  wp: WP,
+const failApply = await applyQualityReview({
   provider: failProvider,
-  confirmation: "YES",
+  repo: failRepo,
+  workPackageId: WP,
   previewFingerprint: failPreview.previewFingerprint,
+  syncQualityStore: async () => ({ ok: true }),
 });
 if (!failApply.ok) fail(`O: fail apply ${JSON.stringify(failApply)}`);
 if (failApply.bugsCreated.length !== 1) fail("O: bug not created");
 const failIssue = await failProvider.getIssue(failWp.key);
 if (failIssue.statusCategory === "done") fail("O: FAILED review moved to Done");
 const failPreview2 = await qualityApplyPreviewOp({ repo: failRepo, wp: WP, provider: failProvider });
-const failApply2 = await qualityApplyOp({
-  repo: failRepo,
-  wp: WP,
+const failApply2 = await applyQualityReview({
   provider: failProvider,
-  confirmation: "YES",
+  repo: failRepo,
+  workPackageId: WP,
   previewFingerprint: failPreview2.previewFingerprint,
+  syncQualityStore: async () => ({ ok: true }),
 });
 const bugs = [...failState.issues.values()].filter((i) => i.semanticType === "bug" || i.issueType === "Баг" || i.issueTypeId === "10012");
 if (bugs.length !== 1) fail(`P: bug dedupe ${bugs.length}`);
 if (bugs[0].issueTypeId !== "10012") fail("O: used display name as type id");
 proven.push("O-P failed review bugs / no Done / dedupe");
+
+{
+  const partState = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
+  const partProvider = createJiraProvider({
+    config: JIRA_CFG,
+    fetchImpl: createMockFetch(partState, { flavor: "cloud", projectKey: "PRX" }),
+  });
+  const partWp = await partProvider.createIssue({ summary: "partial", issueType: "Task" });
+  const partRepo = mkdtempSync(join(tmpdir(), "praxis-qapply-part-"));
+  write(partRepo, "src/counter.js", "export function reset() {\n  return 0;\n}\n");
+  const partDigest = fileDigest(partRepo);
+  seedRepo(partRepo, partWp.key, {
+    digest: partDigest,
+    snapshot: { digest: partDigest, files: [{ path: "src/counter.js" }] },
+  });
+  const partPreview = await qualityApplyPreviewOp({ repo: partRepo, wp: WP, provider: partProvider });
+  partState.transitionPostStatus = 400;
+  const part1 = await applyQualityReview({
+    provider: partProvider,
+    repo: partRepo,
+    workPackageId: WP,
+    previewFingerprint: partPreview.previewFingerprint,
+    syncQualityStore: async () => ({ ok: true }),
+  });
+  if (part1.ok) fail("I: transition failure returned full success");
+  if (!part1.partial) fail("I: expected partial");
+  if (part1.pending.every((id) => !id.includes("transition"))) fail("I: transition not pending");
+  partState.transitionPostStatus = 204;
+  const part2 = await applyQualityReview({
+    provider: partProvider,
+    repo: partRepo,
+    workPackageId: WP,
+    previewFingerprint: partPreview.previewFingerprint,
+    syncQualityStore: async () => ({ ok: true }),
+  });
+  if (!part2.ok) fail(`J: retry after partial failed ${JSON.stringify(part2)}`);
+  const partComments = await partProvider.getComments(partWp.key);
+  const part3 = await applyQualityReview({
+    provider: partProvider,
+    repo: partRepo,
+    workPackageId: WP,
+    previewFingerprint: partPreview.previewFingerprint,
+    syncQualityStore: async () => ({ ok: true }),
+  });
+  if (!part3.alreadyApplied) fail("K: expected alreadyApplied after Done");
+  if ((await partProvider.getComments(partWp.key)).length !== partComments.length) {
+    fail("K: duplicate comment after Done");
+  }
+  proven.push("I-K partial retry and Done idempotency");
+}
+
+{
+  const missWp = await provider.createIssue({ summary: "nomanifest", issueType: "Task" });
+  const missRepo = mkdtempSync(join(tmpdir(), "praxis-qapply-noman-"));
+  writeQualityEvidence(missRepo, {
+    reviewId: 15,
+    workPackageId: WP,
+    jiraWorkPackageKey: missWp.key,
+    verdict: "PASSED",
+    snapshot: { digest: "", files: [] },
+  });
+  const missPreview = await qualityApplyPreviewOp({ repo: missRepo, wp: WP, provider });
+  const missApply = await applyQualityReview({
+    provider,
+    repo: missRepo,
+    workPackageId: WP,
+    previewFingerprint: missPreview.previewFingerprint,
+    syncQualityStore: async () => ({ ok: true }),
+  });
+  if (missApply.ok) fail("L: missing manifest returned success");
+  if (missApply.code !== "QUALITY_MANIFEST_MISSING") fail(`L: ${missApply.code}`);
+  proven.push("L missing manifest not committed");
+}
+
+{
+  const sqlWp = await provider.createIssue({ summary: "sqlite", issueType: "Task" });
+  const sqlRepo = mkdtempSync(join(tmpdir(), "praxis-qapply-sql-"));
+  write(sqlRepo, "src/counter.js", "export function reset() {\n  return 0;\n}\n");
+  const sqlDigest = fileDigest(sqlRepo);
+  seedRepo(sqlRepo, sqlWp.key, {
+    digest: sqlDigest,
+    snapshot: { digest: sqlDigest, files: [{ path: "src/counter.js" }] },
+  });
+  const sqlPreview = await qualityApplyPreviewOp({ repo: sqlRepo, wp: WP, provider });
+  const sql1 = await applyQualityReview({
+    provider,
+    repo: sqlRepo,
+    workPackageId: WP,
+    previewFingerprint: sqlPreview.previewFingerprint,
+    syncQualityStore: async () => ({ ok: false, reason: "unavailable" }),
+  });
+  if (sql1.ok) fail("M: sqlite failure returned success");
+  if (sql1.qualityStoreReconciled) fail("M: claimed sqlite reconciled");
+  const sql2 = await applyQualityReview({
+    provider,
+    repo: sqlRepo,
+    workPackageId: WP,
+    previewFingerprint: sqlPreview.previewFingerprint,
+    syncQualityStore: async () => ({ ok: true }),
+  });
+  if (!sql2.ok) fail(`M: sqlite retry ${JSON.stringify(sql2)}`);
+  proven.push("M sqlite sync pending then retry");
+}
+
+{
+  const { callTool } = await import("../../packages/mcp/dist/tools.js");
+  const nState = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
+  const nProvider = createJiraProvider({
+    config: JIRA_CFG,
+    fetchImpl: createMockFetch(nState, { flavor: "cloud", projectKey: "PRX" }),
+  });
+  const nWp = await nProvider.createIssue({ summary: "mcp-partial", issueType: "Task" });
+  const nRepo = mkdtempSync(join(tmpdir(), "praxis-qapply-mcpn-"));
+  write(nRepo, "src/counter.js", "export function reset() {\n  return 0;\n}\n");
+  const nDigest = fileDigest(nRepo);
+  seedRepo(nRepo, nWp.key, {
+    digest: nDigest,
+    snapshot: { digest: nDigest, files: [{ path: "src/counter.js" }] },
+  });
+  const nPreview = await qualityApplyPreviewOp({ repo: nRepo, wp: WP, provider: nProvider });
+  nState.transitionPostStatus = 400;
+  const nEnv = await callTool(
+    "praxis_quality_apply",
+    {
+      workPackage: WP,
+      repo: nRepo,
+      confirmation: "YES",
+      previewFingerprint: nPreview.previewFingerprint,
+    },
+    { role: "runtime", version, extra: { provider: nProvider } },
+  );
+  if (nEnv.ok !== false) fail(`N: MCP envelope ok=${nEnv.ok} ${JSON.stringify(nEnv)}`);
+  if (nEnv.data?.ok !== false) fail(`N: data.ok not false ${JSON.stringify(nEnv)}`);
+  proven.push("N MCP outer result reflects incomplete Apply");
+}
+
 if (process.env.PRAXIS_SKIP_MCPB === "1") {
   console.log(`PASS quality-apply ${proven.join("; ")} (MCPB skipped)`);
   process.exit(0);

@@ -437,6 +437,7 @@ describe("jira workflow orchestration", () => {
       repo,
       workPackageId: "WP-20260914-002",
       previewFingerprint: preview.previewFingerprint,
+      syncQualityStore: async () => ({ ok: true }),
     });
     expect(applied.ok).toBe(true);
     expect(applied.bugsCreated).toHaveLength(1);
@@ -450,6 +451,7 @@ describe("jira workflow orchestration", () => {
       repo,
       workPackageId: "WP-20260914-002",
       previewFingerprint: preview2.previewFingerprint,
+      syncQualityStore: async () => ({ ok: true }),
     });
     expect(again.bugsCreated.length + applied.bugsCreated.length).toBeGreaterThanOrEqual(1);
     const bugs = await provider.searchIssues("issuetype = Bug AND project = PRX");
