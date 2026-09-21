@@ -443,7 +443,7 @@ async function existingBugKey(
   return undefined;
 }
 
-function readApplied(repo: string, workPackageId: string): QualityApplyResult | undefined {
+export function readQualityApplyResult(repo: string, workPackageId: string): QualityApplyResult | undefined {
   const p = qualityApplyResultPath(repo, workPackageId);
   if (!existsSync(p)) return undefined;
   try {
@@ -635,7 +635,7 @@ export async function applyQualityReview(opts: {
     transitionCommitted,
   });
 
-  const prior = readApplied(opts.repo, opts.workPackageId);
+  const prior = readQualityApplyResult(opts.repo, opts.workPackageId);
   if (
     prior?.ok &&
     prior.reviewId === evidence.reviewId &&

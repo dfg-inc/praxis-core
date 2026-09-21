@@ -60,6 +60,8 @@ const ROLE_FORBIDDEN_TOOLS = {
     "praxis_quality_review",
     "praxis_quality_apply_preview",
     "praxis_quality_apply",
+    "praxis_quality_apply_status",
+    "praxis_quality_review_show",
     "praxis_quality_ensure",
     "praxis_work_package_list",
     "praxis_work_package_show",
@@ -72,6 +74,8 @@ const ROLE_FORBIDDEN_TOOLS = {
     "praxis_quality_review",
     "praxis_quality_apply_preview",
     "praxis_quality_apply",
+    "praxis_quality_apply_status",
+    "praxis_quality_review_show",
     "praxis_quality_ensure",
   ],
   developer: [
@@ -82,6 +86,8 @@ const ROLE_FORBIDDEN_TOOLS = {
     "praxis_quality_review",
     "praxis_quality_apply_preview",
     "praxis_quality_apply",
+    "praxis_quality_apply_status",
+    "praxis_quality_review_show",
     "praxis_quality_ensure",
   ],
   quality: [

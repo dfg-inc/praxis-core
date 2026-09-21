@@ -27,9 +27,13 @@ import {
   previewQualityApply,
   applyQualityReview,
   QualityApplyError,
+  collectQualityLifecycleSnapshot,
+  inspectQualityComments,
   type DeveloperCompleteResult,
   type CompleteRecoveryPreview,
   type QualityApplyResult,
+  type QualityLifecycleSnapshot,
+  type QualityCommentReadback,
 } from "@praxis/jira/workflow";
 
 export const OP_CODES = {
@@ -704,7 +708,7 @@ export async function workPackageShowOp(ctx: OpContext): Promise<{
   };
 }
 
-export async function developerStatusOp(ctx: OpContext) {
+export async function developerStatusOp(ctx: OpContext): Promise<Record<string, unknown>> {
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer status requires workPackage");
   }
@@ -712,39 +716,63 @@ export async function developerStatusOp(ctx: OpContext) {
   const repo = requireRepo(ctx.repo);
   const local = resolveLocalWorkPackage(repo, wp);
   const jiraIssueKey = resolveRemoteWpKey(repo, wp);
+  const wpId = local?.id ?? wp;
+  const inspection = inspectDeveloperCompletion(repo, wpId);
+  const qualityInputs = discoverQualityInputs(repo, wpId);
   const base = {
     wp,
     local: local?.id,
     jiraIssueKey,
+    implementationState: inspection.implementationState ?? null,
+    readyForQuality: inspection.readyForQuality === true,
+    hasCompletionEvidence: inspection.hasEvidence,
+    hasQualityHandoff: inspection.hasHandoff,
+    evidencePath: inspection.hasEvidence ? inspection.evidencePath : undefined,
+    qualityHandoffPath: inspection.hasHandoff ? inspection.qualityHandoffPath : undefined,
+    qualityInputs,
   };
-  if (!ctx.provider && !jiraConfigured()) return base;
-  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(jiraIssueKey)) return base;
+  const attachLifecycle = async (provider?: Parameters<typeof collectQualityLifecycleSnapshot>[0]["provider"]) => {
+    const lifecycle = await collectQualityLifecycleSnapshot({
+      provider,
+      repo,
+      workPackageId: wpId,
+      jiraIssueKey,
+    });
+    return {
+      ...base,
+      qualityState: lifecycle.qualityState,
+      appliedReviewId: lifecycle.appliedReviewId,
+      reviewId: lifecycle.reviewId,
+      claimState: lifecycle.claimState,
+      jiraStatus: lifecycle.jiraStatus ?? null,
+      jiraStatusCategory: lifecycle.jiraStatusCategory ?? null,
+      qualityConsistency: lifecycle.overallConsistency,
+      qualitySources: lifecycle.sources,
+      qualityDiagnostics: lifecycle.consistency,
+    };
+  };
+  if (!ctx.provider && !jiraConfigured()) {
+    return attachLifecycle();
+  }
+  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(jiraIssueKey)) {
+    return attachLifecycle();
+  }
   return withProvider({ ...ctx, repo }, async (p) => {
     const issue = await p.getIssue(jiraIssueKey);
     const available = parseJiraTransitions({
       transitions: await p.getTransitions(jiraIssueKey),
     });
     const claim = await p.getIssueProperty(jiraIssueKey, "praxis.claim");
-    const wpId = local?.id ?? wp;
-    const inspection = inspectDeveloperCompletion(repo, wpId);
-    const qualityInputs = discoverQualityInputs(repo, wpId);
+    const lifecycle = await attachLifecycle(p);
     return {
-      ...base,
+      ...lifecycle,
       jiraStatus: issue.status,
       jiraStatusCategory: issue.statusCategory,
       claim: claim ?? null,
       claimState:
         claim && typeof claim === "object" && "state" in claim
           ? (claim as { state?: string }).state
-          : null,
-      implementationState: inspection.implementationState ?? null,
-      readyForQuality: inspection.readyForQuality === true,
-      qualityState: inspection.localStatus === "ready-for-qa" ? "pending" : null,
-      hasCompletionEvidence: inspection.hasEvidence,
-      hasQualityHandoff: inspection.hasHandoff,
-      evidencePath: inspection.hasEvidence ? inspection.evidencePath : undefined,
-      qualityHandoffPath: inspection.hasHandoff ? inspection.qualityHandoffPath : undefined,
-      qualityInputs,
+          : lifecycle.claimState,
       availableTransitions: available.map((t) => ({
         id: t.id,
         name: t.name,
@@ -853,8 +881,82 @@ export async function qualityStatusOp(ctx: OpContext) {
   if (!ctx.wp) return health;
   const { qualityReviewStatus } = await import("./quality-lifecycle.js");
   const local = resolveLocalWorkPackage(repo, ctx.wp);
-  const review = qualityReviewStatus(repo, local?.id ?? ctx.wp);
-  return { ...health, workPackage: local?.id ?? ctx.wp, review };
+  const workPackageId = local?.id ?? ctx.wp;
+  const review = qualityReviewStatus(repo, workPackageId);
+  const load = async (provider?: Parameters<typeof collectQualityLifecycleSnapshot>[0]["provider"]) => {
+    const lifecycle = await collectQualityLifecycleSnapshot({
+      provider,
+      repo,
+      workPackageId,
+      jiraIssueKey: resolveRemoteWpKey(repo, workPackageId),
+    });
+    return {
+      ...health,
+      workPackage: workPackageId,
+      review,
+      qualityState: lifecycle.qualityState,
+      appliedReviewId: lifecycle.appliedReviewId,
+      jiraStatus: lifecycle.jiraStatus ?? null,
+      jiraStatusCategory: lifecycle.jiraStatusCategory ?? null,
+      qualityConsistency: lifecycle.overallConsistency,
+      qualityDiagnostics: lifecycle.consistency,
+    };
+  };
+  if (!ctx.provider && !jiraConfigured()) return load();
+  const jiraIssueKey = resolveRemoteWpKey(repo, workPackageId);
+  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(jiraIssueKey)) return load();
+  return withProvider({ ...ctx, repo }, (p) => load(p));
+}
+
+export async function qualityApplyStatusOp(
+  ctx: OpContext,
+): Promise<QualityLifecycleSnapshot & { ok: boolean; comments?: QualityCommentReadback; jiraMutated: boolean }> {
+  if (!ctx.wp) {
+    throw new PraxisOpError(OP_CODES.INVALID_INPUT, "quality apply status requires workPackage");
+  }
+  const repo = requireRepo(ctx.repo);
+  const local = resolveLocalWorkPackage(repo, ctx.wp);
+  const workPackageId = local?.id ?? ctx.wp;
+  const run = async (provider?: Parameters<typeof collectQualityLifecycleSnapshot>[0]["provider"]) => {
+    const lifecycle = await collectQualityLifecycleSnapshot({
+      provider,
+      repo,
+      workPackageId,
+      jiraIssueKey: resolveRemoteWpKey(repo, workPackageId),
+    });
+    let comments: Awaited<ReturnType<typeof inspectQualityComments>> | undefined;
+    if (provider && lifecycle.jiraWorkPackageKey && lifecycle.reviewId != null) {
+      comments = await inspectQualityComments({
+        provider,
+        issueKey: lifecycle.jiraWorkPackageKey,
+        reviewId: lifecycle.reviewId,
+      });
+    }
+    return {
+      ok: lifecycle.overallConsistency === "consistent" && lifecycle.applyPartial !== true,
+      ...lifecycle,
+      comments,
+      jiraMutated: false,
+    };
+  };
+  if (!ctx.provider && !jiraConfigured()) return run();
+  const jiraIssueKey = resolveRemoteWpKey(repo, workPackageId);
+  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(jiraIssueKey)) return run();
+  return withProvider({ ...ctx, repo }, (p) => run(p));
+}
+
+export async function qualityReviewShowOp(ctx: OpContext) {
+  if (!ctx.wp) {
+    throw new PraxisOpError(OP_CODES.INVALID_INPUT, "quality review show requires workPackage");
+  }
+  if (ctx.reviewId == null) {
+    throw new PraxisOpError(OP_CODES.INVALID_INPUT, "quality review show requires reviewId");
+  }
+  const repo = requireRepo(ctx.repo);
+  const local = resolveLocalWorkPackage(repo, ctx.wp);
+  const workPackageId = local?.id ?? ctx.wp;
+  const { fetchQualityReview } = await import("./quality-lifecycle.js");
+  return fetchQualityReview({ repo, workPackageId, reviewId: ctx.reviewId });
 }
 
 export async function qualityEnsureOp(ctx: OpContext) {

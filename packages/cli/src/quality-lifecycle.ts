@@ -172,6 +172,78 @@ export async function markQualityReviewApplied(opts: {
   return { ok: true };
 }
 
+async function getJson(url: string): Promise<{ status: number; json: Record<string, unknown> }> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  let json: Record<string, unknown> = {};
+  try {
+    json = (await res.json()) as Record<string, unknown>;
+  } catch {
+    json = { error: "invalid_json", message: `non-JSON response from ${url}` };
+  }
+  return { status: res.status, json };
+}
+
+export async function fetchQualityReview(opts: {
+  repo: string;
+  workPackageId: string;
+  reviewId: number;
+}): Promise<Record<string, unknown>> {
+  const { probeQuality } = await import("./quality-ensure.js");
+  const override = process.env.PRAXIS_QUALITY_URL;
+  const probe = override
+    ? { status: "healthy" as const, url: qualityApiBase(override), sqliteBackend: undefined, logPath: undefined }
+    : await probeQuality({ repo: opts.repo });
+  if (probe.status !== "healthy") {
+    return {
+      ok: false,
+      code: "QUALITY_RUNTIME_UNREACHABLE",
+      status: probe.status,
+      workPackageId: opts.workPackageId,
+      reviewId: opts.reviewId,
+      storageBackend: "sqliteBackend" in probe ? probe.sqliteBackend : undefined,
+      storageSource: probe.url,
+      logPath: probe.logPath,
+    };
+  }
+  const url = `${qualityApiBase(probe.url)}/reviews/${opts.reviewId}`;
+  const { status, json } = await getJson(url);
+  if (status === 404) {
+    return {
+      ok: false,
+      code: "QUALITY_REVIEW_MISSING",
+      workPackageId: opts.workPackageId,
+      reviewId: opts.reviewId,
+      storageBackend: probe.sqliteBackend,
+      storageSource: url,
+    };
+  }
+  if (status >= 400) {
+    throw new QualityReviewTransportError(
+      String(json.error ?? "EXTERNAL_SERVICE_ERROR"),
+      String(json.message ?? "Quality Review lookup failed"),
+      { ...json, qualityServiceUrl: url },
+      status,
+    );
+  }
+  const appliedRaw = json.applied;
+  const appliedObj = appliedRaw && typeof appliedRaw === "object" ? (appliedRaw as Record<string, unknown>) : undefined;
+  const appliedAt = typeof appliedObj?.at === "string" ? appliedObj.at : undefined;
+  return {
+    ok: true,
+    workPackageId: json.workPackageId ?? opts.workPackageId,
+    jiraWorkPackageKey: json.jiraWorkPackageKey,
+    reviewId: json.reviewId ?? opts.reviewId,
+    verdict: json.verdict,
+    acceptanceSummary: json.acceptanceChecks ?? json.acceptance,
+    verificationSummary: json.verification,
+    applied: Boolean(appliedRaw),
+    appliedAt,
+    storageBackend: probe.sqliteBackend,
+    storageSource: url,
+    requestedWorkPackageId: opts.workPackageId,
+  };
+}
+
 export function qualityReviewStatus(repo: string, workPackageId: string): {
   latestReviewId?: number;
   verdict?: string;

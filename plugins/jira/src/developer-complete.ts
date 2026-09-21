@@ -193,6 +193,7 @@ export function inspectDeveloperCompletion(repo: string, workPackageId: string) 
     hasHandoff: Boolean(handoff),
     localClaim: (local?.claim as WorkPackageClaim | null | undefined) ?? null,
     localStatus: local?.status,
+    localQualityState: typeof local?.qualityState === "string" ? local.qualityState : undefined,
     implementationState: local?.implementationState ?? evidence?.implementationStatus,
     readyForQuality: local?.readyForQuality === true || evidence?.readyForQuality === true,
   };

@@ -331,7 +331,18 @@ export function createMockFetch(
       const issue = findStored(state, key);
       if (method === "GET" && rest.startsWith("/comment")) {
         if (!issue) return notFound();
-        return json({ comments: issue.comments });
+        const startAt = Number(url.searchParams.get("startAt") ?? 0);
+        const maxResults = Number(url.searchParams.get("maxResults") ?? issue.comments.length);
+        const slice = issue.comments.slice(
+          Number.isFinite(startAt) ? startAt : 0,
+          (Number.isFinite(startAt) ? startAt : 0) + (Number.isFinite(maxResults) ? maxResults : issue.comments.length),
+        );
+        return json({
+          comments: slice,
+          startAt: Number.isFinite(startAt) ? startAt : 0,
+          maxResults: slice.length,
+          total: issue.comments.length,
+        });
       }
       if (method === "POST" && rest.startsWith("/comment") && rest === "/comment") {
         if (!issue) return notFound();
@@ -1037,11 +1048,26 @@ export class RestJiraProvider implements JiraProvider {
   }
 
   async getComments(key: string): Promise<JiraComment[]> {
-    const raw = await this.requestJson<{ comments: JiraComment[] }>(
-      "GET",
-      `${this.apiPrefix()}/issue/${encodeURIComponent(key)}/comment`,
-    );
-    return raw.comments ?? [];
+    const all: JiraComment[] = [];
+    let startAt = 0;
+    const pageSize = 100;
+    for (let i = 0; i < 100; i += 1) {
+      const raw = await this.requestJson<{
+        comments?: JiraComment[];
+        startAt?: number;
+        maxResults?: number;
+        total?: number;
+      }>(
+        "GET",
+        `${this.apiPrefix()}/issue/${encodeURIComponent(key)}/comment?startAt=${startAt}&maxResults=${pageSize}`,
+      );
+      const batch = raw.comments ?? [];
+      all.push(...batch);
+      const total = raw.total ?? all.length;
+      if (batch.length === 0 || all.length >= total || batch.length < pageSize) break;
+      startAt += batch.length;
+    }
+    return all;
   }
 
   async addAttachment(

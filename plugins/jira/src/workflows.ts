@@ -922,10 +922,21 @@ export {
   liveSnapshotDigest,
   qualityEvidencePath,
   qualityApplyFingerprint,
+  readQualityApplyResult,
   QUALITY_COMMENT_MARK,
   QUALITY_APPLIED_REVIEW_PROP,
+  QUALITY_COMMENT_PROP,
   QualityApplyError,
 } from "./quality-apply.js";
+export {
+  collectQualityLifecycleSnapshot,
+  inspectQualityComments,
+  resolveCanonicalQualityState,
+} from "./quality-lifecycle-status.js";
+export type {
+  QualityLifecycleSnapshot,
+  QualityCommentReadback,
+} from "./quality-lifecycle-status.js";
 export type {
   QualityApplyPlan,
   QualityApplyAction,
