@@ -71,6 +71,9 @@ const previous = {
   url: process.env.PRAXIS_QUALITY_URL,
   timeout: process.env.PRAXIS_QUALITY_STARTUP_TIMEOUT_MS,
   sqlite: process.env.PRAXIS_QUALITY_SQLITE,
+  simulated: process.env.PRAXIS_QUALITY_SIMULATED_EXEC_PATH,
+  qualityNode: process.env.PRAXIS_QUALITY_NODE,
+  db: process.env.PRAXIS_QUALITY_DB,
 };
 
 function restoreEnv() {
@@ -80,6 +83,9 @@ function restoreEnv() {
     PRAXIS_QUALITY_URL: previous.url,
     PRAXIS_QUALITY_STARTUP_TIMEOUT_MS: previous.timeout,
     PRAXIS_QUALITY_SQLITE: previous.sqlite,
+    PRAXIS_QUALITY_SIMULATED_EXEC_PATH: previous.simulated,
+    PRAXIS_QUALITY_NODE: previous.qualityNode,
+    PRAXIS_QUALITY_DB: previous.db,
   })) {
     if (val === undefined) delete process.env[key];
     else process.env[key] = val;
@@ -237,6 +243,57 @@ describe("quality ensure", { timeout: 20_000 }, () => {
     expect(health.ok).toBe(true);
     const body = (await health.json()) as { sqliteEngine?: string };
     expect(body.sqliteEngine).toBe("sqljs");
+    expect(first.sqliteBackend).toBe("sqljs");
     expect(existsSync(join(repo, ".praxis-quality", "quality.sqlite"))).toBe(true);
+  });
+
+  it("selects a worker runtime for Claude Helper (Plugin) execPath", async () => {
+    const { isElectronHelperExecutable, resolveQualityChildRuntime } = await import("./quality-ensure.js");
+    const helper =
+      "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Plugin).app/Contents/MacOS/Claude Helper (Plugin)";
+    expect(isElectronHelperExecutable(helper)).toBe(true);
+    expect(isElectronHelperExecutable(process.execPath)).toBe(false);
+    process.env.PRAXIS_QUALITY_SIMULATED_EXEC_PATH = helper;
+    const runtime = resolveQualityChildRuntime();
+    expect(runtime.mode).toBe("worker");
+    expect(runtime.execPath).toBe(process.execPath);
+    expect(runtime.parent.execPath).toBe(helper);
+  });
+
+  it("starts Quality as a worker when the parent executable is an Electron helper", async () => {
+    const repo = tmpRepo();
+    repos.push(repo);
+    const port = await freePort();
+    process.env.PRAXIS_QUALITY_PORT = String(port);
+    process.env.PRAXIS_QUALITY_SIMULATED_EXEC_PATH =
+      "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Plugin).app/Contents/MacOS/Claude Helper (Plugin)";
+    delete process.env.PRAXIS_QUALITY_ENTRY;
+    const first = await ensureQuality({ repo });
+    expect(["started", "healthy"]).toContain(first.status);
+    expect(first.runtimeMode).toBe("worker");
+    expect(first.pid).toBe(process.pid);
+    const health = await fetch(first.url);
+    expect(health.ok).toBe(true);
+    expect(existsSync(join(repo, ".praxis-quality", "quality.sqlite"))).toBe(true);
+    const second = await ensureQuality({ repo });
+    expect(second.reused).toBe(true);
+    expect(second.pid).toBe(first.pid);
+  });
+
+  it("captures async spawn errors instead of missing pid", async () => {
+    const repo = tmpRepo();
+    repos.push(repo);
+    process.env.PRAXIS_QUALITY_PORT = String(await freePort());
+    process.env.PRAXIS_QUALITY_NODE = join(repo, "missing-node-binary");
+    try {
+      await ensureQuality({ repo });
+      throw new Error("expected missing node executable to fail");
+    } catch (err) {
+      expect(err).toBeInstanceOf(QualityStartupError);
+      const qerr = err as QualityStartupError;
+      expect(qerr.code).toBe(QUALITY_CODES.QUALITY_EXECUTABLE_NOT_FOUND);
+      expect(qerr.details.spawnErrorCode).toBe("ENOENT");
+      expect(String(qerr.message)).not.toMatch(/did not return a pid/i);
+    }
   });
 });

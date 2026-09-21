@@ -1,6 +1,8 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { Worker } from "node:worker_threads";
 import {
   closeSync,
+  createWriteStream,
   existsSync,
   mkdirSync,
   openSync,
@@ -29,6 +31,9 @@ export const QUALITY_CODES = {
   QUALITY_SQLITE_UNAVAILABLE: "QUALITY_SQLITE_UNAVAILABLE",
   QUALITY_SQLITE_MODULE_LOAD_FAILED: "QUALITY_SQLITE_MODULE_LOAD_FAILED",
   QUALITY_CHILD_RUNTIME_MISMATCH: "QUALITY_CHILD_RUNTIME_MISMATCH",
+  QUALITY_SPAWN_FAILED: "QUALITY_SPAWN_FAILED",
+  QUALITY_EXECUTABLE_NOT_FOUND: "QUALITY_EXECUTABLE_NOT_FOUND",
+  QUALITY_EXECUTABLE_NOT_PERMITTED: "QUALITY_EXECUTABLE_NOT_PERMITTED",
 } as const;
 
 export type QualityErrorCode = (typeof QUALITY_CODES)[keyof typeof QUALITY_CODES];
@@ -50,6 +55,8 @@ export type QualityEnsureResult = {
   executable?: string;
   cwd?: string;
   port?: number;
+  runtimeMode?: "process" | "worker";
+  sqliteBackend?: string;
 };
 
 type QualityStateFile = {
@@ -59,6 +66,7 @@ type QualityStateFile = {
   db?: string;
   allowedRoot?: string;
   startedAt?: string;
+  runtimeMode?: "process" | "worker";
 };
 
 type HealthBody = {
@@ -87,7 +95,10 @@ export type NodeRuntimeProbe = {
   spawnError?: string;
 };
 
+export type QualityRuntimeMode = "process" | "worker";
+
 export type QualityChildRuntime = {
+  mode: QualityRuntimeMode;
   execPath: string;
   extraArgs: string[];
   extraEnv: Record<string, string>;
@@ -96,6 +107,7 @@ export type QualityChildRuntime = {
 };
 
 const inFlight = new Map<string, Promise<QualityEnsureResult>>();
+const workers = new Map<string, Worker>();
 
 export class QualityStartupError extends Error {
   readonly code: QualityErrorCode;
@@ -149,6 +161,102 @@ function looksLikeElectronBinary(execPath: string, electronVersion?: string): bo
     base.includes("claude") ||
     /claude\.app\/contents\/macos\//i.test(execPath)
   );
+}
+
+export function isNodeCliExecutable(execPath: string): boolean {
+  const base = basename(execPath).replace(/\.exe$/i, "").toLowerCase();
+  return base === "node" || base === "nodejs";
+}
+
+export function isElectronHelperExecutable(execPath: string): boolean {
+  const normalized = execPath.replace(/\\/g, "/");
+  if (/Helper[^/]*\.app\/Contents\/MacOS\//i.test(normalized)) return true;
+  if (/\/Contents\/Frameworks\/[^/]*Helper/i.test(normalized)) return true;
+  if (looksLikeElectronBinary(execPath, process.versions.electron) && !isNodeCliExecutable(execPath)) {
+    return true;
+  }
+  return false;
+}
+
+export function parentExecPath(): string {
+  const simulated = process.env.PRAXIS_QUALITY_SIMULATED_EXEC_PATH;
+  if (simulated && simulated.trim()) return simulated;
+  return process.execPath;
+}
+
+export type SpawnWaitResult = {
+  spawned: boolean;
+  pid?: number;
+  exitCode?: number | null;
+  exitSignal?: NodeJS.Signals | null;
+  error?: NodeJS.ErrnoException;
+};
+
+export function spawnErrorFields(err: NodeJS.ErrnoException | undefined): Record<string, unknown> {
+  if (!err) return {};
+  const extra = err as NodeJS.ErrnoException & { spawnargs?: string[] };
+  return {
+    spawnErrorCode: extra.code,
+    spawnErrno: extra.errno,
+    spawnSyscall: extra.syscall,
+    spawnPath: extra.path ? safeErrorMessage(extra.path) : undefined,
+    spawnArgs: Array.isArray(extra.spawnargs)
+      ? extra.spawnargs.map((arg) => safeErrorMessage(arg))
+      : undefined,
+    spawnErrorMessage: safeErrorMessage(extra.message),
+  };
+}
+
+export function classifySpawnFailure(err: NodeJS.ErrnoException | undefined): QualityErrorCode {
+  const code = err?.code;
+  if (code === "ENOENT") return QUALITY_CODES.QUALITY_EXECUTABLE_NOT_FOUND;
+  if (code === "EACCES" || code === "EPERM") return QUALITY_CODES.QUALITY_EXECUTABLE_NOT_PERMITTED;
+  return QUALITY_CODES.QUALITY_SPAWN_FAILED;
+}
+
+export function waitForChildStart(child: ChildProcess, timeoutMs = 1500): Promise<SpawnWaitResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: SpawnWaitResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("spawn", onSpawn);
+      child.off("error", onError);
+      child.off("exit", onExit);
+      resolve(result);
+    };
+    const onSpawn = () => finish({ spawned: true, pid: child.pid });
+    const onError = (err: NodeJS.ErrnoException) =>
+      finish({ spawned: false, pid: child.pid, error: err });
+    const onExit = (exitCode: number | null, exitSignal: NodeJS.Signals | null) =>
+      finish({
+        spawned: Boolean(child.pid),
+        pid: child.pid,
+        exitCode,
+        exitSignal,
+      });
+    const timer = setTimeout(() => {
+      if (child.pid && child.exitCode === null) {
+        finish({ spawned: true, pid: child.pid });
+        return;
+      }
+      const err = Object.assign(new Error("Quality child spawn timed out before pid/error"), {
+        code: "ETIMEDOUT",
+      }) as NodeJS.ErrnoException;
+      finish({ spawned: false, pid: child.pid, error: err });
+    }, timeoutMs);
+    child.once("spawn", onSpawn);
+    child.once("error", onError);
+    child.once("exit", onExit);
+    if (child.pid && child.exitCode === null) {
+      queueMicrotask(() => {
+        if (!settled && child.pid && child.exitCode === null) {
+          finish({ spawned: true, pid: child.pid });
+        }
+      });
+    }
+  });
 }
 
 function repoKey(repo: string): string {
@@ -248,7 +356,28 @@ function killPid(pid: number): void {
 }
 
 export function stopQuality(repo: string): void {
+  const key = repoKey(repo);
   const state = readState(repo);
+  const worker = workers.get(key);
+  if (worker || state?.runtimeMode === "worker") {
+    const port = state?.port ?? configuredPort();
+    const url = `http://127.0.0.1:${port}/shutdown`;
+    void fetch(url, { method: "POST", signal: AbortSignal.timeout(400) }).catch(() => undefined);
+    const started = Date.now();
+    while (Date.now() - started < 250) {
+      const wait = new Int32Array(new SharedArrayBuffer(4));
+      Atomics.wait(wait, 0, 0, 50);
+    }
+    if (worker) {
+      try {
+        void worker.terminate();
+      } catch {
+        /* ignore */
+      }
+      workers.delete(key);
+    }
+    return;
+  }
   const pid = state?.pid;
   if (pid && isAlive(pid)) killPid(pid);
   const started = Date.now();
@@ -456,27 +585,53 @@ export function classifySqliteProbeError(probe: NodeRuntimeProbe): QualityErrorC
 }
 
 export function resolveQualityChildRuntime(): QualityChildRuntime {
-  const parent = probeSqliteInProcess();
+  const observedParent = parentExecPath();
+  const parentProbe = probeSqliteInProcess();
+  const parent: NodeRuntimeProbe = { ...parentProbe, execPath: observedParent };
   const extraArgs: string[] = [];
   const extraEnv: Record<string, string> = {};
-  const override = process.env.PRAXIS_QUALITY_NODE;
-  let execPath = override && override.trim() ? override : process.execPath;
+  const override = process.env.PRAXIS_QUALITY_NODE?.trim();
 
-  if (process.versions.electron || looksLikeElectronBinary(execPath, process.versions.electron)) {
+  if (override) {
+    if (isElectronHelperExecutable(override) || looksLikeElectronBinary(override)) {
+      extraEnv.ELECTRON_RUN_AS_NODE = "1";
+    }
+    const child = probeSqliteWithExecutable(override, extraEnv, extraArgs);
+    return { mode: "process", execPath: override, extraArgs, extraEnv, parent, child };
+  }
+
+  if (isElectronHelperExecutable(observedParent)) {
+    qlog(
+      `quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${basename(observedParent)}`,
+    );
+    return {
+      mode: "worker",
+      execPath: process.execPath,
+      extraArgs,
+      extraEnv,
+      parent,
+      child: {
+        ...parentProbe,
+        execPath: process.execPath,
+      },
+    };
+  }
+
+  if (process.versions.electron && !isNodeCliExecutable(process.execPath)) {
     extraEnv.ELECTRON_RUN_AS_NODE = "1";
   }
 
-  let child = probeSqliteWithExecutable(execPath, extraEnv, extraArgs);
-  if (
-    child.moduleLoad !== "success" &&
-    !override &&
-    looksLikeElectronBinary(execPath, process.versions.electron || child.electron)
-  ) {
-    extraEnv.ELECTRON_RUN_AS_NODE = "1";
-    child = probeSqliteWithExecutable(execPath, extraEnv, extraArgs);
-  }
-
-  return { execPath, extraArgs, extraEnv, parent, child };
+  const child = isNodeCliExecutable(process.execPath)
+    ? probeSqliteWithExecutable(process.execPath, extraEnv, extraArgs)
+    : parentProbe;
+  return {
+    mode: "process",
+    execPath: process.execPath,
+    extraArgs,
+    extraEnv,
+    parent,
+    child,
+  };
 }
 
 function portListening(port: number): Promise<boolean> {
@@ -491,6 +646,73 @@ function portListening(port: number): Promise<boolean> {
       resolvePromise(false);
     });
   });
+}
+
+function waitForWorkerStart(worker: Worker, timeoutMs = 1500): Promise<SpawnWaitResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: SpawnWaitResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      worker.off("online", onOnline);
+      worker.off("error", onError);
+      worker.off("exit", onExit);
+      resolve(result);
+    };
+    const onOnline = () => finish({ spawned: true, pid: process.pid });
+    const onError = (err: Error) =>
+      finish({ spawned: false, pid: process.pid, error: err as NodeJS.ErrnoException });
+    const onExit = (exitCode: number) =>
+      finish({ spawned: Boolean(process.pid), pid: process.pid, exitCode });
+    const timer = setTimeout(() => {
+      finish({ spawned: true, pid: process.pid });
+    }, timeoutMs);
+    worker.once("online", onOnline);
+    worker.once("error", onError);
+    worker.once("exit", onExit);
+  });
+}
+
+function startQualityWorker(opts: {
+  repo: string;
+  entry: string;
+  logPath: string;
+  env: NodeJS.ProcessEnv;
+}): Worker {
+  const key = repoKey(opts.repo);
+  const existing = workers.get(key);
+  if (existing) {
+    try {
+      void existing.terminate();
+    } catch {
+      /* ignore */
+    }
+    workers.delete(key);
+  }
+  mkdirSync(dirname(opts.logPath), { recursive: true });
+  const log = createWriteStream(opts.logPath, { flags: "a" });
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, val] of Object.entries(opts.env)) {
+    if (val !== undefined) env[key] = val;
+  }
+  const worker = new Worker(opts.entry, {
+    stdout: true,
+    stderr: true,
+    execArgv: [],
+    env,
+  });
+  worker.stdout?.on("data", (chunk: Buffer) => log.write(chunk));
+  worker.stderr?.on("data", (chunk: Buffer) => log.write(chunk));
+  worker.on("exit", () => {
+    log.end();
+    if (workers.get(key) === worker) workers.delete(key);
+  });
+  worker.on("error", (err) => {
+    qlog(`quality.worker error ${safeErrorMessage(err)}`);
+  });
+  workers.set(key, worker);
+  return worker;
 }
 
 function fail(
@@ -532,6 +754,8 @@ export async function probeQuality(opts: { repo: string }): Promise<QualityEnsur
       reused: true,
       logPath,
       port,
+      runtimeMode: state?.runtimeMode,
+      sqliteBackend: health.sqliteEngine ?? undefined,
     };
   }
   if (state?.pid && !isAlive(state.pid)) {
@@ -625,6 +849,7 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
 
   const diagnosticDetails = {
     executable,
+    qualityEntry: executable,
     logPath,
     nodeVersion: runtime.child.version || runtime.parent.version,
     nodeExecutable: runtime.execPath,
@@ -633,7 +858,9 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
     moduleLoad: runtime.child.moduleLoad,
     moduleLoadErrorCode: runtime.child.errorCode,
     sqlitePreflightStage: "quality.sqlite.preflight",
+    runtimeMode: runtime.mode,
     spawned: false,
+    qualityHealthStatus: probe.status,
   };
 
   const port = configuredPort();
@@ -648,6 +875,7 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
         db,
         allowedRoot: repo,
         startedAt: new Date().toISOString(),
+        runtimeMode: runtime.mode,
       });
       qlog(`quality.ensure.done durationMs=${Date.now() - t0} reused=true`);
       return {
@@ -661,6 +889,8 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
         executable,
         cwd: repo,
         port,
+        runtimeMode: runtime.mode,
+        sqliteBackend: occupant.sqliteEngine ?? undefined,
       };
     }
     fail(
@@ -676,57 +906,151 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
   qlog(`cwd resolved path=${repo}`);
   qlog(`db path resolved path=${db}`);
 
-  const env: NodeJS.ProcessEnv = { ...process.env, ...runtime.extraEnv };
-  delete env.PORT;
-  env.PRAXIS_QUALITY_PORT = String(port);
-  env.PRAXIS_QUALITY_DB = db;
-  env.PRAXIS_QUALITY_ALLOWED_ROOT = repo;
-  env.PRAXIS_QUALITY_HOST = "127.0.0.1";
-
-  const logFd = openSync(logPath, "a");
-  qlog("quality.spawn");
-  let child: ChildProcess;
-  try {
-    child = spawn(runtime.execPath, [...runtime.extraArgs, executable], {
-      cwd: repo,
-      env,
-      detached: true,
-      stdio: ["ignore", logFd, logFd],
-    });
-  } catch (err) {
-    closeSync(logFd);
-    const mismatch = looksLikeElectronBinary(runtime.execPath, runtime.parent.electron);
-    fail(
-      mismatch ? QUALITY_CODES.QUALITY_CHILD_RUNTIME_MISMATCH : QUALITY_CODES.QUALITY_STARTUP_FAILED,
-      err instanceof Error ? err.message : String(err),
-      "quality.spawn",
-      t0,
-      {
-        ...diagnosticDetails,
-        cwd: repo,
-        healthUrl: url,
-        spawned: false,
-      },
-    );
-  }
-  closeSync(logFd);
-  child.unref();
-  const pid = child.pid;
-  qlog(`quality.child.start pid=${pid ?? "unknown"}`);
+  let pid: number | undefined;
   let exitCode: number | null = null;
   let exitSignal: NodeJS.Signals | null = null;
-  child.on("exit", (code, signal) => {
-    exitCode = code;
-    exitSignal = signal;
-  });
-  child.on("error", (err) => {
-    qlog(`process error ${safeErrorMessage(err)}`);
-  });
+  let runtimeMode: QualityRuntimeMode = runtime.mode;
+
+  if (runtime.mode === "worker") {
+    qlog("quality.spawn skipped; starting Quality worker in the MCP runtime");
+    const workerEnv: NodeJS.ProcessEnv = { ...process.env, ...runtime.extraEnv };
+    delete workerEnv.PORT;
+    workerEnv.PRAXIS_QUALITY_PORT = String(port);
+    workerEnv.PRAXIS_QUALITY_DB = db;
+    workerEnv.PRAXIS_QUALITY_ALLOWED_ROOT = repo;
+    workerEnv.PRAXIS_QUALITY_HOST = "127.0.0.1";
+    let worker!: Worker;
+    try {
+      worker = startQualityWorker({ repo, entry: executable, logPath, env: workerEnv });
+    } catch (err) {
+      const errno = err as NodeJS.ErrnoException;
+      fail(
+        classifySpawnFailure(errno),
+        errno instanceof Error ? errno.message : String(err),
+        "quality.spawn",
+        t0,
+        {
+          ...diagnosticDetails,
+          ...spawnErrorFields(errno),
+          cwd: repo,
+          healthUrl: url,
+          spawned: false,
+          runtimeMode: "worker",
+        },
+      );
+    }
+    const started = await waitForWorkerStart(worker, 1500);
+    pid = started.pid ?? process.pid;
+    qlog(
+      `quality.child.start mode=worker spawned=${started.spawned} pid=${pid} exitCode=${started.exitCode ?? "none"} spawnError=${started.error?.code ?? "none"}`,
+    );
+    if (!started.spawned || started.error || started.exitCode !== undefined) {
+      try {
+        void worker.terminate();
+      } catch {
+        /* ignore */
+      }
+      workers.delete(repoKey(repo));
+      fail(
+        started.error ? classifySpawnFailure(started.error) : QUALITY_CODES.QUALITY_PROCESS_EXITED,
+        started.error
+          ? safeErrorMessage(started.error.message)
+          : `Quality worker exited before becoming healthy (exit=${started.exitCode ?? "unknown"})`,
+        "quality.spawn",
+        t0,
+        {
+          ...diagnosticDetails,
+          ...spawnErrorFields(started.error),
+          cwd: repo,
+          healthUrl: url,
+          spawned: started.spawned,
+          pid,
+          exitCode: started.exitCode,
+          runtimeMode: "worker",
+        },
+      );
+    }
+    worker.on("exit", (code) => {
+      exitCode = code;
+    });
+  } else {
+    const env: NodeJS.ProcessEnv = { ...process.env, ...runtime.extraEnv };
+    delete env.PORT;
+    env.PRAXIS_QUALITY_PORT = String(port);
+    env.PRAXIS_QUALITY_DB = db;
+    env.PRAXIS_QUALITY_ALLOWED_ROOT = repo;
+    env.PRAXIS_QUALITY_HOST = "127.0.0.1";
+
+    const logFd = openSync(logPath, "a");
+    qlog("quality.spawn");
+    let child: ChildProcess;
+    try {
+      child = spawn(runtime.execPath, [...runtime.extraArgs, executable], {
+        cwd: repo,
+        env,
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+      });
+    } catch (err) {
+      closeSync(logFd);
+      const errno = err as NodeJS.ErrnoException;
+      fail(
+        classifySpawnFailure(errno),
+        errno instanceof Error ? errno.message : String(err),
+        "quality.spawn",
+        t0,
+        {
+          ...diagnosticDetails,
+          ...spawnErrorFields(errno),
+          cwd: repo,
+          healthUrl: url,
+          spawned: false,
+        },
+      );
+    }
+
+    const started = await waitForChildStart(child, 1500);
+    closeSync(logFd);
+    pid = started.pid;
+    qlog(
+      `quality.child.start spawned=${started.spawned} pid=${pid ?? "none"} exitCode=${started.exitCode ?? "none"} spawnError=${started.error?.code ?? "none"}`,
+    );
+
+    if (!started.spawned || started.error || started.exitCode !== undefined || started.exitSignal) {
+      fail(
+        started.error ? classifySpawnFailure(started.error) : QUALITY_CODES.QUALITY_PROCESS_EXITED,
+        started.error
+          ? safeErrorMessage(started.error.message)
+          : `Quality service exited before becoming healthy (exit=${started.exitCode ?? started.exitSignal ?? "unknown"})`,
+        "quality.spawn",
+        t0,
+        {
+          ...diagnosticDetails,
+          ...spawnErrorFields(started.error),
+          cwd: repo,
+          healthUrl: url,
+          spawned: started.spawned,
+          pid,
+          exitCode: started.exitCode,
+          exitSignal: started.exitSignal,
+        },
+      );
+    }
+
+    child.unref();
+    child.on("exit", (code, signal) => {
+      exitCode = code;
+      exitSignal = signal;
+    });
+    child.on("error", (err) => {
+      qlog(`process error ${safeErrorMessage(err)}`);
+    });
+  }
 
   if (!pid) {
     fail(
-      QUALITY_CODES.QUALITY_STARTUP_FAILED,
-      "Quality service spawn did not return a pid",
+      QUALITY_CODES.QUALITY_SPAWN_FAILED,
+      "Quality service spawn did not return a pid after waiting for spawn/error/exit",
       "quality.spawn",
       t0,
       { ...diagnosticDetails, cwd: repo, healthUrl: url, spawned: false },
@@ -740,6 +1064,7 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
     db,
     allowedRoot: repo,
     startedAt: new Date().toISOString(),
+    runtimeMode,
   });
 
   let attempt = 0;
@@ -751,7 +1076,8 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
       const wasmMissing = /wasm asset is missing|QUALITY_SQLITE_UNAVAILABLE/i.test(logTail);
       const sqliteLoad = /ERR_UNKNOWN_BUILTIN_MODULE|node:sqlite/i.test(logTail);
       const dbFailed = /sqlite|SQLITE|database|sql\.js|sqljs/i.test(logTail);
-      killPid(pid);
+      if (runtimeMode === "process") killPid(pid);
+      else stopQuality(repo);
       const code = wasmMissing
         ? QUALITY_CODES.QUALITY_SQLITE_UNAVAILABLE
         : sqliteLoad && dbFailed
@@ -778,6 +1104,7 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
           exitSignal,
           pid,
           spawned: true,
+          runtimeMode,
           stderrTail: logTail,
         },
       );
@@ -797,18 +1124,21 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
         executable,
         cwd: repo,
         port,
+        runtimeMode,
+        sqliteBackend: health.sqliteEngine ?? undefined,
       };
     }
     await new Promise((r) => setTimeout(r, 150));
   }
 
-  killPid(pid);
+  if (runtimeMode === "process") killPid(pid);
+  else stopQuality(repo);
   fail(
     QUALITY_CODES.QUALITY_HEALTH_TIMEOUT,
     `Quality service did not become healthy within ${timeoutMs}ms`,
     "quality.health",
     t0,
-    { ...diagnosticDetails, cwd: repo, healthUrl: url, pid, timeoutMs, spawned: true },
+    { ...diagnosticDetails, cwd: repo, healthUrl: url, pid, timeoutMs, spawned: true, runtimeMode },
   );
 }
 

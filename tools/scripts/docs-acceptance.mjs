@@ -106,6 +106,7 @@ for (const needle of [
   "QUALITY_SQLITE_UNAVAILABLE",
   "praxis-quality.cjs",
   "sql.js",
+  "QUALITY_SPAWN_FAILED",
 ]) {
   if (!qualityGuide.includes(needle)) fail(`quality guide missing ${needle}`);
 }

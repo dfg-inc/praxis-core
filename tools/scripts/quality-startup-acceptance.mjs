@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Quality Runtime startup acceptance (no live Jira).
- * Covers A–N plus official MCPB client. Does not run Quality Review.
+ * Covers A–P plus official MCPB client. Does not run Quality Review.
+ * Case O/P are Electron-style (mock helper path / simulated execPath), not live Claude Desktop GUI.
  */
 import { createServer } from "node:net";
 import {
@@ -16,7 +17,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
@@ -52,6 +53,8 @@ const {
   probeSqliteWithExecutable,
   classifySqliteProbeError,
   resolveQualityChildRuntime,
+  waitForChildStart,
+  isElectronHelperExecutable,
 } = await import("../../packages/cli/dist/quality-ensure.js");
 const { discoverQualityInputs } = await import("@praxis/jira/workflow");
 const { doctorOp, qualityEnsureOp, PraxisOpError } =
@@ -206,6 +209,8 @@ const cases = {
   L: false,
   M: false,
   N: false,
+  O: false,
+  P: false,
 };
 
 const packed = await packClaudeExtension(version);
@@ -296,6 +301,109 @@ if (runtime.execPath !== process.execPath && !process.env.PRAXIS_QUALITY_NODE) {
   fail("E: default child executable should be the MCP parent execPath");
 }
 cases.E = true;
+
+const helperExec =
+  "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Plugin).app/Contents/MacOS/Claude Helper (Plugin)";
+if (!isElectronHelperExecutable(helperExec)) fail("O: Claude Helper (Plugin) path was not classified as a helper");
+if (isElectronHelperExecutable(process.execPath)) fail("O: ordinary Node CLI classified as Electron helper");
+process.env.PRAXIS_QUALITY_SIMULATED_EXEC_PATH = helperExec;
+const helperRuntime = resolveQualityChildRuntime();
+delete process.env.PRAXIS_QUALITY_SIMULATED_EXEC_PATH;
+if (helperRuntime.mode !== "worker") fail(`O: expected worker mode, got ${helperRuntime.mode}`);
+if (helperRuntime.execPath !== process.execPath) fail("O: worker runtime must keep the current JS executable");
+if (helperRuntime.parent.execPath !== helperExec) fail("O: parent execPath should remain the helper path");
+
+const helperDir = mkdtempSync(join(tmpdir(), "praxis-helper-"));
+const helperBin = join(
+  helperDir,
+  "Claude Helper (Plugin).app",
+  "Contents",
+  "MacOS",
+  "Claude Helper (Plugin)",
+);
+mkdirSync(dirname(helperBin), { recursive: true });
+writeFileSync(
+  helperBin,
+  "#!/bin/sh\necho '[FATAL] Unable to find helper app' >&2\nexit 1\n",
+);
+chmodSync(helperBin, 0o755);
+const helperChild = spawn(helperBin, [extracted.quality], {
+  stdio: ["ignore", "pipe", "pipe"],
+});
+const helperWait = await waitForChildStart(helperChild, 2000);
+if (!helperWait.pid && !helperWait.error) {
+  fail("O: spawn returned neither pid nor error event");
+}
+const helperExit = await new Promise((resolve) => {
+  if (helperChild.exitCode !== null || helperWait.exitCode != null || helperWait.exitSignal) {
+    resolve({
+      code: helperChild.exitCode ?? helperWait.exitCode ?? null,
+      signal: helperWait.exitSignal ?? null,
+    });
+    return;
+  }
+  const t = setTimeout(() => {
+    resolve({ code: helperChild.exitCode, signal: "timeout" });
+  }, 1500);
+  helperChild.once("exit", (code, signal) => {
+    clearTimeout(t);
+    resolve({ code, signal });
+  });
+});
+if (!helperWait.error && helperExit.code !== 1) {
+  fail(`O: helper-style executable did not exit 1 ${JSON.stringify({ helperWait, helperExit })}`);
+}
+cases.O = true;
+
+const electronRepo = consumerRepo("praxis-q-electron-");
+const electronPort = await freePort();
+const electronSession = await connectOfficialMcp({
+  command: process.execPath,
+  args: extracted.args,
+  cwd: extracted.dest,
+  env: {
+    ...hostedCleanEnv(extracted.dest),
+    PRAXIS_QUALITY_PORT: String(electronPort),
+    PRAXIS_QUALITY_SIMULATED_EXEC_PATH: helperExec,
+  },
+  versionNegotiation: versionNegotiationModern(),
+  timeoutMs: MCP_STARTUP_BUDGET_MS,
+  clientVersion: version,
+});
+try {
+  const statusRaw = await electronSession.client.callTool({
+    name: "praxis_quality_status",
+    arguments: { repo: electronRepo },
+  });
+  const statusEnv = envelopeFromTool(statusRaw);
+  if (statusEnv?.data?.status !== "not_started") {
+    fail(`P: electron-style expected not_started ${JSON.stringify(statusEnv)}`);
+  }
+  const ensureRaw = await electronSession.client.callTool({
+    name: "praxis_quality_ensure",
+    arguments: { repo: electronRepo },
+  });
+  const ensureEnv = envelopeFromTool(ensureRaw);
+  if (!ensureEnv?.ok) fail(`P: electron-style ensure failed ${JSON.stringify(ensureEnv)}`);
+  if (ensureEnv.data?.runtimeMode !== "worker") {
+    fail(`P: expected worker runtimeMode ${JSON.stringify(ensureEnv.data)}`);
+  }
+  const health = await fetch(ensureEnv.data.url);
+  if (!health.ok) fail("P: electron-style health HTTP not ok");
+  if (!existsSync(join(electronRepo, ".praxis-quality", "quality.sqlite"))) fail("P: sqlite missing");
+  const againRaw = await electronSession.client.callTool({
+    name: "praxis_quality_ensure",
+    arguments: { repo: electronRepo },
+  });
+  const againEnv = envelopeFromTool(againRaw);
+  if (againEnv?.data?.reused !== true) fail("P: electron-style second ensure did not reuse");
+  cases.P = true;
+} finally {
+  await electronSession.close();
+  stopQuality(electronRepo);
+  rmSync(electronRepo, { recursive: true, force: true });
+  rmSync(helperDir, { recursive: true, force: true });
+}
 
 const consumer = consumerRepo("praxis-q-consumer-");
 const port = await freePort();
@@ -561,6 +669,7 @@ try {
   delete process.env.PRAXIS_QUALITY_STARTUP_TIMEOUT_MS;
   delete process.env.PRAXIS_QUALITY_SQLITE;
   delete process.env.PRAXIS_QUALITY_NODE;
+  delete process.env.PRAXIS_QUALITY_SIMULATED_EXEC_PATH;
 }
 
 const missing = Object.entries(cases).filter(([, ok]) => !ok).map(([id]) => id);
@@ -578,6 +687,7 @@ console.log(
       macosArch: process.arch,
       macosAcceptance: process.platform === "darwin" ? "PASS" : "HOST_SKIP_NOT_DARWIN",
       macosDesktop: "LIVE DESKTOP PENDING",
+      electronStyleAcceptance: "PASS",
       bundledQuality: "server/praxis-quality.cjs",
       bundledWasm: "server/sql-wasm.wasm",
       parentNode: parentProbe.execPath,
