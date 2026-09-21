@@ -8,7 +8,7 @@ import {
   createMockFetch,
   createMockJiraState,
 } from "../src/rest-provider.js";
-import { architectPlanEpic, baAnalyzeEpic, qaVerifyWorkPackage } from "../src/workflows.js";
+import { architectPlanEpic, baAnalyzeEpic, previewQualityApply, applyQualityReview, writeQualityEvidence } from "../src/workflows.js";
 import type { JiraConfig } from "../src/config.js";
 
 function cfg(): JiraConfig {
@@ -80,13 +80,29 @@ describe("localized bug type", () => {
       epicKey: epic.key,
       repo,
     });
-    const report = await qaVerifyWorkPackage({
-      provider,
-      wpKey: workPackages[0]!.jiraIssueKey,
-      repo,
-      findings: [{ fingerprint: "gap-1", blocking: true, summary: "AC unverified" }],
+    const wpKey = workPackages[0]!.jiraIssueKey;
+    writeQualityEvidence(repo, {
+      reviewId: 7,
+      workPackageId: "WP-20260914-002",
+      jiraWorkPackageKey: wpKey,
+      verdict: "FAILED",
+      findings: [{ fingerprint: "gap-1", blocking: true, summary: "AC unverified", acceptanceCheckId: "AC1" }],
+      snapshot: { digest: "", files: [] },
+      acceptanceChecks: [{ id: "AC1", status: "FAILED" }],
     });
-    expect(report.overallVerdict).toBe("blocked");
+    const preview = await previewQualityApply({
+      provider,
+      repo,
+      workPackageId: "WP-20260914-002",
+    });
+    const report = await applyQualityReview({
+      provider,
+      repo,
+      workPackageId: "WP-20260914-002",
+      previewFingerprint: preview.previewFingerprint,
+    });
+    expect(report.ok).toBe(true);
+    expect(report.bugsCreated.length).toBeGreaterThan(0);
     const bugs = [...state.issues.values()].filter((i) => i.semanticType === "bug" || i.issueType === "Баг");
     expect(bugs.length).toBeGreaterThan(0);
     expect(bugs[0]!.issueTypeId).toBe("10012");

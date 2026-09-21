@@ -196,18 +196,21 @@ Read-only preview of premature Done / missing evidence recovery. Does not write.
 Required: --confirm YES and matching preview fingerprint. Restores development status then reconciles completion evidence.
 `,
   quality: `USAGE
-  praxis quality status [--json]
+  praxis quality status [--wp ID_OR_KEY] [--json]
   praxis quality ensure [--json]
   praxis quality review --wp ID_OR_KEY [--repo PATH] [--json]
   praxis quality report --wp ID_OR_KEY [--repo PATH] [--json]
+  praxis quality apply-preview --wp ID_OR_KEY [--repo PATH] [--json]
+  praxis quality apply --wp ID_OR_KEY --confirm YES --fingerprint sha256:... [--repo PATH] [--json]
 
 ensure starts the Quality service bundled in Praxis Runtime and waits until /health is ready.
-It does not run Quality Review, create Jira Bugs, or mark Done. Safe reuse when already healthy.
-review runs the QA workflow after ensure. Does not require make quality-up in Claude Desktop.
+review executes Quality Service acceptance checks and stores evidence. It does not write Jira.
+apply-preview shows proposed Jira writes for the persisted review.
+apply performs those writes only with --confirm YES and a current fingerprint.
 `,
   "quality status": `USAGE
-  praxis quality status [--json] [--repo PATH]
-Read-only health. Does not start Quality.
+  praxis quality status [--json] [--repo PATH] [--wp ID_OR_KEY]
+Read-only health and latest review status. Does not start Quality.
 `,
   "quality ensure": `USAGE
   praxis quality ensure [--json] [--repo PATH]
@@ -216,11 +219,19 @@ Does not run review or write Jira.
 `,
   "quality review": `USAGE
   praxis quality review --wp ID_OR_KEY [--repo PATH] [--json]
-Write (bugs/report) after local build/test.
+Execute Quality Review via Quality Service. Persists QA evidence. Does not write Jira.
 `,
   "quality report": `USAGE
   praxis quality report --wp ID_OR_KEY [--repo PATH] [--json]
-Read-only last report if present; otherwise same as review without extra writes when already stored.
+Safe alias of quality review. Does not write Jira.
+`,
+  "quality apply-preview": `USAGE
+  praxis quality apply-preview --wp ID_OR_KEY [--repo PATH] [--json]
+Read-only Jira apply preview for the persisted Quality Review. Returns previewFingerprint.
+`,
+  "quality apply": `USAGE
+  praxis quality apply --wp ID_OR_KEY --confirm YES --fingerprint sha256:... [--repo PATH] [--json]
+Required: --confirm YES and matching preview fingerprint. Writes Jira only for the approved plan.
 `,
 };
 

@@ -15,7 +15,6 @@ import {
   collectEpicStatus,
   developerCompleteWp,
   discoverLocalWorkPackages,
-  qaVerifyWorkPackage,
   releaseWorkPackage,
   resolveLocalWorkPackage,
   resolveRemoteWpKey,
@@ -25,6 +24,8 @@ import {
   applyDeveloperCompleteRecovery,
   inspectDeveloperCompletion,
   discoverQualityInputs,
+  previewQualityApply,
+  applyQualityReview,
   type DeveloperCompleteResult,
   type CompleteRecoveryPreview,
 } from "@praxis/jira/workflow";
@@ -74,6 +75,12 @@ export const OP_CODES = {
   QUALITY_SPAWN_FAILED: "QUALITY_SPAWN_FAILED",
   QUALITY_EXECUTABLE_NOT_FOUND: "QUALITY_EXECUTABLE_NOT_FOUND",
   QUALITY_EXECUTABLE_NOT_PERMITTED: "QUALITY_EXECUTABLE_NOT_PERMITTED",
+  QUALITY_REVIEW_STALE: "QUALITY_REVIEW_STALE",
+  QUALITY_FINGERPRINT_MISMATCH: "QUALITY_FINGERPRINT_MISMATCH",
+  QUALITY_CHANGE_SPEC_INVALID: "QUALITY_CHANGE_SPEC_INVALID",
+  QUALITY_MANIFEST_MISSING: "QUALITY_MANIFEST_MISSING",
+  QUALITY_INPUTS_INCONSISTENT: "QUALITY_INPUTS_INCONSISTENT",
+  QUALITY_REVIEW_MISSING: "QUALITY_REVIEW_MISSING",
 } as const;
 
 export type OpCode = (typeof OP_CODES)[keyof typeof OP_CODES];
@@ -122,6 +129,7 @@ export type OpContext = {
   requirePreviewFingerprint?: boolean;
   signal?: AbortSignal;
   deadlineMs?: number;
+  reviewId?: number;
 };
 
 export function loadPraxisDotenv(repo: string): void {
@@ -834,7 +842,12 @@ export async function developerCompleteRecoveryApplyOp(
 export async function qualityStatusOp(ctx: OpContext) {
   const repo = requireRepo(ctx.repo);
   const { probeQuality } = await import("./quality-ensure.js");
-  return probeQuality({ repo });
+  const health = await probeQuality({ repo });
+  if (!ctx.wp) return health;
+  const { qualityReviewStatus } = await import("./quality-lifecycle.js");
+  const local = resolveLocalWorkPackage(repo, ctx.wp);
+  const review = qualityReviewStatus(repo, local?.id ?? ctx.wp);
+  return { ...health, workPackage: local?.id ?? ctx.wp, review };
 }
 
 export async function qualityEnsureOp(ctx: OpContext) {
@@ -854,19 +867,121 @@ export async function qualityEnsureOp(ctx: OpContext) {
   }
 }
 
+function mapQualityReviewError(err: unknown): never {
+  if (err instanceof Error && /QUALITY_/.test(err.message)) {
+    const raw = err.message.match(/^(QUALITY_[A-Z_]+)/)?.[1];
+    const code = (raw && raw in OP_CODES ? raw : OP_CODES.CONFLICT) as OpCode;
+    throw new PraxisOpError(code, err.message);
+  }
+  throw err;
+}
+
 export async function qualityReviewOp(ctx: OpContext) {
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "quality review requires workPackage");
   }
   const repo = requireRepo(ctx.repo);
+  const local = resolveLocalWorkPackage(repo, ctx.wp);
+  const workPackageId = local?.id ?? ctx.wp;
+  try {
+    const { runQualityWorkPackageReview } = await import("./quality-lifecycle.js");
+    const { QualityStartupError } = await import("./quality-ensure.js");
+    const { QualityReviewTransportError } = await import("./quality-lifecycle.js");
+    try {
+      const reviewed = await runQualityWorkPackageReview({
+        repo,
+        workPackageId,
+        runtimeVersion: process.env.PRAXIS_BUNDLE_VERSION,
+      });
+      const qualityInputs = discoverQualityInputs(repo, workPackageId);
+      return {
+        ...reviewed,
+        qualityInputs,
+        jiraMutated: false,
+        approvalApplied: false,
+      };
+    } catch (err) {
+      if (err instanceof QualityStartupError) {
+        throw new PraxisOpError(err.code as OpCode, err.message, {
+          stage: err.stage,
+          durationMs: err.durationMs,
+          details: {
+            ...(err.details ?? {}),
+            verdict: "BLOCKED",
+            blockedReason: "Quality Service unavailable",
+          },
+        });
+      }
+      if (err instanceof QualityReviewTransportError) {
+        const code = (err.code in OP_CODES ? err.code : OP_CODES.EXTERNAL_SERVICE_ERROR) as OpCode;
+        throw new PraxisOpError(code, err.message, { details: err.details });
+      }
+      throw err;
+    }
+  } catch (err) {
+    mapQualityReviewError(err);
+  }
+}
+
+export async function qualityApplyPreviewOp(ctx: OpContext) {
+  if (!ctx.wp) {
+    throw new PraxisOpError(OP_CODES.INVALID_INPUT, "quality apply preview requires workPackage");
+  }
+  const repo = requireRepo(ctx.repo);
   return withProvider({ ...ctx, repo }, async (p) => {
-    const report = await qaVerifyWorkPackage({
-      provider: p,
-      wpKey: ctx.wp!,
-      repo,
-    });
-    const local = resolveLocalWorkPackage(repo, ctx.wp!);
-    const qualityInputs = discoverQualityInputs(repo, local?.id ?? ctx.wp!);
-    return { ...report, qualityInputs };
+    try {
+      const preview = await previewQualityApply({
+        provider: p,
+        repo,
+        workPackageId: resolveLocalWorkPackage(repo, ctx.wp!)?.id ?? ctx.wp!,
+        reviewId: ctx.reviewId,
+      });
+      return {
+        ...preview,
+        jiraMutated: false,
+      };
+    } catch (err) {
+      mapQualityReviewError(err);
+    }
+  });
+}
+
+export async function qualityApplyOp(ctx: OpContext) {
+  if (!ctx.wp) {
+    throw new PraxisOpError(OP_CODES.INVALID_INPUT, "quality apply requires workPackage");
+  }
+  requireConfirm(ctx.confirmation, "quality apply");
+  if (!ctx.previewFingerprint) {
+    throw new PraxisOpError(
+      OP_CODES.CONFIRMATION_REQUIRED,
+      "quality apply requires previewFingerprint from the matching preview",
+    );
+  }
+  const repo = requireRepo(ctx.repo);
+  const workPackageId = resolveLocalWorkPackage(repo, ctx.wp)?.id ?? ctx.wp;
+  return withProvider({ ...ctx, repo }, async (p) => {
+    try {
+      const applied = await applyQualityReview({
+        provider: p,
+        repo,
+        workPackageId,
+        previewFingerprint: ctx.previewFingerprint!,
+      });
+      if (applied.ok) {
+        const { markQualityReviewApplied } = await import("./quality-lifecycle.js");
+        await markQualityReviewApplied({
+          repo,
+          reviewId: applied.reviewId,
+          payload: {
+            previewFingerprint: applied.previewFingerprint,
+            completed: applied.completed,
+            bugsCreated: applied.bugsCreated,
+          },
+        }).catch(() => undefined);
+      }
+      return { ...applied, jiraMutated: applied.completed.length > 0 };
+    } catch (err) {
+      mapQualityReviewError(err);
+    }
   });
 }

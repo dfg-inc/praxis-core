@@ -744,64 +744,6 @@ export async function qaVerifyWorkPackage(opts: {
   );
   const findings = opts.findings ?? [];
   const blocking = findings.filter((f) => f.blocking);
-  for (const f of blocking) {
-    assertRole("qa", "create-bug");
-    const artifactId = `bug:${f.fingerprint}`;
-    const meta = await opts.provider.discoverMetadata();
-    const existingBugs = await opts.provider.searchIssues(
-      `issuetype = ${meta.bugTypeId} AND project = ${opts.provider.config.projectKey}`,
-    );
-    let bugKey: string | undefined;
-    for (const b of existingBugs) {
-      const aid = await opts.provider.getIssueProperty<string>(b.key, ARTIFACT_PROP);
-      if (aid === artifactId) bugKey = b.key;
-    }
-    if (!bugKey) {
-      const created = await opts.provider.createIssue({
-        summary: f.summary,
-        issueType: opts.provider.config.bugType,
-        issueTypeId: meta.bugTypeId,
-        labels: ["praxis-managed", "praxis-blocking"],
-        description: opts.provider.renderDescription(
-          headingParagraphs([
-            { heading: "Work Package", body: wpKey },
-            { heading: "Reproduction", body: f.summary },
-            { heading: "Expected", body: "No blocking defect" },
-            { heading: "Actual", body: f.summary },
-          ]),
-        ),
-      });
-      bugKey = created.key;
-      await opts.provider.setIssueProperty(created.key, ARTIFACT_PROP, artifactId);
-      await opts.provider.setIssueProperty(created.key, "praxis.managed", true);
-      await opts.provider.setIssueProperty(created.key, "praxis.role", "qa");
-      await opts.provider.setIssueProperty(created.key, "praxis.blocking", true);
-      await opts.provider.createIssueLink(wpKey, created.key, "Relates");
-      if (canonicalStories[0]) {
-        await opts.provider.createIssueLink(canonicalStories[0], created.key, "Relates");
-      }
-    }
-  }
-  if (blocking.length) {
-    assertRole("qa", "block-package");
-    await opts.provider.writePraxisState(wpKey, {
-      lifecycle: "blocked",
-      blockedBy: blocking.map((b) => b.fingerprint),
-    });
-    await opts.provider.setIssueProperty(
-      wpKey,
-      "praxis.blockedBy",
-      blocking.map((b) => b.fingerprint),
-    );
-  } else if (build.ok && test.ok) {
-    assertRole("qa", "qa-pass");
-    await applySemanticIssueTransition(opts.provider, wpKey, "QUALITY_APPROVED");
-    await opts.provider.writePraxisState(wpKey, {
-      lifecycle: "qa-passed",
-      qualityState: "approved",
-    });
-  }
-
   const qualityInputs = discoverQualityInputs(opts.repo, manifest?.id ?? wpKey);
   const report: QualityWpReport = {
     contract: "quality.work-package.report",
@@ -842,23 +784,6 @@ export async function qaVerifyWorkPackage(opts: {
       qualityHandoffPath: qualityInputs.hasHandoff ? qualityInputs.qualityHandoffPath : undefined,
     },
   };
-  const outDir = join(opts.repo, ".praxis-jira", "quality");
-  mkdirSync(outDir, { recursive: true });
-  writeFileSync(
-    join(outDir, `${wpKey}.json`),
-    `${JSON.stringify(report, null, 2)}\n`,
-  );
-  writeFileSync(
-    join(outDir, `${wpKey}.md`),
-    `# Quality report ${wpKey}\n\nVerdict: **${report.overallVerdict}**\n`,
-  );
-  await opts.provider.addComment(
-    wpKey,
-    opts.provider.renderDescription(
-      textDocument(`Quality report ${report.overallVerdict}`),
-    ),
-  );
-  await opts.provider.setIssueProperty(wpKey, "praxis.qualityReport", report);
   return report;
 }
 
@@ -989,3 +914,19 @@ export type {
   CompleteRecoveryPreview,
   ProjectVerification,
 } from "./developer-complete.js";
+export {
+  previewQualityApply,
+  applyQualityReview,
+  writeQualityEvidence,
+  readQualityEvidence,
+  liveSnapshotDigest,
+  qualityEvidencePath,
+  qualityApplyFingerprint,
+  QUALITY_COMMENT_MARK,
+  QUALITY_APPLIED_REVIEW_PROP,
+} from "./quality-apply.js";
+export type {
+  QualityApplyPlan,
+  QualityApplyAction,
+  QualityReviewEvidence,
+} from "./quality-apply.js";

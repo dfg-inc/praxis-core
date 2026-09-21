@@ -28,6 +28,8 @@ import {
   projectStatusOp,
   qualityEnsureOp,
   qualityReviewOp,
+  qualityApplyPreviewOp,
+  qualityApplyOp,
   qualityStatusOp,
   redact,
   workPackageListOp,
@@ -335,5 +337,10 @@ async function qualityCmd(sub: string | undefined, ctx: OpContext) {
   if (sub === "status") return qualityStatusOp(ctx);
   if (sub === "ensure") return qualityEnsureOp(ctx);
   if (sub === "review" || sub === "report") return qualityReviewOp(ctx);
-  throw new PraxisOpError("INVALID_INPUT", "usage: praxis quality status|ensure|review|report");
+  if (sub === "apply-preview") return qualityApplyPreviewOp(ctx);
+  if (sub === "apply") return qualityApplyOp(ctx);
+  throw new PraxisOpError(
+    "INVALID_INPUT",
+    "usage: praxis quality status|ensure|review|report|apply-preview|apply",
+  );
 }

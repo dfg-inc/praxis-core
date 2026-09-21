@@ -24,6 +24,9 @@ import {
   developerCompleteWp,
   parseCoverage,
   qaVerifyWorkPackage,
+  previewQualityApply,
+  applyQualityReview,
+  writeQualityEvidence,
 } from "../src/workflows.js";
 import { loadWriteJournal } from "../src/write-journal.js";
 import { resolveBaArtifactId } from "../src/artifact-id.js";
@@ -405,15 +408,50 @@ describe("jira workflow orchestration", () => {
       ],
     });
     expect(report.overallVerdict).toBe("blocked");
-    const again = await qaVerifyWorkPackage({
-      provider,
-      wpKey,
-      repo,
+    expect((await provider.searchIssues("issuetype = Bug AND project = PRX")).length).toBe(0);
+    writeQualityEvidence(repo, {
+      reviewId: 1,
+      workPackageId: "WP-20260914-002",
+      jiraWorkPackageKey: wpKey,
+      verdict: "FAILED",
       findings: [
-        { fingerprint: "gap-1", blocking: true, summary: "AC unverified" },
+        {
+          fingerprint: "gap-1",
+          blocking: true,
+          summary: "AC unverified",
+          acceptanceCheckId: "AC1",
+        },
       ],
+      snapshot: { digest: "", files: [] },
+      acceptanceChecks: [{ id: "AC1", status: "FAILED" }],
     });
-    expect(again.overallVerdict).toBe("blocked");
+    const preview = await previewQualityApply({
+      provider,
+      repo,
+      workPackageId: "WP-20260914-002",
+    });
+    expect(preview.plan.bugsProposed).toBe(1);
+    expect(preview.jiraMutated).toBe(false);
+    const applied = await applyQualityReview({
+      provider,
+      repo,
+      workPackageId: "WP-20260914-002",
+      previewFingerprint: preview.previewFingerprint,
+    });
+    expect(applied.ok).toBe(true);
+    expect(applied.bugsCreated).toHaveLength(1);
+    const preview2 = await previewQualityApply({
+      provider,
+      repo,
+      workPackageId: "WP-20260914-002",
+    });
+    const again = await applyQualityReview({
+      provider,
+      repo,
+      workPackageId: "WP-20260914-002",
+      previewFingerprint: preview2.previewFingerprint,
+    });
+    expect(again.bugsCreated.length + applied.bugsCreated.length).toBeGreaterThanOrEqual(1);
     const bugs = await provider.searchIssues("issuetype = Bug AND project = PRX");
     expect(bugs.length).toBe(1);
   });
