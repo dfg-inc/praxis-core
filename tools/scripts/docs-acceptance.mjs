@@ -123,6 +123,19 @@ if (/make quality-up/.test(qualityGuide) && /normal/.test(qualityGuide.toLowerCa
   fail("quality guide must not recommend make quality-up as normal");
 }
 
+const developerGuide = readFileSync(join(canonical, "plugins/developer.md"), "utf8");
+for (const needle of [
+  "praxis_developer_git_status",
+  "praxis_developer_git_preview",
+  "praxis_developer_git_commit",
+  "praxis_developer_git_publish",
+  "praxis_developer_git_merge_request",
+  "github_token",
+  "baseline",
+]) {
+  if (!developerGuide.includes(needle)) fail(`developer guide missing ${needle}`);
+}
+
 for (const f of [
   "claude-extensions/praxis-runtime.mcpb",
   "claude-plugins/praxis-ba.zip",
