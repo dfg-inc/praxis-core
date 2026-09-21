@@ -1,6 +1,6 @@
 {
   "name": "@praxis/vcs",
-  "version": "0.1.0-alpha.42",
+  "version": "0.1.0-alpha.43",
   "private": true,
   "type": "module",
   "description": "Praxis Git/VCS operations, GitHub and GitLab providers, Git Delivery lifecycle",
