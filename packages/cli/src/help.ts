@@ -170,7 +170,8 @@ Required: --wp. Read-only.
   praxis developer git-preview --wp ID_OR_KEY [--json]
   praxis developer git-commit --wp ID_OR_KEY --confirm YES --fingerprint sha256:... [--json]
   praxis developer git-publish --wp ID_OR_KEY --confirm YES --fingerprint sha256:... [--mode baseline|branch] [--json]
-  praxis developer git-merge-request --wp ID_OR_KEY --confirm YES [--json]
+  praxis developer git-merge-request-preview --wp ID_OR_KEY [--json]
+  praxis developer git-merge-request --wp ID_OR_KEY --confirm YES --fingerprint sha256:... [--json]
 
 claim writes Jira claim. complete verifies, persists evidence and Quality handoff, and keeps Jira In Progress.
 complete does not mark the issue Done and does not start Quality.

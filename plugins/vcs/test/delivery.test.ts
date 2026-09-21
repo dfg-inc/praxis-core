@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -7,6 +7,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyCommit,
   applyConnect,
+  applyMergeRequest,
+  applyPublish,
   createGithubProvider,
   createGitlabProvider,
   createMockGithubFetch,
@@ -14,14 +16,18 @@ import {
   createMockGitlabFetch,
   createMockGitlabState,
   exactRemoteUrlsEqual,
+  inspectDeliveryStatus,
   inspectGitStatus,
   listRemotes,
+  lsRemoteHeads,
   mergeGitStatusRemote,
   parseRemoteUrl,
   planStaging,
   previewConnect,
   previewDelivery,
+  previewMergeRequest,
   previewPublish,
+  readJournal,
   redactRemoteUrl,
   setRemoteUrl,
   validateGithubApiUrl,
@@ -492,7 +498,9 @@ describe("delivery preview and commit", () => {
       jiraWorkPackageKey: "PRX-4",
       previewFingerprint: preview.previewFingerprint,
     });
-    expect(() => previewPublish({ repo, workPackageId: WP })).toThrow(/no remote/i);
+    await expect(previewPublish({ repo, workPackageId: WP })).rejects.toMatchObject({
+      code: VCS_CODES.GIT_REMOTE_REQUIRED,
+    });
   });
 });
 
@@ -556,5 +564,195 @@ describe("GitHub and GitLab mocked APIs", () => {
     });
     expect(mr.kind).toBe("merge-request");
     expect(mr.merged).toBe(false);
+  });
+});
+
+describe("baseline master → main and feature PR", () => {
+  function emptyBare() {
+    const bare = mkdtempSync(join(tmpdir(), "praxis-bare-"));
+    git(bare, ["init", "--bare"]);
+    return bare;
+  }
+
+  function attachGithubishRemote(repo: string, bare: string) {
+    const ssh = "git@github.com:hisagedru/praxis-acceptance-test.git";
+    git(repo, ["remote", "add", "origin", ssh]);
+    git(repo, ["config", `url.${bare}.insteadOf`, ssh]);
+  }
+
+  it("publishes local master SHA to remote main without creating remote master", async () => {
+    const repo = tmpRepo();
+    seedProduct(repo);
+    const baseline = git(repo, ["rev-parse", "HEAD"]);
+    writeFileSync(join(repo, "src/counter.js"), "dirty-not-in-baseline\n");
+    writeFileSync(join(repo, "untracked.txt"), "no\n");
+    const bare = emptyBare();
+    attachGithubishRemote(repo, bare);
+    const gh = createMockGithubState({ empty: true, defaultBranch: "main", hasReadme: false });
+    const fetchImpl = createMockGithubFetch(gh);
+    const pub = await previewPublish({
+      repo,
+      workPackageId: WP,
+      providerKind: "github",
+      fetchImpl,
+      mode: "baseline",
+    });
+    expect(pub.sourceBranch).toBe("master");
+    expect(pub.sourceCommitSha).toBe(baseline);
+    expect(pub.targetRemote).toBe("origin");
+    expect(pub.targetRemoteBranch).toBe("main");
+    expect(pub.refspec).toBe(`${baseline}:refs/heads/main`);
+    expect(pub.remoteEmpty).toBe(true);
+    expect(pub.force).toBe(false);
+    expect(pub.existingRefs).toEqual([]);
+    const applied = await applyPublish({
+      repo,
+      workPackageId: WP,
+      providerKind: "github",
+      fetchImpl,
+      mode: "baseline",
+      previewFingerprint: pub.previewFingerprint,
+    });
+    expect(applied.ok).toBe(true);
+    expect(applied.lifecycle).toBe("baseline-published");
+    expect(applied.baselineSha).toBe(baseline);
+    expect(applied.baselineRemoteBranch).toBe("main");
+    expect(applied.targetBranch).toBe("main");
+    const remoteRefs = git(bare, ["show-ref", "--heads"]);
+    expect(remoteRefs).toContain("refs/heads/main");
+    expect(remoteRefs).not.toContain("refs/heads/master");
+    expect(git(bare, ["rev-parse", "refs/heads/main"])).toBe(baseline);
+    expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("master");
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(baseline);
+    expect(readFileSync(join(repo, "src/counter.js"), "utf8")).toBe("dirty-not-in-baseline\n");
+    expect(readFileSync(join(repo, "untracked.txt"), "utf8")).toBe("no\n");
+    const retry = await applyPublish({
+      repo,
+      workPackageId: WP,
+      providerKind: "github",
+      fetchImpl,
+      mode: "baseline",
+      previewFingerprint: (await previewPublish({
+        repo,
+        workPackageId: WP,
+        providerKind: "github",
+        fetchImpl,
+        mode: "baseline",
+      })).previewFingerprint,
+    });
+    expect(retry.writeSucceeded).toBe(false);
+    expect(retry.completed).toBe(true);
+    expect(git(bare, ["rev-list", "--count", "refs/heads/main"])).toBe("1");
+  });
+
+  it("commits allowlist, pushes feature branch, and opens a PR onto main", async () => {
+    const counter = "export function reset(){return 0}\n";
+    const testBody = "ok\n";
+    const repo = tmpRepo();
+    seedProduct(repo, counter, testBody);
+    const baseline = git(repo, ["rev-parse", "HEAD"]);
+    const bare = emptyBare();
+    attachGithubishRemote(repo, bare);
+    const gh = createMockGithubState({ empty: true, defaultBranch: "main" });
+    const fetchImpl = createMockGithubFetch(gh);
+    const basePrev = await previewPublish({
+      repo,
+      workPackageId: WP,
+      providerKind: "github",
+      fetchImpl,
+      mode: "baseline",
+    });
+    await applyPublish({
+      repo,
+      workPackageId: WP,
+      providerKind: "github",
+      fetchImpl,
+      mode: "baseline",
+      previewFingerprint: basePrev.previewFingerprint,
+    });
+    const preview = await previewDelivery({
+      repo,
+      workPackageId: WP,
+      jiraWorkPackageKey: "PRX-4",
+      providerKind: "github",
+      fetchImpl,
+    });
+    expect(preview.targetBranch).toBe("main");
+    expect(preview.selectedFiles).toEqual(["src/counter.js", "src/counter.test.js"]);
+    const committed = await applyCommit({
+      repo,
+      workPackageId: WP,
+      jiraWorkPackageKey: "PRX-4",
+      providerKind: "github",
+      fetchImpl,
+      previewFingerprint: preview.previewFingerprint,
+    });
+    expect(committed.commitSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(committed.featureBranch).toBe("feature/PRX-4-counter-reset");
+    expect(committed.lifecycle).toBe("committed");
+    const names = spawnSync("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", committed.commitSha!], {
+      cwd: repo,
+      encoding: "utf8",
+    }).stdout;
+    expect(names).toContain("src/counter.js");
+    expect(names).not.toContain("package.json");
+    const featPrev = await previewPublish({
+      repo,
+      workPackageId: WP,
+      providerKind: "github",
+      fetchImpl,
+      mode: "branch",
+    });
+    expect(featPrev.sourceBranch).toBe("feature/PRX-4-counter-reset");
+    expect(featPrev.targetRemoteBranch).toBe("feature/PRX-4-counter-reset");
+    expect(featPrev.refspec).toBe(`${committed.commitSha}:refs/heads/feature/PRX-4-counter-reset`);
+    const pushed = await applyPublish({
+      repo,
+      workPackageId: WP,
+      providerKind: "github",
+      fetchImpl,
+      mode: "branch",
+      previewFingerprint: featPrev.previewFingerprint,
+    });
+    expect(pushed.ok).toBe(true);
+    expect(pushed.lifecycle).toBe("pushed");
+    expect(git(bare, ["rev-parse", "refs/heads/feature/PRX-4-counter-reset"])).toBe(committed.commitSha);
+    const mrPrev = await previewMergeRequest({
+      repo,
+      workPackageId: WP,
+      providerKind: "github",
+      fetchImpl,
+    });
+    expect(mrPrev.targetBranch).toBe("main");
+    expect(mrPrev.sourceBranch).toBe("feature/PRX-4-counter-reset");
+    const mr = await applyMergeRequest({
+      repo,
+      workPackageId: WP,
+      providerKind: "github",
+      fetchImpl,
+      previewFingerprint: mrPrev.previewFingerprint,
+    });
+    expect(mr.ok).toBe(true);
+    expect(mr.pullRequestBase).toBe("main");
+    expect(mr.pullRequestHead).toBe("feature/PRX-4-counter-reset");
+    expect(mr.lifecycle).toBe("awaiting-review");
+    expect(mr.ciStatus).toBe("not_configured");
+    expect(gh.pulls).toHaveLength(1);
+    const retryMr = await applyMergeRequest({
+      repo,
+      workPackageId: WP,
+      providerKind: "github",
+      fetchImpl,
+      previewFingerprint: mrPrev.previewFingerprint,
+    });
+    expect(gh.pulls).toHaveLength(1);
+    expect(retryMr.pullRequestUrl).toBe(mr.pullRequestUrl);
+    const status = inspectDeliveryStatus({ repo, workPackageId: WP });
+    expect(status.journal?.deliveryLifecycle ?? status.journal?.lifecycle).toBe("awaiting-review");
+    expect(status.journal?.baselineRemoteBranch).toBe("main");
+    expect(status.jiraMutated).toBe(false);
+    expect(readJournal(repo, WP)?.forcePush).toBe(false);
+    expect(lsRemoteHeads(repo, "origin").refs.some((r) => r.endsWith("/master"))).toBe(false);
+    expect(git(bare, ["rev-parse", "refs/heads/main"])).toBe(baseline);
   });
 });

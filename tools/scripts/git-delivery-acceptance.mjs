@@ -451,7 +451,7 @@ proven.push("V partial retry same commit");
 {
   let blocked = false;
   try {
-    previewPublish({ repo: commitRepo, workPackageId: WP });
+    await previewPublish({ repo: commitRepo, workPackageId: WP });
   } catch (err) {
     blocked = err.code === VCS_CODES.GIT_REMOTE_REQUIRED;
   }

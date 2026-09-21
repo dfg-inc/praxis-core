@@ -12,8 +12,11 @@ import {
   previewDelivery,
   previewIdentity,
   previewPublish,
+  previewMergeRequest,
   type DeliveryInputs,
+  type GitDeliveryJournal,
   type GitStatusReport,
+  type GitWriteFields,
   type RemoteInspectResult,
   type VcsProvider,
   type VcsProviderKind,
@@ -87,7 +90,7 @@ export function gitPreviewData(ctx: GitOpContext) {
   return previewDelivery(toGitInputs(ctx));
 }
 
-export function gitCommitData(ctx: GitOpContext) {
+export function gitCommitData(ctx: GitOpContext): Promise<GitDeliveryJournal & GitWriteFields> {
   return applyCommit({ ...toGitInputs(ctx), previewFingerprint: ctx.previewFingerprint! });
 }
 
@@ -95,7 +98,7 @@ export function gitPublishPreviewData(ctx: GitOpContext) {
   return previewPublish({ ...toGitInputs(ctx), mode: ctx.gitPublishMode });
 }
 
-export function gitPublishData(ctx: GitOpContext) {
+export function gitPublishData(ctx: GitOpContext): Promise<GitDeliveryJournal & GitWriteFields> {
   return applyPublish({
     ...toGitInputs(ctx),
     previewFingerprint: ctx.previewFingerprint!,
@@ -103,7 +106,11 @@ export function gitPublishData(ctx: GitOpContext) {
   });
 }
 
-export function gitMergeRequestData(ctx: GitOpContext) {
+export function gitMergeRequestPreviewData(ctx: GitOpContext) {
+  return previewMergeRequest(toGitInputs(ctx));
+}
+
+export function gitMergeRequestData(ctx: GitOpContext): Promise<GitDeliveryJournal & GitWriteFields> {
   return applyMergeRequest({ ...toGitInputs(ctx), previewFingerprint: ctx.previewFingerprint });
 }
 

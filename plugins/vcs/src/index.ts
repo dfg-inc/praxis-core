@@ -49,6 +49,7 @@ export {
   applyCommit,
   previewPublish,
   applyPublish,
+  previewMergeRequest,
   applyMergeRequest,
   inspectRemoteRepository,
   inspectDeliveryStatus,
@@ -60,5 +61,9 @@ export {
   type ConnectApplyResult,
   type DeliveryPreview,
   type PublishPreview,
+  type MergeRequestPreview,
+  type GitWriteFields,
   type RemoteInspectResult,
 } from "./delivery.js";
+export { verifyCommittedReproducibility } from "./reproducibility.js";
+export { requireCleanSecretScan, scanRevisionForSecrets } from "./secret-scan.js";

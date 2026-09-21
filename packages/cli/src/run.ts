@@ -42,6 +42,7 @@ import {
   developerGitCommitOp,
   developerGitPublishPreviewOp,
   developerGitPublishOp,
+  developerGitMergeRequestPreviewOp,
   developerGitMergeRequestOp,
   developerGitDeliveryStatusOp,
   developerGitLinkJiraPreviewOp,
@@ -380,13 +381,14 @@ async function developerCmd(sub: string | undefined, ctx: OpContext) {
   if (sub === "git-commit") return developerGitCommitOp(ctx);
   if (sub === "git-publish-preview") return developerGitPublishPreviewOp(ctx);
   if (sub === "git-publish") return developerGitPublishOp(ctx);
+  if (sub === "git-merge-request-preview") return developerGitMergeRequestPreviewOp(ctx);
   if (sub === "git-merge-request") return developerGitMergeRequestOp(ctx);
   if (sub === "git-delivery-status") return developerGitDeliveryStatusOp(ctx);
   if (sub === "git-link-jira-preview") return developerGitLinkJiraPreviewOp(ctx);
   if (sub === "git-link-jira") return developerGitLinkJiraApplyOp(ctx);
   throw new PraxisOpError(
     "INVALID_INPUT",
-    "usage: praxis developer status|claim|release|complete|complete-recovery-preview|complete-recovery-apply|git-status|git-connect-preview|git-connect|git-preview|git-commit|git-publish-preview|git-publish|git-merge-request|git-delivery-status",
+    "usage: praxis developer status|claim|release|complete|complete-recovery-preview|complete-recovery-apply|git-status|git-connect-preview|git-connect|git-preview|git-commit|git-publish-preview|git-publish|git-merge-request-preview|git-merge-request|git-delivery-status",
   );
 }
 

@@ -148,37 +148,31 @@ export function readGitIdentity(repo: string): GitIdentity {
 }
 
 export function listRemotes(repo: string): GitRemote[] {
-  const r = runGit(repo, ["remote", "-v"]);
-  if (r.status !== 0 || !r.stdout.trim()) return [];
-  const map = new Map<string, GitRemote>();
-  for (const line of r.stdout.split("\n")) {
-    const m = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
-    if (!m) continue;
-    const name = m[1]!;
-    const url = m[2]!;
-    const parsed = parseRemoteUrl(url);
-    const existing = map.get(name);
-    if (!existing) {
-      map.set(name, {
-        name,
-        fetchUrl: url,
-        pushUrl: url,
-        displayUrl: parsed.displayUrl,
-        identity: parsed.identity,
-        protocol: parsed.protocol,
-        host: parsed.host,
-        inferredProvider: parsed.inferredProvider,
-        owner: parsed.owner,
-        repo: parsed.repo,
-        projectPath: parsed.projectPath,
-      });
-    } else if (m[3] === "push") {
-      existing.pushUrl = url;
-    } else {
-      existing.fetchUrl = url;
-    }
+  const names = runGit(repo, ["remote"]);
+  if (names.status !== 0 || !names.stdout.trim()) return [];
+  const remotes: GitRemote[] = [];
+  for (const name of splitNames(names.stdout)) {
+    const fetchCfg = runGit(repo, ["config", "--get", `remote.${name}.url`]);
+    const pushCfg = runGit(repo, ["config", "--get", `remote.${name}.pushurl`]);
+    const fetchUrl = fetchCfg.stdout.trim();
+    if (!fetchUrl) continue;
+    const pushUrl = pushCfg.stdout.trim() || fetchUrl;
+    const parsed = parseRemoteUrl(fetchUrl);
+    remotes.push({
+      name,
+      fetchUrl,
+      pushUrl,
+      displayUrl: parsed.displayUrl,
+      identity: parsed.identity,
+      protocol: parsed.protocol,
+      host: parsed.host,
+      inferredProvider: parsed.inferredProvider,
+      owner: parsed.owner,
+      repo: parsed.repo,
+      projectPath: parsed.projectPath,
+    });
   }
-  return [...map.values()];
+  return remotes;
 }
 
 export function readWorkingTree(repo: string): GitWorkingTree {
@@ -354,6 +348,73 @@ export function remoteBranchExists(repo: string, remote: string, branch: string)
   const r = runGit(repo, ["ls-remote", "--heads", remote, branch]);
   if (r.status !== 0) return false;
   return r.stdout.trim().length > 0;
+}
+
+export function lsRemoteHeadSha(repo: string, remote: string, branch: string): string | null {
+  const r = runGit(repo, ["ls-remote", "--heads", remote, `refs/heads/${branch}`]);
+  if (r.status !== 0) return null;
+  const line = r.stdout.trim().split("\n")[0] ?? "";
+  const sha = line.split(/\s+/)[0] ?? "";
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
+export function pushRefspec(
+  repo: string,
+  remote: string,
+  source: string,
+  destinationBranch: string,
+  opts?: { setUpstream?: boolean },
+): { pushed: true; force: false; refspec: string } {
+  if (!destinationBranch || destinationBranch.includes("..") || destinationBranch.startsWith("-")) {
+    throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "invalid destination branch");
+  }
+  if (source.startsWith("+") || destinationBranch.startsWith("+")) {
+    throw new VcsError(VCS_CODES.GIT_FORCE_PUSH_FORBIDDEN, "force push is not allowed");
+  }
+  const dest = `refs/heads/${destinationBranch}`;
+  const refspec = `${source}:${dest}`;
+  const args = ["push"];
+  const shaSource = /^[0-9a-f]{40}$/i.test(source);
+  if (opts?.setUpstream && !shaSource) args.push("-u");
+  args.push(remote, refspec);
+  if (args.includes("--force") || args.includes("-f") || args.includes("--force-with-lease")) {
+    throw new VcsError(VCS_CODES.GIT_FORCE_PUSH_FORBIDDEN, "force push is not allowed");
+  }
+  const r = runGit(repo, args, { timeoutMs: 60_000 });
+  if (r.status !== 0) {
+    const err = r.stderr.toLowerCase();
+    if (err.includes("non-fast-forward") || err.includes("rejected")) {
+      throw new VcsError(VCS_CODES.GIT_REMOTE_HISTORY_CONFLICT, redactSecrets(r.stderr), {
+        remote,
+        destinationBranch,
+        force: false,
+      });
+    }
+    throw new VcsError(VCS_CODES.GIT_TRANSPORT_FAILED, redactSecrets(r.stderr || "git push failed"), {
+      remote,
+      destinationBranch,
+      force: false,
+    });
+  }
+  return { pushed: true, force: false, refspec };
+}
+
+export function committedPaths(repo: string, rev = "HEAD"): string[] {
+  const r = runGit(repo, ["ls-tree", "-r", "--name-only", rev]);
+  if (r.status !== 0) return [];
+  return splitNames(r.stdout);
+}
+
+export function commitCount(repo: string, rev = "HEAD"): number {
+  const r = runGit(repo, ["rev-list", "--count", rev]);
+  if (r.status !== 0) return 0;
+  return Number(r.stdout.trim()) || 0;
+}
+
+export function hasGithubWorkflows(repo: string, rev = "HEAD"): boolean {
+  return committedPaths(repo, rev).some(
+    (p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")),
+  );
 }
 
 export function writeTextFile(repo: string, rel: string, body: string): void {

@@ -38,7 +38,14 @@ export function createGitlabProvider(opts?: {
   fetchImpl?: FetchLike;
   env?: NodeJS.ProcessEnv;
 }): VcsProvider {
-  const config = opts?.config ?? loadGitlabConfig(opts?.env);
+  const config =
+    opts?.config ??
+    (opts?.fetchImpl
+      ? {
+          token: opts.env?.PRAXIS_GITLAB_TOKEN?.trim() || "fetch-impl",
+          baseUrl: (opts.env?.PRAXIS_GITLAB_BASE_URL?.trim() || "https://gitlab.com").replace(/\/$/, ""),
+        }
+      : loadGitlabConfig(opts?.env));
   const fetchImpl = opts?.fetchImpl ?? fetch;
   const apiRoot = `${config.baseUrl}/api/v4`;
 

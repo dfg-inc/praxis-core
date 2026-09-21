@@ -16,11 +16,15 @@ export type GitDeliveryJournal = {
   workPackageId: string;
   jiraWorkPackageKey?: string;
   provider?: VcsProviderKind;
+  repository?: string;
   remoteName?: string;
   remoteIdentity?: string;
   displayRemoteUrl?: string;
   branch?: string;
+  featureBranch?: string;
   targetBranch?: string;
+  baselineSha?: string;
+  baselineRemoteBranch?: string;
   baseSha?: string;
   commitSha?: string;
   commitTreeSha?: string;
@@ -29,7 +33,12 @@ export type GitDeliveryJournal = {
   qaSnapshotDigest?: string | null;
   mergeRequestUrl?: string;
   mergeRequestId?: string | number;
+  pullRequestUrl?: string;
+  pullRequestNumber?: string | number;
+  pullRequestBase?: string;
+  pullRequestHead?: string;
   ciStatus?: CiStatus;
+  deliveryLifecycle?: DeliveryLifecycle;
   lifecycle: DeliveryLifecycle;
   previewFingerprint?: string;
   forcePush: false;
@@ -58,6 +67,7 @@ export function readJournal(repo: string, workPackageId: string): GitDeliveryJou
 export function writeJournal(repo: string, entry: GitDeliveryJournal): void {
   const safe: GitDeliveryJournal = {
     ...entry,
+    deliveryLifecycle: entry.lifecycle,
     forcePush: false,
     merged: false,
   };

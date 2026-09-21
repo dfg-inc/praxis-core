@@ -12,6 +12,7 @@ export type QualitySnapshot = {
   files: QualitySnapshotFile[];
   approvalApplied: boolean;
   source: string | null;
+  jiraWorkPackageKey?: string;
 };
 
 function readJson(path: string): Record<string, unknown> | null {
@@ -37,6 +38,7 @@ export function readQualitySnapshot(repo: string, workPackageId: string): Qualit
     files,
     approvalApplied: raw?.approvalApplied === true,
     source,
+    jiraWorkPackageKey: typeof raw?.jiraWorkPackageKey === "string" ? raw.jiraWorkPackageKey : undefined,
   };
 }
 

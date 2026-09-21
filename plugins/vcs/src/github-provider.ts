@@ -118,7 +118,14 @@ export function createGithubProvider(opts?: {
   fetchImpl?: FetchLike;
   env?: NodeJS.ProcessEnv;
 }): VcsProvider {
-  const config = opts?.config ?? loadGithubConfig(opts?.env);
+  const config =
+    opts?.config ??
+    (opts?.fetchImpl
+      ? {
+          token: opts.env?.PRAXIS_GITHUB_TOKEN?.trim() || "fetch-impl",
+          apiUrl: validateGithubApiUrl(opts.env?.PRAXIS_GITHUB_API_URL).normalized,
+        }
+      : loadGithubConfig(opts?.env));
   const fetchImpl = opts?.fetchImpl ?? fetch;
 
   async function api<T>(method: string, path: string, body?: unknown): Promise<{ status: number; json: T | undefined; text: string }> {
@@ -173,7 +180,7 @@ export function createGithubProvider(opts?: {
         identity: `${identity.owner ?? ""}/${identity.repo ?? ""}`.replace(/^\//, ""),
         owner: identity.owner,
         repo: identity.repo,
-        defaultBranch: typeof json.default_branch === "string" ? json.default_branch : empty ? null : "main",
+        defaultBranch: typeof json.default_branch === "string" ? json.default_branch : "main",
         empty,
         hasReadme: readme.status === 200,
         htmlUrl: typeof json.html_url === "string" ? json.html_url : undefined,

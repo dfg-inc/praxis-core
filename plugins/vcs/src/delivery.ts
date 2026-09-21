@@ -16,15 +16,18 @@ import {
   listCommitFiles,
   listHooks,
   listRemotes,
+  lsRemoteHeadSha,
   lsRemoteHeads,
-  pushBranch,
+  pushRefspec,
   readGitIdentity,
   readWorkingTree,
-  remoteBranchExists,
   requireGitRepo,
   setLocalIdentity,
   setRemoteUrl,
   stagePaths,
+  committedPaths,
+  commitCount,
+  hasGithubWorkflows,
   type GitIdentity,
   type GitRemote,
   type GitWorkingTree,
@@ -44,6 +47,7 @@ import { defaultAllowlist, planStaging } from "./staging-policy.js";
 import { createGithubProvider, githubTokenFlags } from "./github-provider.js";
 import { createGitlabProvider, gitlabTokenFlags } from "./gitlab-provider.js";
 import type { CiStatus, RemoteRepositoryInfo, VcsProvider } from "./provider.js";
+import { requireCleanSecretScan } from "./secret-scan.js";
 
 export type DeliveryInputs = {
   repo: string;
@@ -447,6 +451,7 @@ export async function previewDelivery(opts: DeliveryInputs): Promise<DeliveryPre
   const repositoryRoot = requireGitRepo(opts.repo);
   const status = inspectGitStatus(opts);
   const snapshot = readQualitySnapshot(repositoryRoot, opts.workPackageId);
+  const jiraKey = opts.jiraWorkPackageKey || snapshot.jiraWorkPackageKey;
   const selectedFiles = buildAllowlist(opts, snapshot.files.map((f) => f.path).filter(Boolean));
   const staging = planStaging({
     allowlist: selectedFiles,
@@ -455,9 +460,9 @@ export async function previewDelivery(opts: DeliveryInputs): Promise<DeliveryPre
     untracked: status.workingTree.untracked,
   });
   const quality = compareToQualitySnapshot(repositoryRoot, staging.selected, snapshot);
-  const branch = opts.branch || defaultBranchName(opts.jiraWorkPackageKey, opts.workPackageId);
-  const targetBranch = opts.targetBranch || status.currentBranch || "master";
-  const commitMessage = opts.commitMessage || defaultCommitMessage(opts.jiraWorkPackageKey);
+  const branch = opts.branch || defaultBranchName(jiraKey, opts.workPackageId);
+  let targetBranch = opts.targetBranch?.trim() || "";
+  const commitMessage = opts.commitMessage || defaultCommitMessage(jiraKey);
   const remotes = listRemotes(repositoryRoot);
   const remote = opts.remoteName
     ? remotes.find((r) => r.name === opts.remoteName)
@@ -508,6 +513,9 @@ export async function previewDelivery(opts: DeliveryInputs): Promise<DeliveryPre
         remoteEmpty = info.empty;
         baselineRequired = info.empty;
         apiKnown = true;
+        if (!targetBranch && "defaultBranch" in info && info.defaultBranch) {
+          targetBranch = info.defaultBranch;
+        }
       }
     } catch {
       /* fall through to ls-remote; do not treat API failure as empty=false */
@@ -528,6 +536,15 @@ export async function previewDelivery(opts: DeliveryInputs): Promise<DeliveryPre
       }
     }
   }
+  if (!targetBranch) {
+    const inferred = remote
+      ? resolveProvider({
+          inferred: remote.inferredProvider,
+          configured: opts.providerKind ?? configuredProvider(),
+        })
+      : status.provider;
+    targetBranch = inferred === "gitlab" ? "main" : "main";
+  }
   const proposedOperations = ["create-branch", "stage-allowlist", "commit"];
   if (!status.remoteConfigured) {
     // local commit still allowed
@@ -542,7 +559,7 @@ export async function previewDelivery(opts: DeliveryInputs): Promise<DeliveryPre
   }
   const fingerprintBody = {
     workPackageId: opts.workPackageId,
-    jiraWorkPackageKey: opts.jiraWorkPackageKey ?? null,
+    jiraWorkPackageKey: opts.jiraWorkPackageKey ?? snapshot.jiraWorkPackageKey,
     repo: repositoryRoot,
     headSha: status.headSha,
     currentBranch: status.currentBranch,
@@ -559,7 +576,7 @@ export async function previewDelivery(opts: DeliveryInputs): Promise<DeliveryPre
   };
   return {
     workPackageId: opts.workPackageId,
-    jiraWorkPackageKey: opts.jiraWorkPackageKey,
+    jiraWorkPackageKey: jiraKey,
     repositoryRoot,
     headSha: status.headSha,
     branch,
@@ -607,7 +624,7 @@ function assertFingerprint(preview: DeliveryPreview, got?: string): void {
 
 export async function applyCommit(
   opts: DeliveryInputs & { previewFingerprint: string },
-): Promise<GitDeliveryJournal> {
+): Promise<GitDeliveryJournal & GitWriteFields> {
   const preview = await previewDelivery(opts);
   assertFingerprint(preview, opts.previewFingerprint);
   if (preview.blockers.length) {
@@ -623,7 +640,15 @@ export async function applyCommit(
   const repo = preview.repositoryRoot;
   const journal = readJournal(repo, opts.workPackageId);
   if (journal?.commitSha && gitHeadSha(repo) === journal.commitSha) {
-    return journal;
+    return {
+      ...journal,
+      ok: true,
+      writeSucceeded: false,
+      verificationStatus: "ok",
+      partial: false,
+      completed: true,
+      recoveryInstructions: "Commit already exists at HEAD; retry is a no-op.",
+    };
   }
   const headBefore = gitHeadSha(repo);
   const current = gitCurrentBranch(repo);
@@ -651,51 +676,116 @@ export async function applyCommit(
     path,
     sha256: committedFileSha256(repo, commitSha, path),
   }));
+  for (const row of hashes) {
+    const expected = preview.fileHashes.find((f) => f.path === row.path)?.sha256;
+    if (!row.sha256 || row.sha256 !== expected) {
+      throw new VcsError(
+        VCS_CODES.GIT_QUALITY_SNAPSHOT_MISMATCH,
+        `Committed ${row.path} does not match the Quality snapshot. This commit is not QA-approved.`,
+      );
+    }
+  }
   const entry: GitDeliveryJournal = {
+    ...(journal ?? {
+      workPackageId: opts.workPackageId,
+      forcePush: false as const,
+      merged: false as const,
+      lifecycle: "not-started",
+    }),
     workPackageId: opts.workPackageId,
-    jiraWorkPackageKey: opts.jiraWorkPackageKey,
+    jiraWorkPackageKey: opts.jiraWorkPackageKey ?? preview.jiraWorkPackageKey ?? journal?.jiraWorkPackageKey,
     provider: preview.provider,
-    remoteName: preview.targetRemote,
-    remoteIdentity: listRemotes(repo).find((r) => r.name === preview.targetRemote)?.identity,
-    displayRemoteUrl: listRemotes(repo).find((r) => r.name === preview.targetRemote)?.displayUrl,
+    repository: repo,
+    remoteName: preview.targetRemote ?? journal?.remoteName,
+    remoteIdentity: listRemotes(repo).find((r) => r.name === preview.targetRemote)?.identity ?? journal?.remoteIdentity,
+    displayRemoteUrl: listRemotes(repo).find((r) => r.name === preview.targetRemote)?.displayUrl ?? journal?.displayRemoteUrl,
     branch: preview.branch,
+    featureBranch: preview.branch,
     targetBranch: preview.targetBranch,
-    baseSha: headBefore ?? undefined,
+    baselineSha: journal?.baselineSha,
+    baselineRemoteBranch: journal?.baselineRemoteBranch,
+    baseSha: journal?.baselineSha ?? headBefore ?? undefined,
     commitSha,
     commitTreeSha: gitTreeSha(repo, commitSha) ?? undefined,
     selectedFiles: preview.selectedFiles,
     qaReviewId: preview.qualityReviewId,
     qaSnapshotDigest: preview.qualitySnapshotDigest,
-    ciStatus: "unknown",
-    lifecycle: "committed",
+    ciStatus: hasGithubWorkflows(repo, commitSha) ? "not_started" : "not_configured",
+    lifecycle: extra.length ? "partial" : "committed",
     previewFingerprint: preview.previewFingerprint,
     forcePush: false,
     merged: false,
   };
-  if (extra.length) {
-    entry.lifecycle = "partial";
-  }
   writeJournal(repo, entry);
-  void hashes;
-  return readJournal(repo, opts.workPackageId)!;
+  const saved = readJournal(repo, opts.workPackageId)!;
+  return {
+    ...saved,
+    ok: extra.length === 0,
+    writeSucceeded: true,
+    verificationStatus: extra.length === 0 ? "ok" : "failed",
+    partial: extra.length > 0,
+    completed: extra.length === 0,
+    errors: extra.length ? [`commit contains extra files: ${extra.join(", ")}`] : undefined,
+  };
 }
+
+export type GitWriteFields = {
+  ok: boolean;
+  writeSucceeded: boolean;
+  verificationStatus: "ok" | "failed" | "pending" | "skipped";
+  partial: boolean;
+  completed: boolean;
+  recoveryInstructions?: string;
+  errors?: string[];
+  code?: string;
+};
 
 export type PublishPreview = {
   mode: "baseline" | "branch";
+  sourceBranch: string;
+  sourceCommitSha: string;
+  targetRemote: string;
+  targetRemoteBranch: string;
   remoteName: string;
   remoteIdentity: string;
+  displayRemoteUrl: string;
+  githubRepository?: string;
+  refspec: string;
+  existingRefs: string[];
+  remoteEmpty: boolean;
+  defaultBranch: string | null;
   branch: string;
   commitSha?: string;
-  remoteEmpty: boolean;
   baselineRequired: boolean;
   force: false;
+  secretScan: { blocked: false } | { blocked: true; paths: string[] };
   previewFingerprint: string;
   jiraMutated: false;
 };
 
-export function previewPublish(
+async function resolveRemoteDefaultBranch(opts: DeliveryInputs, remote: GitRemote): Promise<string> {
+  if (opts.targetBranch?.trim()) return opts.targetBranch.trim();
+  const journal = readJournal(requireGitRepo(opts.repo), opts.workPackageId);
+  if (journal?.baselineRemoteBranch) return journal.baselineRemoteBranch;
+  if (journal?.targetBranch && journal.targetBranch !== gitCurrentBranch(requireGitRepo(opts.repo))) {
+    return journal.targetBranch;
+  }
+  try {
+    const info = await inspectRemoteRepository(opts);
+    if (info && "defaultBranch" in info && info.defaultBranch) return info.defaultBranch;
+  } catch {
+    /* fall through */
+  }
+  const kind = resolveProvider({
+    inferred: remote.inferredProvider,
+    configured: opts.providerKind ?? configuredProvider(),
+  });
+  return kind === "github" || kind === "gitlab" ? "main" : "main";
+}
+
+export async function previewPublish(
   opts: DeliveryInputs & { mode?: "baseline" | "branch" },
-): PublishPreview {
+): Promise<PublishPreview> {
   const repo = requireGitRepo(opts.repo);
   const journal = readJournal(repo, opts.workPackageId);
   const remotes = listRemotes(repo);
@@ -712,27 +802,68 @@ export function previewPublish(
   }
   const heads = lsRemoteHeads(repo, remote.name);
   const mode = opts.mode ?? (heads.empty ? "baseline" : "branch");
-  const branch =
+  const sourceBranch =
     mode === "baseline"
-      ? (journal?.targetBranch || gitCurrentBranch(repo) || "master")
-      : (journal?.branch || defaultBranchName(opts.jiraWorkPackageKey, opts.workPackageId));
+      ? (gitCurrentBranch(repo) || "master")
+      : (journal?.featureBranch || journal?.branch || defaultBranchName(opts.jiraWorkPackageKey, opts.workPackageId));
+  const sourceCommitSha =
+    mode === "baseline"
+      ? (gitHeadSha(repo) ?? "")
+      : (journal?.commitSha || gitHeadSha(repo) || "");
+  if (!sourceCommitSha) {
+    throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "No committed HEAD to publish.");
+  }
+  const targetRemoteBranch =
+    mode === "baseline" ? await resolveRemoteDefaultBranch(opts, remote) : sourceBranch;
+  const refspec = `${sourceCommitSha}:refs/heads/${targetRemoteBranch}`;
+  let secretBlocked: PublishPreview["secretScan"] = { blocked: false };
+  try {
+    requireCleanSecretScan(repo, sourceCommitSha);
+  } catch (err) {
+    if (err instanceof VcsError && err.code === VCS_CODES.GIT_SECRETS_DETECTED) {
+      secretBlocked = { blocked: true, paths: (err.details?.paths as string[]) ?? ["(hidden)"] };
+    } else {
+      throw err;
+    }
+  }
   const body = {
     mode,
+    sourceBranch,
+    sourceCommitSha,
+    targetRemote: remote.name,
+    targetRemoteBranch,
     remoteIdentity: remote.identity,
-    branch,
-    commitSha: journal?.commitSha ?? null,
+    displayUrl: remote.displayUrl,
+    refspec,
     remoteEmpty: heads.empty,
+    existingRefs: heads.refs,
     force: false as const,
+    committedFileCount: commitCount(repo, sourceCommitSha),
+    committedPathCount: committedPaths(repo, sourceCommitSha).length,
+    qualityReviewId: journal?.qaReviewId ?? null,
+    qualitySnapshotDigest: journal?.qaSnapshotDigest ?? null,
+    commitMessage: journal?.commitSha ? undefined : null,
+    githubRepository: remote.owner && remote.repo ? `${remote.owner}/${remote.repo}` : remote.identity,
   };
   return {
     mode,
+    sourceBranch,
+    sourceCommitSha,
+    targetRemote: remote.name,
+    targetRemoteBranch,
     remoteName: remote.name,
     remoteIdentity: remote.identity,
-    branch,
-    commitSha: journal?.commitSha,
+    displayRemoteUrl: remote.displayUrl,
+    githubRepository: remote.owner && remote.repo ? `${remote.owner}/${remote.repo}` : remote.identity,
+    refspec,
+    existingRefs: heads.refs,
     remoteEmpty: heads.empty,
+    defaultBranch: targetRemoteBranch,
+    branch: mode === "baseline" ? targetRemoteBranch : sourceBranch,
+    commitSha: sourceCommitSha,
     baselineRequired: heads.empty && mode === "branch",
     force: false,
+    secretScan: secretBlocked,
     previewFingerprint: deliveryFingerprint(body),
     jiraMutated: false,
   };
@@ -740,15 +871,18 @@ export function previewPublish(
 
 export async function applyPublish(
   opts: DeliveryInputs & { previewFingerprint: string; mode?: "baseline" | "branch" },
-): Promise<GitDeliveryJournal> {
+): Promise<GitDeliveryJournal & GitWriteFields> {
   const repo = requireGitRepo(opts.repo);
   const journal = readJournal(repo, opts.workPackageId);
-  if (!journal?.commitSha && opts.mode !== "baseline") {
-    throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "No local delivery commit. Run git commit first.");
-  }
-  const pub = previewPublish(opts);
+  const pub = await previewPublish(opts);
   if (pub.previewFingerprint !== opts.previewFingerprint) {
     throw new VcsError(VCS_CODES.GIT_PREVIEW_STALE, "publish previewFingerprint mismatch; re-run git publish preview");
+  }
+  if (pub.secretScan.blocked) {
+    throw new VcsError(
+      VCS_CODES.GIT_SECRETS_DETECTED,
+      "GIT_SECRETS_DETECTED: committed objects look like credentials. Values are not shown. Publish is blocked.",
+    );
   }
   if (pub.baselineRequired) {
     throw new VcsError(
@@ -757,46 +891,102 @@ export async function applyPublish(
     );
   }
   const remotes = listRemotes(repo);
-  const remote = opts.remoteName
-    ? remotes.find((r) => r.name === opts.remoteName)
-    : remotes.length === 1
-      ? remotes[0]
-      : undefined;
+  const remote = remotes.find((r) => r.name === pub.targetRemote);
   if (!remote) {
-    throw new VcsError(
-      VCS_CODES.GIT_REMOTE_REQUIRED,
-      "Remote delivery is blocked: no remote configured. Local commit is allowed. Connect Git first.",
-    );
+    throw new VcsError(VCS_CODES.GIT_REMOTE_REQUIRED, "Remote delivery is blocked: no remote configured.");
   }
   const heads = lsRemoteHeads(repo, remote.name);
-  const mode = opts.mode ?? (heads.empty ? "baseline" : "branch");
-  if (mode === "branch" && heads.empty) {
+  if (pub.mode === "branch" && heads.empty) {
     throw new VcsError(
       VCS_CODES.GIT_BASELINE_REQUIRED,
       "GitHub/GitLab repository has no commits. Human-gated baseline publication is required before a pull/merge request. This will not force-push.",
     );
   }
-  if (mode === "baseline" && !heads.empty) {
+  if (pub.mode === "baseline" && !heads.empty) {
+    const existingMain = lsRemoteHeadSha(repo, remote.name, pub.targetRemoteBranch);
+    if (existingMain && existingMain === pub.sourceCommitSha) {
+      const next: GitDeliveryJournal = {
+        ...(journal ?? {
+          workPackageId: opts.workPackageId,
+          forcePush: false,
+          merged: false,
+          lifecycle: "not-started",
+        }),
+        repository: repo,
+        remoteName: remote.name,
+        remoteIdentity: remote.identity,
+        displayRemoteUrl: remote.displayUrl,
+        baselineSha: pub.sourceCommitSha,
+        baselineRemoteBranch: pub.targetRemoteBranch,
+        targetBranch: pub.targetRemoteBranch,
+        baseSha: pub.sourceCommitSha,
+        lifecycle: "baseline-published",
+        ciStatus: "not_configured",
+        forcePush: false,
+        merged: false,
+      };
+      writeJournal(repo, next);
+      const saved = readJournal(repo, opts.workPackageId)!;
+      return {
+        ...saved,
+        ok: true,
+        writeSucceeded: false,
+        verificationStatus: "ok",
+        partial: false,
+        completed: true,
+        recoveryInstructions: "Baseline already published; retry is a no-op.",
+      };
+    }
     throw new VcsError(
       VCS_CODES.GIT_REMOTE_HISTORY_CONFLICT,
       "Remote already has history. Baseline publication is skipped. Praxis will not force-push or overwrite it.",
     );
   }
-  const branch = pub.branch;
-  if (mode === "branch" && journal?.lifecycle === "pushed" && journal.commitSha) {
-    return journal;
+  if (pub.mode === "branch") {
+    if (!journal?.commitSha) {
+      throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "No local delivery commit. Run git commit first.");
+    }
+    if (gitHeadSha(repo) !== journal.commitSha) {
+      const onBranch = gitCurrentBranch(repo);
+      if (onBranch !== journal.branch) checkoutBranch(repo, journal.branch!);
+    }
+    const remoteFeat = lsRemoteHeadSha(repo, remote.name, pub.targetRemoteBranch);
+    if (remoteFeat && remoteFeat === journal.commitSha) {
+      const next: GitDeliveryJournal = {
+        ...journal,
+        lifecycle: "pushed",
+        forcePush: false,
+        merged: false,
+      };
+      writeJournal(repo, next);
+      const saved = readJournal(repo, opts.workPackageId)!;
+      return {
+        ...saved,
+        ok: true,
+        writeSucceeded: false,
+        verificationStatus: "ok",
+        partial: false,
+        completed: true,
+      };
+    }
   }
-  if (mode === "branch" && journal?.commitSha && gitHeadSha(repo) !== journal.commitSha) {
-    const onBranch = gitCurrentBranch(repo);
-    if (onBranch !== journal.branch) checkoutBranch(repo, journal.branch!);
+  if (pub.mode === "baseline" && gitHeadSha(repo) !== pub.sourceCommitSha) {
+    throw new VcsError(
+      VCS_CODES.GIT_PREVIEW_STALE,
+      "HEAD moved since baseline preview. Re-run publish preview. Working tree is not published.",
+    );
   }
-  if (remoteBranchExists(repo, remote.name, branch) && mode === "branch") {
-    /* non-ff checked by git push rejection */
-  }
-  const pushed = pushBranch(repo, remote.name, branch, { setUpstream: true });
+  const pushed = pushRefspec(repo, remote.name, pub.sourceCommitSha, pub.targetRemoteBranch, {
+    setUpstream: pub.mode === "branch",
+  });
   if (pushed.force) {
     throw new VcsError(VCS_CODES.GIT_FORCE_PUSH_FORBIDDEN, "force push is not allowed");
   }
+  const after = lsRemoteHeads(repo, remote.name);
+  const remoteSha = lsRemoteHeadSha(repo, remote.name, pub.targetRemoteBranch);
+  const masterCreated =
+    pub.targetRemoteBranch !== "master" && after.refs.some((ref) => ref.endsWith("/master") || ref === "refs/heads/master");
+  const verified = remoteSha === pub.sourceCommitSha && !masterCreated;
   const next: GitDeliveryJournal = {
     ...(journal ?? {
       workPackageId: opts.workPackageId,
@@ -808,18 +998,85 @@ export async function applyPublish(
       inferred: remote.inferredProvider,
       configured: opts.providerKind ?? configuredProvider(),
     }),
+    repository: repo,
     remoteName: remote.name,
     remoteIdentity: remote.identity,
     displayRemoteUrl: remote.displayUrl,
-    branch: journal?.branch ?? pub.branch,
-    targetBranch: journal?.targetBranch ?? "master",
-    lifecycle: mode === "baseline" ? "baseline-published" : "pushed",
-    ciStatus: "unknown",
+    branch: pub.mode === "branch" ? pub.sourceBranch : journal?.branch,
+    featureBranch: journal?.featureBranch ?? journal?.branch,
+    targetBranch: pub.mode === "baseline" ? pub.targetRemoteBranch : journal?.targetBranch ?? pub.targetRemoteBranch,
+    baselineSha: pub.mode === "baseline" ? pub.sourceCommitSha : journal?.baselineSha,
+    baselineRemoteBranch: pub.mode === "baseline" ? pub.targetRemoteBranch : journal?.baselineRemoteBranch,
+    baseSha: pub.mode === "baseline" ? pub.sourceCommitSha : journal?.baseSha,
+    lifecycle: pub.mode === "baseline" ? "baseline-published" : verified ? "pushed" : "partial",
+    ciStatus: hasGithubWorkflows(repo, pub.sourceCommitSha) ? "not_started" : "not_configured",
+    previewFingerprint: pub.previewFingerprint,
     forcePush: false,
     merged: false,
   };
   writeJournal(repo, next);
-  return readJournal(repo, opts.workPackageId)!;
+  const saved = readJournal(repo, opts.workPackageId)!;
+  return {
+    ...saved,
+    ok: verified,
+    writeSucceeded: true,
+    verificationStatus: verified ? "ok" : "failed",
+    partial: !verified,
+    completed: verified,
+    errors: verified
+      ? undefined
+      : [
+          masterCreated
+            ? "remote refs/heads/master was created; expected only the GitHub default branch"
+            : `remote ${pub.targetRemoteBranch} SHA ${remoteSha ?? "(missing)"} does not match ${pub.sourceCommitSha}`,
+        ],
+    recoveryInstructions: verified
+      ? undefined
+      : "Re-run git publish preview. Praxis will not force-push. Confirm the remote ref SHA before retry.",
+  };
+}
+
+export type MergeRequestPreview = {
+  sourceBranch: string;
+  targetBranch: string;
+  commitSha: string;
+  remoteIdentity: string;
+  previewFingerprint: string;
+  jiraMutated: false;
+};
+
+export async function previewMergeRequest(opts: DeliveryInputs): Promise<MergeRequestPreview> {
+  const repo = requireGitRepo(opts.repo);
+  const journal = readJournal(repo, opts.workPackageId);
+  if (!journal?.commitSha || !journal.branch) {
+    throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "Commit and push the feature branch before a pull request.");
+  }
+  const remotes = listRemotes(repo);
+  const remote = remotes.find((r) => r.name === (opts.remoteName || journal.remoteName)) ?? remotes[0];
+  if (!remote) throw new VcsError(VCS_CODES.GIT_REMOTE_REQUIRED, "No remote configured.");
+  const targetBranch =
+    opts.targetBranch || journal.baselineRemoteBranch || journal.targetBranch || (await resolveRemoteDefaultBranch(opts, remote));
+  const remoteHead = lsRemoteHeadSha(repo, remote.name, journal.branch);
+  if (!remoteHead) {
+    throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "Feature branch is not on the remote. Publish the branch first.");
+  }
+  const plan = {
+    sourceBranch: journal.branch,
+    targetBranch,
+    commitSha: journal.commitSha,
+    remoteHead,
+    remoteIdentity: remote.identity,
+    displayUrl: remote.displayUrl,
+    qualityReviewId: journal.qaReviewId ?? null,
+  };
+  return {
+    sourceBranch: journal.branch,
+    targetBranch,
+    commitSha: journal.commitSha,
+    remoteIdentity: remote.identity,
+    previewFingerprint: deliveryFingerprint(plan),
+    jiraMutated: false,
+  };
 }
 
 function resolveVcsProvider(opts: DeliveryInputs, kind: VcsProviderKind): VcsProvider {
@@ -864,14 +1121,23 @@ export function mergeRequestBody(opts: {
 
 export async function applyMergeRequest(
   opts: DeliveryInputs & { previewFingerprint?: string },
-): Promise<GitDeliveryJournal> {
+): Promise<GitDeliveryJournal & GitWriteFields> {
   const repo = requireGitRepo(opts.repo);
   const journal = readJournal(repo, opts.workPackageId);
   if (!journal?.commitSha) {
     throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "Create the local commit and push before a pull/merge request.");
   }
   if (journal.mergeRequestUrl && journal.lifecycle === "awaiting-review") {
-    return journal;
+    return {
+      ...journal,
+      pullRequestUrl: journal.pullRequestUrl ?? journal.mergeRequestUrl,
+      ok: true,
+      writeSucceeded: false,
+      verificationStatus: "ok",
+      partial: false,
+      completed: true,
+      recoveryInstructions: "Pull request already exists; retry is a no-op.",
+    };
   }
   if (journal.lifecycle !== "pushed" && journal.lifecycle !== "awaiting-review" && journal.lifecycle !== "partial") {
     if (journal.lifecycle === "committed" || journal.lifecycle === "baseline-published") {
@@ -880,6 +1146,13 @@ export async function applyMergeRequest(
         "Push the feature branch after baseline publication, then create the pull/merge request.",
       );
     }
+  }
+  const preview = await previewMergeRequest(opts);
+  if (opts.previewFingerprint && preview.previewFingerprint !== opts.previewFingerprint) {
+    throw new VcsError(VCS_CODES.GIT_PREVIEW_STALE, "merge request previewFingerprint mismatch");
+  }
+  if (!opts.previewFingerprint) {
+    throw new VcsError(VCS_CODES.GIT_CONFIRMATION_REQUIRED, "git merge request requires previewFingerprint from git merge-request preview");
   }
   const remotes = listRemotes(repo);
   const remote = remotes.find((r) => r.name === (opts.remoteName || journal.remoteName)) ?? remotes[0];
@@ -894,8 +1167,18 @@ export async function applyMergeRequest(
     throw new VcsError(VCS_CODES.GIT_PROVIDER_UNKNOWN, "Select provider github or gitlab.");
   }
   const provider = resolveVcsProvider(opts, kind);
-  const sourceBranch = journal.branch!;
-  const targetBranch = opts.targetBranch || journal.targetBranch || "master";
+  const sourceBranch = preview.sourceBranch;
+  const targetBranch = preview.targetBranch;
+  const remoteHead = lsRemoteHeadSha(repo, remote.name, sourceBranch);
+  if (!remoteHead) {
+    throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "Feature branch is not on the remote. Publish the branch first.");
+  }
+  if (remoteHead !== journal.commitSha) {
+    throw new VcsError(
+      VCS_CODES.GIT_COMMIT_DIVERGED,
+      "Remote feature SHA does not match the approved local commit. Praxis will not create a PR from a different SHA.",
+    );
+  }
   const existing = await provider.listOpenMergeRequests({
     owner: remote.owner,
     repo: remote.repo,
@@ -903,6 +1186,7 @@ export async function applyMergeRequest(
     sourceBranch,
     targetBranch,
   });
+  const created = !existing[0];
   const mr =
     existing[0] ??
     (await provider.createMergeRequest({
@@ -928,24 +1212,44 @@ export async function applyMergeRequest(
   if (mr.merged) {
     throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "Existing pull/merge request is already merged. Praxis does not merge.");
   }
-  const ci = await provider.pipelineStatus({
-    owner: remote.owner,
-    repo: remote.repo,
-    projectPath: remote.projectPath,
-    branch: sourceBranch,
-    commitSha: journal.commitSha,
-  });
+  const ciConfigured = hasGithubWorkflows(repo, journal.commitSha);
+  const ci = ciConfigured
+    ? await provider.pipelineStatus({
+        owner: remote.owner,
+        repo: remote.repo,
+        projectPath: remote.projectPath,
+        branch: sourceBranch,
+        commitSha: journal.commitSha,
+      })
+    : { ciStatus: "not_configured" as CiStatus, details: "CI not configured" };
+  if (!ciConfigured && ci.ciStatus === "success") {
+    ci.ciStatus = "not_configured";
+  }
+  const verified = mr.targetBranch === targetBranch && mr.sourceBranch === sourceBranch && !mr.merged;
   const next: GitDeliveryJournal = {
     ...journal,
     mergeRequestUrl: mr.url || undefined,
     mergeRequestId: mr.id,
+    pullRequestUrl: mr.url || undefined,
+    pullRequestNumber: mr.iid ?? mr.id,
+    pullRequestBase: mr.targetBranch,
+    pullRequestHead: mr.sourceBranch,
     ciStatus: ci.ciStatus,
-    lifecycle: "awaiting-review",
+    lifecycle: verified ? "awaiting-review" : "partial",
     forcePush: false,
     merged: false,
   };
   writeJournal(repo, next);
-  return readJournal(repo, opts.workPackageId)!;
+  const saved = readJournal(repo, opts.workPackageId)!;
+  return {
+    ...saved,
+    ok: verified && Boolean(mr.url),
+    writeSucceeded: created || Boolean(mr.url),
+    verificationStatus: verified ? "ok" : "failed",
+    partial: !verified,
+    completed: verified,
+    errors: verified ? undefined : ["pull request base/head did not match the approved preview"],
+  };
 }
 
 export async function inspectRemoteRepository(
@@ -981,8 +1285,14 @@ export function inspectDeliveryStatus(opts: DeliveryInputs): {
   jiraMutated: false;
 } {
   const repo = requireGitRepo(opts.repo);
+  const journal = readJournal(repo, opts.workPackageId);
+  if (journal && journal.commitSha && !hasGithubWorkflows(repo, journal.commitSha)) {
+    if (journal.ciStatus === "success" || journal.ciStatus === "not_started" || journal.ciStatus === "unknown" || !journal.ciStatus) {
+      journal.ciStatus = "not_configured";
+    }
+  }
   return {
-    journal: readJournal(repo, opts.workPackageId),
+    journal,
     handoffPath: handoffPath(repo, opts.workPackageId),
     github: githubTokenFlags(),
     gitlab: gitlabTokenFlags(),

@@ -1,6 +1,14 @@
 export type MergeRequestKind = "pull-request" | "merge-request";
 
-export type CiStatus = "unknown" | "not_started" | "queued" | "in_progress" | "success" | "failure" | "cancelled";
+export type CiStatus =
+  | "unknown"
+  | "not_configured"
+  | "not_started"
+  | "queued"
+  | "in_progress"
+  | "success"
+  | "failure"
+  | "cancelled";
 
 export type RemoteRepositoryInfo = {
   provider: "github" | "gitlab";

@@ -35,7 +35,7 @@ import {
   type QualityLifecycleSnapshot,
   type QualityCommentReadback,
 } from "@praxis/jira/workflow";
-import { VcsError, githubTokenFlags, gitlabTokenFlags } from "@praxis/vcs";
+import { VcsError, githubTokenFlags, gitlabTokenFlags, type GitDeliveryJournal, type GitWriteFields } from "@praxis/vcs";
 import {
   gitCommitData,
   gitConnectApplyData,
@@ -44,6 +44,7 @@ import {
   gitIdentityApplyData,
   gitIdentityPreviewData,
   gitMergeRequestData,
+  gitMergeRequestPreviewData,
   gitPreviewData,
   gitPublishData,
   gitPublishPreviewData,
@@ -126,6 +127,9 @@ export const OP_CODES = {
   GITLAB_TOKEN_UNAVAILABLE: "GITLAB_TOKEN_UNAVAILABLE",
   GIT_TRANSPORT_FAILED: "GIT_TRANSPORT_FAILED",
   GIT_COMMIT_DIVERGED: "GIT_COMMIT_DIVERGED",
+  GIT_CONFIRMATION_REQUIRED: "GIT_CONFIRMATION_REQUIRED",
+  GIT_SECRETS_DETECTED: "GIT_SECRETS_DETECTED",
+  GIT_REPRODUCIBILITY_BLOCKED: "GIT_REPRODUCIBILITY_BLOCKED",
 } as const;
 
 export type OpCode = (typeof OP_CODES)[keyof typeof OP_CODES];
@@ -1260,7 +1264,7 @@ export async function developerGitPreviewOp(ctx: OpContext) {
   }
 }
 
-export async function developerGitCommitOp(ctx: OpContext) {
+export async function developerGitCommitOp(ctx: OpContext): Promise<GitDeliveryJournal & GitWriteFields> {
   requireGitWp(ctx);
   requireConfirm(ctx.confirmation, "git commit");
   if (!ctx.previewFingerprint) {
@@ -1276,13 +1280,13 @@ export async function developerGitCommitOp(ctx: OpContext) {
 export async function developerGitPublishPreviewOp(ctx: OpContext) {
   requireGitWp(ctx);
   try {
-    return gitPublishPreviewData(gitCtx(ctx));
+    return await gitPublishPreviewData(gitCtx(ctx));
   } catch (err) {
     mapVcs(err);
   }
 }
 
-export async function developerGitPublishOp(ctx: OpContext) {
+export async function developerGitPublishOp(ctx: OpContext): Promise<GitDeliveryJournal & GitWriteFields> {
   requireGitWp(ctx);
   requireConfirm(ctx.confirmation, "git publish");
   if (!ctx.previewFingerprint) {
@@ -1295,9 +1299,21 @@ export async function developerGitPublishOp(ctx: OpContext) {
   }
 }
 
-export async function developerGitMergeRequestOp(ctx: OpContext) {
+export async function developerGitMergeRequestPreviewOp(ctx: OpContext) {
+  requireGitWp(ctx);
+  try {
+    return await gitMergeRequestPreviewData(gitCtx(ctx));
+  } catch (err) {
+    mapVcs(err);
+  }
+}
+
+export async function developerGitMergeRequestOp(ctx: OpContext): Promise<GitDeliveryJournal & GitWriteFields> {
   requireGitWp(ctx);
   requireConfirm(ctx.confirmation, "git merge request");
+  if (!ctx.previewFingerprint) {
+    throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git merge request requires previewFingerprint");
+  }
   try {
     return await gitMergeRequestData(gitCtx(ctx));
   } catch (err) {

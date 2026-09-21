@@ -15,7 +15,7 @@ export function createMockGithubState(partial?: Partial<MockGithubState>): MockG
   return {
     owner: "hisagedru",
     repo: "praxis-acceptance-test",
-    defaultBranch: partial?.empty === false ? "main" : null,
+    defaultBranch: partial?.defaultBranch !== undefined ? partial.defaultBranch : "main",
     empty: true,
     hasReadme: false,
     pulls: [],
