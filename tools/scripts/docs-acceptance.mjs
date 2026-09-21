@@ -101,6 +101,9 @@ const qualityGuide = readFileSync(join(canonical, "plugins/quality.md"), "utf8")
 for (const needle of [
   "praxis_quality_ensure",
   "praxis_quality_status",
+  "praxis_quality_review",
+  "praxis_quality_apply_preview",
+  "praxis_quality_apply",
   "not_started",
   "QUALITY_PACKAGE_MISSING",
   "QUALITY_SQLITE_UNAVAILABLE",

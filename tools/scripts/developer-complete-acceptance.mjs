@@ -30,7 +30,7 @@ function fail(msg) {
 }
 
 const built = spawnSync(
-  "npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira -w @praxis/cli -w @praxis/mcp",
+  "npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira -w @praxis/quality-service -w @praxis/cli -w @praxis/mcp",
   { cwd: root, shell: true, encoding: "utf8" },
 );
 if ((built.status ?? 1) !== 0) fail(`build failed\n${built.stderr || built.stdout}`);
@@ -300,6 +300,9 @@ const proven = [];
   });
   if (!qa.developerEvidence?.hasQualityHandoff) fail("L: Quality cannot discover handoff");
   if (!qa.qualityInputs?.hasHandoff) fail("L: qualityInputs missing handoff");
+  if (qa.jiraMutated !== false) fail("L: Quality review mutated Jira");
+  const { stopQuality } = await import("../../packages/cli/dist/quality-ensure.js");
+  stopQuality(repo);
   proven.push("L alpha.34 inconsistent-state recovery + Quality consumption");
 }
 

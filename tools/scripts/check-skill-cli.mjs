@@ -58,6 +58,8 @@ const ROLE_FORBIDDEN_TOOLS = {
     "praxis_developer_claim",
     "praxis_developer_complete",
     "praxis_quality_review",
+    "praxis_quality_apply_preview",
+    "praxis_quality_apply",
     "praxis_quality_ensure",
     "praxis_work_package_list",
     "praxis_work_package_show",
@@ -68,6 +70,8 @@ const ROLE_FORBIDDEN_TOOLS = {
     "praxis_developer_claim",
     "praxis_developer_complete",
     "praxis_quality_review",
+    "praxis_quality_apply_preview",
+    "praxis_quality_apply",
     "praxis_quality_ensure",
   ],
   developer: [
@@ -76,6 +80,8 @@ const ROLE_FORBIDDEN_TOOLS = {
     "praxis_architect_preview",
     "praxis_architect_apply",
     "praxis_quality_review",
+    "praxis_quality_apply_preview",
+    "praxis_quality_apply",
     "praxis_quality_ensure",
   ],
   quality: [
@@ -142,7 +148,7 @@ for (const role of ROLES) {
         violations.push(`${relative(root, file)} missing human approval gate`);
       }
     }
-    if (/(praxis_ba_apply|praxis_architect_apply|praxis_developer_claim|praxis_quality_review)/.test(text)) {
+    if (/(praxis_ba_apply|praxis_architect_apply|praxis_developer_claim|praxis_quality_apply)/.test(text)) {
       if (!/approval|confirm|wait|STOP|Do not .*apply/i.test(text)) {
         violations.push(`${relative(root, file)} write tool without human gate language`);
       }
