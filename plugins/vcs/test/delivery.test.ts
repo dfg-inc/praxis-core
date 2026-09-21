@@ -23,6 +23,7 @@ import {
   previewDelivery,
   previewPublish,
   redactRemoteUrl,
+  setRemoteUrl,
   validateGithubApiUrl,
   VCS_CODES,
 } from "../src/index.js";
@@ -300,37 +301,47 @@ describe("git status / connect", () => {
     expect(reread.previewFingerprint).not.toBe(preview.previewFingerprint);
   });
 
-  it("fails accurately when git remote set-url cannot write", () => {
-    const repo = tmpRepo();
-    git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test.git"]);
-    const next = "git@github.com:hisagedru/praxis-acceptance-test.git";
-    const preview = previewConnect({
-      repo,
-      workPackageId: WP,
-      remoteUrl: next,
-      providerKind: "github",
-    });
-    const gitDir = join(repo, ".git");
-    spawnSync("chmod", ["a-w", gitDir], { encoding: "utf8" });
-    try {
-      applyConnect({
+  it("reports git remote set-url failure without claiming wrote", () => {
+    const dir = mkdtempSync(join(tmpdir(), "praxis-vcs-nowrite-"));
+    expect(() => setRemoteUrl(dir, "origin", "git@github.com:hisagedru/praxis-acceptance-test.git")).toThrow(
+      /GIT_TRANSPORT_FAILED|not a git repository|failed/i,
+    );
+  });
+
+  it.skipIf(typeof process.getuid === "function" && process.getuid() === 0)(
+    "fails accurately when git remote set-url cannot write",
+    () => {
+      const repo = tmpRepo();
+      git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test.git"]);
+      const next = "git@github.com:hisagedru/praxis-acceptance-test.git";
+      const preview = previewConnect({
         repo,
         workPackageId: WP,
         remoteUrl: next,
         providerKind: "github",
-        previewFingerprint: preview.previewFingerprint,
-        probeRemoteAccess: false,
       });
-      throw new Error("expected connect write to fail");
-    } catch (err) {
-      spawnSync("chmod", ["u+w", gitDir], { encoding: "utf8" });
-      if (err instanceof Error && err.message === "expected connect write to fail") throw err;
-      expect((err as { code?: string }).code).toBe(VCS_CODES.GIT_TRANSPORT_FAILED);
-      expect(listRemotes(repo)[0]?.protocol).toBe("https");
-    } finally {
-      spawnSync("chmod", ["u+w", gitDir], { encoding: "utf8" });
-    }
-  });
+      const gitDir = join(repo, ".git");
+      spawnSync("chmod", ["a-w", gitDir], { encoding: "utf8" });
+      try {
+        applyConnect({
+          repo,
+          workPackageId: WP,
+          remoteUrl: next,
+          providerKind: "github",
+          previewFingerprint: preview.previewFingerprint,
+          probeRemoteAccess: false,
+        });
+        throw new Error("expected connect write to fail");
+      } catch (err) {
+        spawnSync("chmod", ["u+w", gitDir], { encoding: "utf8" });
+        if (err instanceof Error && err.message === "expected connect write to fail") throw err;
+        expect((err as { code?: string }).code).toBe(VCS_CODES.GIT_TRANSPORT_FAILED);
+        expect(listRemotes(repo)[0]?.protocol).toBe("https");
+      } finally {
+        spawnSync("chmod", ["u+w", gitDir], { encoding: "utf8" });
+      }
+    },
+  );
 
   it("reports configuration write succeeded when access check fails", () => {
     const repo = tmpRepo();

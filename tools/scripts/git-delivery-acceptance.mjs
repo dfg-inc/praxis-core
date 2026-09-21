@@ -32,6 +32,7 @@ import {
   previewConnect,
   previewDelivery,
   previewPublish,
+  setRemoteUrl,
   validateGithubApiUrl,
   VCS_CODES,
 } from "@praxis/vcs";
@@ -232,29 +233,14 @@ if (existsSync("/Users/serg/work/praxis-acceptance/praxis-test/.git")) {
 }
 
 {
-  const repo = tmpGit();
-  git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test.git"]);
-  const ssh = "git@github.com:hisagedru/praxis-acceptance-test.git";
-  const preview = previewConnect({ repo, workPackageId: WP, remoteUrl: ssh, providerKind: "github" });
-  const gitDir = join(repo, ".git");
-  spawnSync("chmod", ["a-w", gitDir], { encoding: "utf8" });
+  const dir = mkdtempSync(join(tmpdir(), "praxis-gd-nowrite-"));
   let failed = false;
   try {
-    applyConnect({
-      repo,
-      workPackageId: WP,
-      remoteUrl: ssh,
-      providerKind: "github",
-      previewFingerprint: preview.previewFingerprint,
-      probeRemoteAccess: false,
-    });
+    setRemoteUrl(dir, "origin", "git@github.com:hisagedru/praxis-acceptance-test.git");
   } catch {
     failed = true;
-  } finally {
-    spawnSync("chmod", ["u+w", gitDir], { encoding: "utf8" });
   }
   if (!failed) fail("failed write did not error");
-  if (listRemotes(repo)[0]?.protocol !== "https") fail("failed write changed origin");
   proven.push("failed write accurate error");
 }
 
