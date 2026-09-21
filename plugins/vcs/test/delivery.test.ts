@@ -6,19 +6,24 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   applyCommit,
+  applyConnect,
   createGithubProvider,
   createGitlabProvider,
   createMockGithubFetch,
   createMockGithubState,
   createMockGitlabFetch,
   createMockGitlabState,
+  exactRemoteUrlsEqual,
   inspectGitStatus,
+  listRemotes,
+  mergeGitStatusRemote,
   parseRemoteUrl,
   planStaging,
   previewConnect,
   previewDelivery,
   previewPublish,
   redactRemoteUrl,
+  validateGithubApiUrl,
   VCS_CODES,
 } from "../src/index.js";
 
@@ -157,6 +162,242 @@ describe("git status / connect", () => {
     expect(preview.createsRemote).toBe(true);
     expect(preview.provider).toBe("github");
     expect(inspectGitStatus({ repo, workPackageId: WP }).remoteConfigured).toBe(false);
+  });
+
+  it("updates origin HTTPS to SSH for the same repository identity", () => {
+    const repo = tmpRepo();
+    git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test"]);
+    const https = "https://github.com/hisagedru/praxis-acceptance-test";
+    const ssh = "git@github.com:hisagedru/praxis-acceptance-test.git";
+    expect(parseRemoteUrl(https).identity).toBe(parseRemoteUrl(ssh).identity);
+    expect(exactRemoteUrlsEqual(https, ssh)).toBe(false);
+    const preview = previewConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: ssh,
+      providerKind: "github",
+    });
+    expect(preview.createsRemote).toBe(false);
+    expect(preview.updatesExistingUrl).toBe(true);
+    expect(preview.proposedProtocol).toBe("ssh");
+    const applied = applyConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: ssh,
+      providerKind: "github",
+      previewFingerprint: preview.previewFingerprint,
+      probeRemoteAccess: false,
+    });
+    expect(applied.wrote).toBe(true);
+    expect(applied.configurationWriteSucceeded).toBe(true);
+    expect(applied.previewFingerprint).toBe(preview.previewFingerprint);
+    expect(applied.actualProtocol).toBe("ssh");
+    expect(listRemotes(repo)[0]?.fetchUrl).toBe(ssh);
+    expect(listRemotes(repo).filter((r) => r.name === "origin")).toHaveLength(1);
+    const head = git(repo, ["rev-parse", "HEAD"]);
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(head);
+  });
+
+  it("updates origin SSH to HTTPS for the same repository identity", () => {
+    const repo = tmpRepo();
+    git(repo, ["remote", "add", "origin", "git@github.com:hisagedru/praxis-acceptance-test.git"]);
+    const https = "https://github.com/hisagedru/praxis-acceptance-test.git";
+    const preview = previewConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: https,
+      providerKind: "github",
+    });
+    const applied = applyConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: https,
+      providerKind: "github",
+      previewFingerprint: preview.previewFingerprint,
+      probeRemoteAccess: false,
+    });
+    expect(applied.wrote).toBe(true);
+    expect(listRemotes(repo)[0]?.protocol).toBe("https");
+    expect(listRemotes(repo)[0]?.fetchUrl).toBe(https);
+  });
+
+  it("does not rewrite the same exact URL", () => {
+    const repo = tmpRepo();
+    const url = "https://github.com/hisagedru/praxis-acceptance-test.git";
+    git(repo, ["remote", "add", "origin", url]);
+    const preview = previewConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: url,
+      providerKind: "github",
+    });
+    expect(preview.updatesExistingUrl).toBe(false);
+    const applied = applyConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: url,
+      providerKind: "github",
+      previewFingerprint: preview.previewFingerprint,
+      probeRemoteAccess: false,
+    });
+    expect(applied.wrote).toBe(false);
+    expect(applied.ok).toBe(true);
+    expect(applied.previewFingerprint).toBe(preview.previewFingerprint);
+    expect(listRemotes(repo)[0]?.fetchUrl).toBe(url);
+  });
+
+  it("updates origin when the repository identity changes", () => {
+    const repo = tmpRepo();
+    git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test.git"]);
+    const next = "https://github.com/example/other.git";
+    const preview = previewConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: next,
+      providerKind: "github",
+    });
+    const applied = applyConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: next,
+      providerKind: "github",
+      previewFingerprint: preview.previewFingerprint,
+      probeRemoteAccess: false,
+    });
+    expect(applied.wrote).toBe(true);
+    expect(applied.actualIdentity).toBe("github.com/example/other");
+    expect(listRemotes(repo).filter((r) => r.name === "origin")).toHaveLength(1);
+  });
+
+  it("keeps the approved connect fingerprint after a first remote add", () => {
+    const repo = tmpRepo();
+    const url = "https://github.com/hisagedru/praxis-acceptance-test.git";
+    const preview = previewConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: url,
+      providerKind: "github",
+    });
+    expect(preview.createsRemote).toBe(true);
+    const applied = applyConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: url,
+      providerKind: "github",
+      previewFingerprint: preview.previewFingerprint,
+      probeRemoteAccess: false,
+    });
+    expect(applied.wrote).toBe(true);
+    expect(applied.createsRemote).toBe(true);
+    expect(applied.previewFingerprint).toBe(preview.previewFingerprint);
+    const reread = previewConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: url,
+      providerKind: "github",
+    });
+    expect(reread.createsRemote).toBe(false);
+    expect(reread.previewFingerprint).not.toBe(preview.previewFingerprint);
+  });
+
+  it("fails accurately when git remote set-url cannot write", () => {
+    const repo = tmpRepo();
+    git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test.git"]);
+    const next = "git@github.com:hisagedru/praxis-acceptance-test.git";
+    const preview = previewConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: next,
+      providerKind: "github",
+    });
+    const config = join(repo, ".git", "config");
+    spawnSync("chflags", ["uchg", config], { encoding: "utf8" });
+    try {
+      applyConnect({
+        repo,
+        workPackageId: WP,
+        remoteUrl: next,
+        providerKind: "github",
+        previewFingerprint: preview.previewFingerprint,
+        probeRemoteAccess: false,
+      });
+      throw new Error("expected connect write to fail");
+    } catch (err) {
+      if (err instanceof Error && err.message === "expected connect write to fail") throw err;
+      expect((err as { code?: string }).code).toBe(VCS_CODES.GIT_TRANSPORT_FAILED);
+      expect(listRemotes(repo)[0]?.protocol).toBe("https");
+    } finally {
+      spawnSync("chflags", ["nouchg", config], { encoding: "utf8" });
+    }
+  });
+
+  it("reports configuration write succeeded when access check fails", () => {
+    const repo = tmpRepo();
+    const missing = join(repo, "missing-remote.git");
+    git(repo, ["remote", "add", "origin", join(repo, "unused.git")]);
+    const preview = previewConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: missing,
+    });
+    const applied = applyConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: missing,
+      previewFingerprint: preview.previewFingerprint,
+      probeRemoteAccess: true,
+    });
+    expect(applied.wrote).toBe(true);
+    expect(applied.configurationWriteSucceeded).toBe(true);
+    expect(applied.accessCheck).toBe("failed");
+    expect(applied.ok).toBe(false);
+    expect(listRemotes(repo)[0]?.fetchUrl).toBe(missing);
+  });
+
+  it("aggregates GitHub API empty=true onto remoteEmpty and baselineRequired", () => {
+    const repo = tmpRepo();
+    git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test.git"]);
+    const status = inspectGitStatus({ repo, workPackageId: WP });
+    expect(status.remoteEmpty).toBeNull();
+    expect(status.baselineRequired).toBeNull();
+    const merged = mergeGitStatusRemote(status, {
+      provider: "github",
+      identity: "hisagedru/praxis-acceptance-test",
+      owner: "hisagedru",
+      repo: "praxis-acceptance-test",
+      defaultBranch: "main",
+      empty: true,
+      hasReadme: false,
+    });
+    expect(merged.remote.empty).toBe(true);
+    expect(merged.remoteEmpty).toBe(true);
+    expect(merged.baselineRequired).toBe(true);
+  });
+
+  it("does not turn unknown emptiness into false when the API is unavailable", () => {
+    const repo = tmpRepo();
+    git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test.git"]);
+    const status = inspectGitStatus({ repo, workPackageId: WP });
+    const merged = mergeGitStatusRemote(status, {
+      remoteConfigured: true,
+      inspectFailed: true,
+      inspectError: "GITHUB_TOKEN_UNAVAILABLE",
+    });
+    expect(merged.remoteEmpty).toBeNull();
+    expect(merged.baselineRequired).toBeNull();
+    expect(JSON.stringify(merged)).not.toMatch(/ghp_|github_pat_/);
+  });
+});
+
+describe("GitHub API URL", () => {
+  it("accepts api.github.com and rejects git remotes", () => {
+    expect(validateGithubApiUrl("https://api.github.com").ok).toBe(true);
+    expect(validateGithubApiUrl("https://api.github.com/").ok).toBe(true);
+    expect(validateGithubApiUrl(undefined).ok).toBe(true);
+    expect(validateGithubApiUrl("git@github.com:hisagedru/praxis-acceptance-test.git").ok).toBe(false);
+    expect(validateGithubApiUrl("git@github.com:hisagedru/praxis-acceptance-test.git").issue).toBe("git-ssh-remote");
+    expect(validateGithubApiUrl("https://github.com/hisagedru/praxis-acceptance-test.git").ok).toBe(false);
+    expect(validateGithubApiUrl("https://ghe.example.com/api/v3").ok).toBe(true);
   });
 });
 

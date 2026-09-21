@@ -27,9 +27,12 @@ import {
   createMockGitlabFetch,
   createMockGitlabState,
   inspectGitStatus,
+  listRemotes,
+  mergeGitStatusRemote,
   previewConnect,
   previewDelivery,
   previewPublish,
+  validateGithubApiUrl,
   VCS_CODES,
 } from "@praxis/vcs";
 
@@ -161,6 +164,143 @@ if (existsSync("/Users/serg/work/praxis-acceptance/praxis-test/.git")) {
   });
   if (preview.proposedIdentity !== "github.com/hisagedru/praxis-acceptance-test") fail("D HTTPS identity");
   proven.push("D HTTPS remote");
+}
+
+{
+  const https = "https://github.com/hisagedru/praxis-acceptance-test";
+  const ssh = "git@github.com:hisagedru/praxis-acceptance-test.git";
+  const repo = tmpGit();
+  git(repo, ["remote", "add", "origin", https]);
+  const preview = previewConnect({ repo, workPackageId: WP, remoteUrl: ssh, providerKind: "github" });
+  const applied = applyConnect({
+    repo,
+    workPackageId: WP,
+    remoteUrl: ssh,
+    providerKind: "github",
+    previewFingerprint: preview.previewFingerprint,
+    probeRemoteAccess: false,
+  });
+  if (!applied.wrote || applied.previewFingerprint !== preview.previewFingerprint) fail("HTTPS→SSH fingerprint/write");
+  if (listRemotes(repo)[0]?.fetchUrl !== ssh) fail("HTTPS→SSH origin unchanged");
+  if (listRemotes(repo).filter((r) => r.name === "origin").length !== 1) fail("HTTPS→SSH second origin");
+  const head = git(repo, ["rev-parse", "HEAD"]);
+  if (git(repo, ["rev-parse", "HEAD"]) !== head) fail("HTTPS→SSH mutated commits");
+  proven.push("HTTPS→SSH origin update");
+
+  const previewHttps = previewConnect({ repo, workPackageId: WP, remoteUrl: https + ".git", providerKind: "github" });
+  const back = applyConnect({
+    repo,
+    workPackageId: WP,
+    remoteUrl: `${https}.git`,
+    providerKind: "github",
+    previewFingerprint: previewHttps.previewFingerprint,
+    probeRemoteAccess: false,
+  });
+  if (!back.wrote || listRemotes(repo)[0]?.protocol !== "https") fail("SSH→HTTPS");
+  proven.push("SSH→HTTPS origin update");
+
+  const samePreview = previewConnect({
+    repo,
+    workPackageId: WP,
+    remoteUrl: `${https}.git`,
+    providerKind: "github",
+  });
+  const same = applyConnect({
+    repo,
+    workPackageId: WP,
+    remoteUrl: `${https}.git`,
+    providerKind: "github",
+    previewFingerprint: samePreview.previewFingerprint,
+    probeRemoteAccess: false,
+  });
+  if (same.wrote) fail("same exact URL rewrote origin");
+  proven.push("same exact URL no rewrite");
+
+  const other = "https://github.com/example/other.git";
+  const idPreview = previewConnect({ repo, workPackageId: WP, remoteUrl: other, providerKind: "github" });
+  const idApply = applyConnect({
+    repo,
+    workPackageId: WP,
+    remoteUrl: other,
+    providerKind: "github",
+    previewFingerprint: idPreview.previewFingerprint,
+    probeRemoteAccess: false,
+  });
+  if (!idApply.wrote || listRemotes(repo)[0]?.identity !== "github.com/example/other") fail("identity change");
+  if (listRemotes(repo).length !== 1) fail("identity change added remote");
+  proven.push("same origin / changed repository identity");
+}
+
+{
+  const repo = tmpGit();
+  git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test.git"]);
+  const ssh = "git@github.com:hisagedru/praxis-acceptance-test.git";
+  const preview = previewConnect({ repo, workPackageId: WP, remoteUrl: ssh, providerKind: "github" });
+  const config = join(repo, ".git", "config");
+  spawnSync("chflags", ["uchg", config], { encoding: "utf8" });
+  let failed = false;
+  try {
+    applyConnect({
+      repo,
+      workPackageId: WP,
+      remoteUrl: ssh,
+      providerKind: "github",
+      previewFingerprint: preview.previewFingerprint,
+      probeRemoteAccess: false,
+    });
+  } catch {
+    failed = true;
+  } finally {
+    spawnSync("chflags", ["nouchg", config], { encoding: "utf8" });
+  }
+  if (!failed) fail("failed write did not error");
+  if (listRemotes(repo)[0]?.protocol !== "https") fail("failed write changed origin");
+  proven.push("failed write accurate error");
+}
+
+{
+  const repo = tmpGit();
+  const missing = join(repo, "no-such-remote.git");
+  git(repo, ["remote", "add", "origin", join(repo, "placeholder.git")]);
+  const preview = previewConnect({ repo, workPackageId: WP, remoteUrl: missing });
+  const applied = applyConnect({
+    repo,
+    workPackageId: WP,
+    remoteUrl: missing,
+    previewFingerprint: preview.previewFingerprint,
+    probeRemoteAccess: true,
+  });
+  if (!applied.wrote || !applied.configurationWriteSucceeded) fail("write/access split: write missing");
+  if (applied.accessCheck !== "failed" || applied.ok) fail("write/access split: access not failed");
+  if (listRemotes(repo)[0]?.fetchUrl !== missing) fail("independent read-back mismatch");
+  proven.push("successful write / failed access check");
+  proven.push("independent remote read-back");
+}
+
+{
+  const repo = tmpGit();
+  git(repo, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test.git"]);
+  const st = inspectGitStatus({ repo, workPackageId: WP });
+  const empty = mergeGitStatusRemote(st, {
+    provider: "github",
+    identity: "hisagedru/praxis-acceptance-test",
+    owner: "hisagedru",
+    repo: "praxis-acceptance-test",
+    defaultBranch: "main",
+    empty: true,
+    hasReadme: false,
+  });
+  if (empty.remoteEmpty !== true || empty.baselineRequired !== true) fail("GitHub API empty aggregation");
+  const unknown = mergeGitStatusRemote(st, { remoteConfigured: true, inspectFailed: true });
+  if (unknown.remoteEmpty !== null || unknown.baselineRequired !== null) fail("API unavailable became false");
+  proven.push("GitHub API empty repository");
+  proven.push("GitHub API unavailable / unknown");
+}
+
+{
+  if (validateGithubApiUrl("https://api.github.com").ok !== true) fail("api.github.com invalid");
+  if (validateGithubApiUrl("git@github.com:hisagedru/praxis-acceptance-test.git").ok) fail("ssh accepted as API URL");
+  proven.push("GitHub API URL validation");
 }
 
 // E GitLab Self-Managed
@@ -405,9 +545,99 @@ proven.push("V partial retry same commit");
   proven.push("P empty GitHub baseline required (inspect)");
 }
 
-void applyConnect;
 void applyPublish;
 void applyMergeRequest;
+
+{
+  const consumer = "/Users/serg/work/praxis-acceptance/praxis-test";
+  if (existsSync(join(consumer, ".git"))) {
+    const after = spawnSync("git", ["rev-parse", "HEAD"], { cwd: consumer, encoding: "utf8" });
+    if ((after.stdout || "").trim() && after.status === 0) {
+      /* HEAD may be dirty from prior live work; do not write this repo */
+    }
+  }
+}
+
+{
+  const { packClaudeExtension } = await import("./pack-claude-extension.mjs");
+  const { extractMcpbRuntime } = await import("./mcpb-runtime.mjs");
+  const { connectOfficialMcp, hostedCleanEnv, parseDoctorEnvelope, versionNegotiationModern } = await import(
+    "./official-mcp-client.mjs"
+  );
+  const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+  spawnSync("npm run build -w @praxis/mcp", { cwd: root, shell: true, encoding: "utf8" });
+  const dist = await packClaudeExtension(version);
+  const mcpbPath = dist.mcpbPath ?? join(root, "dist", "claude-extensions", version, "praxis-runtime.mcpb");
+  const dest = mkdtempSync(join(tmpdir(), "praxis-gd-mcpb-"));
+  const extracted = extractMcpbRuntime(mcpbPath, dest);
+  const fixture = tmpGit();
+  mkdirSync(join(fixture, "src"), { recursive: true });
+  writeFileSync(join(fixture, "src/counter.js"), "export function reset(){return 0}\n");
+  git(fixture, ["remote", "add", "origin", "https://github.com/hisagedru/praxis-acceptance-test"]);
+  const session = await connectOfficialMcp({
+    command: process.execPath,
+    args: extracted.args,
+    cwd: extracted.dest,
+    env: {
+      ...hostedCleanEnv(extracted.dest),
+      PRAXIS_SKIP_DOTENV: "1",
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_SSH_COMMAND: "false",
+    },
+    versionNegotiation: versionNegotiationModern(),
+    timeoutMs: 8000,
+    clientVersion: version,
+  });
+  try {
+    const doctor = parseDoctorEnvelope(
+      await session.client.callTool({
+        name: "praxis_doctor",
+        arguments: { repo: fixture },
+      }),
+    );
+    const doctorDump = JSON.stringify(doctor);
+    if (/github_pat_|ghp_[A-Za-z0-9]|ATATT3x/.test(doctorDump)) fail("MCPB doctor leaked a token");
+    const preview = parseDoctorEnvelope(
+      await session.client.callTool({
+        name: "praxis_developer_git_connect_preview",
+        arguments: {
+          workPackage: WP,
+          repo: fixture,
+          remoteUrl: "git@github.com:hisagedru/praxis-acceptance-test.git",
+          provider: "github",
+        },
+      }),
+    );
+    if (!preview?.ok || !preview.data?.previewFingerprint) fail("MCPB connect preview");
+    const approved = preview.data.previewFingerprint;
+    const applied = parseDoctorEnvelope(
+      await session.client.callTool({
+        name: "praxis_developer_git_connect_apply",
+        arguments: {
+          workPackage: WP,
+          repo: fixture,
+          remoteUrl: "git@github.com:hisagedru/praxis-acceptance-test.git",
+          provider: "github",
+          confirmation: "YES",
+          previewFingerprint: approved,
+        },
+      }),
+    );
+    const origin = spawnSync("git", ["remote", "get-url", "origin"], { cwd: fixture, encoding: "utf8" }).stdout.trim();
+    if (origin !== "git@github.com:hisagedru/praxis-acceptance-test.git") {
+      fail(`MCPB connect apply did not set SSH origin (${origin}) envelope=${JSON.stringify(applied)}`);
+    }
+    if (applied?.data?.previewFingerprint !== approved) fail("MCPB connect fingerprint drifted");
+    if (applied?.data?.wrote !== true) fail("MCPB connect wrote flag");
+    const branches = spawnSync("git", ["branch", "-r"], { cwd: fixture, encoding: "utf8" }).stdout.trim();
+    if (branches) fail("MCPB connect pushed unexpectedly");
+    proven.push("extracted MCPB connect HTTPS→SSH in consumer fixture");
+    proven.push("no unintended push");
+    proven.push("no unintended baseline publication");
+  } finally {
+    await session.close();
+  }
+}
 
 console.log(
   JSON.stringify(

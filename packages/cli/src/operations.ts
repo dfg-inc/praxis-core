@@ -122,6 +122,7 @@ export const OP_CODES = {
   GIT_BASELINE_REQUIRED: "GIT_BASELINE_REQUIRED",
   GIT_REMOTE_HISTORY_CONFLICT: "GIT_REMOTE_HISTORY_CONFLICT",
   GITHUB_TOKEN_UNAVAILABLE: "GITHUB_TOKEN_UNAVAILABLE",
+  GITHUB_API_URL_INVALID: "GITHUB_API_URL_INVALID",
   GITLAB_TOKEN_UNAVAILABLE: "GITLAB_TOKEN_UNAVAILABLE",
   GIT_TRANSPORT_FAILED: "GIT_TRANSPORT_FAILED",
   GIT_COMMIT_DIVERGED: "GIT_COMMIT_DIVERGED",
@@ -436,7 +437,7 @@ async function tracedFingerprint(
   return fp;
 }
 
-export async function doctorOp(ctx: OpContext, version: string) {
+export async function doctorOp(ctx: OpContext, version: string): Promise<Record<string, unknown>> {
   loadPraxisDotenv(ctx.repo);
   const resolved = resolve(ctx.repo);
   const repoExists = existsSync(resolved);
@@ -464,6 +465,8 @@ export async function doctorOp(ctx: OpContext, version: string) {
     pid: qualityProbe.pid,
     db: qualityProbe.db,
   };
+  const github = githubTokenFlags();
+  const gitlab = gitlabTokenFlags();
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? (git ? "ok" : "no-git") : "unavailable",
@@ -480,14 +483,15 @@ export async function doctorOp(ctx: OpContext, version: string) {
       suggestedPath: "suggestedPath" in project ? project.suggestedPath : undefined,
     },
     jira,
-    github: githubTokenFlags(),
-    gitlab: gitlabTokenFlags(),
+    github,
+    gitlab,
     quality,
     capabilities,
     codes: {
       repository:
         capabilities.repository === "unavailable" ? OP_CODES.REPOSITORY_UNAVAILABLE : undefined,
       jira: capabilities.jiraConfig === "unavailable" ? OP_CODES.JIRA_CONFIG_UNAVAILABLE : undefined,
+      github: github.apiUrlValid === false ? OP_CODES.GITHUB_API_URL_INVALID : undefined,
     },
     runtime: {
       node: process.version,

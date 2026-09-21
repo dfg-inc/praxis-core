@@ -43,7 +43,7 @@ export const JIRA_USER_CONFIG = {
   github_api_url: {
     type: "string",
     title: "GitHub API URL",
-    description: "Optional. Default https://api.github.com. GitHub Enterprise: https://HOST/api/v3",
+    description: "Optional. Must be https://api.github.com (or https://HOST/api/v3 for GitHub Enterprise). Not a git remote such as git@github.com:owner/repo.git.",
     required: false,
   },
   gitlab_token: {

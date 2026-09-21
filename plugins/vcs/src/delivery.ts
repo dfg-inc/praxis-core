@@ -29,7 +29,14 @@ import {
   type GitRemote,
   type GitWorkingTree,
 } from "./git-local.js";
-import { parseRemoteUrl, resolveProvider, type VcsProviderKind } from "./git-url.js";
+import {
+  exactRemoteUrlsEqual,
+  parseRemoteUrl,
+  redactRemoteUrl,
+  resolveProvider,
+  type GitProtocol,
+  type VcsProviderKind,
+} from "./git-url.js";
 import { previewGitignore, type GitignorePreview } from "./gitignore-policy.js";
 import { handoffPath, readJournal, writeJournal, type DeliveryLifecycle, type GitDeliveryJournal } from "./journal.js";
 import { compareToQualitySnapshot, readQualitySnapshot } from "./quality-snapshot.js";
@@ -53,6 +60,8 @@ export type DeliveryInputs = {
   providerKind?: VcsProviderKind;
   vcsProvider?: VcsProvider;
   fetchImpl?: typeof fetch;
+  /** Default true. Tests may disable ls-remote so HTTPS↔SSH URL writes do not wait on the network. */
+  probeRemoteAccess?: boolean;
 };
 
 export type GitStatusReport = {
@@ -69,7 +78,7 @@ export type GitStatusReport = {
   gitignore: GitignorePreview;
   pushReady: boolean;
   mergeRequestReady: boolean;
-  baselineRequired: boolean;
+  baselineRequired: boolean | null;
   remoteEmpty: boolean | null;
   configurationRequirements: string[];
   warnings: string[];
@@ -139,11 +148,42 @@ export function inspectGitStatus(opts: DeliveryInputs): GitStatusReport {
     gitignore: previewGitignore(repositoryRoot),
     pushReady: false,
     mergeRequestReady: false,
-    baselineRequired: !remoteConfigured,
+    baselineRequired: remoteConfigured ? null : true,
     remoteEmpty: remoteConfigured ? null : true,
     configurationRequirements,
     warnings,
   };
+}
+
+export type RemoteInspectResult =
+  | RemoteRepositoryInfo
+  | { remoteConfigured: false }
+  | { remoteConfigured: boolean; inspectFailed: true; inspectError?: string };
+
+export function mergeGitStatusRemote(
+  status: GitStatusReport,
+  remote: RemoteInspectResult,
+): GitStatusReport & { remote: RemoteInspectResult; jiraMutated: false } {
+  const warnings = [...status.warnings];
+  let remoteEmpty = status.remoteEmpty;
+  let baselineRequired: boolean | null = status.baselineRequired;
+  if (remote && "empty" in remote && typeof remote.empty === "boolean") {
+    remoteEmpty = remote.empty;
+    baselineRequired = remote.empty;
+  } else if (status.remoteConfigured) {
+    const failed = "inspectFailed" in remote && remote.inspectFailed;
+    const unknownProvider = "remoteConfigured" in remote && remote.remoteConfigured === false;
+    if (failed || unknownProvider) {
+      remoteEmpty = null;
+      baselineRequired = null;
+      if (failed) {
+        warnings.push(
+          "Git provider API did not report repository emptiness; remoteEmpty is unknown (not false). Do not skip baseline publication on this result.",
+        );
+      }
+    }
+  }
+  return { ...status, remoteEmpty, baselineRequired, warnings, remote, jiraMutated: false };
 }
 
 export type ConnectPreview = {
@@ -151,12 +191,25 @@ export type ConnectPreview = {
   proposedRemoteName: string;
   proposedUrlDisplay: string;
   proposedIdentity: string;
+  proposedProtocol: GitProtocol;
   provider: VcsProviderKind;
   accessCheck: "skipped" | "ok" | "failed";
   accessError?: string;
   createsRemote: boolean;
+  updatesExistingUrl: boolean;
   previewFingerprint: string;
   jiraMutated: false;
+};
+
+export type ConnectApplyResult = ConnectPreview & {
+  wrote: boolean;
+  configurationWriteSucceeded: boolean;
+  actualRemoteUrl: string;
+  actualIdentity: string;
+  actualProtocol: GitProtocol;
+  ok: boolean;
+  errors?: string[];
+  code?: string;
 };
 
 export function previewConnect(opts: DeliveryInputs): ConnectPreview {
@@ -182,29 +235,32 @@ export function previewConnect(opts: DeliveryInputs): ConnectPreview {
     inferred: parsed.inferredProvider,
     configured: opts.providerKind ?? configuredProvider(),
   });
+  const updatesExistingUrl = Boolean(existing && !exactRemoteUrlsEqual(existing.fetchUrl, url));
   const plan = {
     remoteName: name,
     identity: parsed.identity,
     protocol: parsed.protocol,
-    provider,
+    exactUrl: parsed.displayUrl,
+    existingExactUrl: existing ? redactRemoteUrl(existing.fetchUrl) : null,
     createsRemote: !existing,
+    updatesExistingUrl,
   };
   return {
     remotes: publicRemotes(remotes),
     proposedRemoteName: name,
     proposedUrlDisplay: parsed.displayUrl,
     proposedIdentity: parsed.identity,
+    proposedProtocol: parsed.protocol,
     provider,
     accessCheck: "skipped",
     createsRemote: !existing,
+    updatesExistingUrl,
     previewFingerprint: deliveryFingerprint(plan),
     jiraMutated: false,
   };
 }
 
-export function applyConnect(opts: DeliveryInputs & { previewFingerprint: string }): ConnectPreview & {
-  wrote: boolean;
-} {
+export function applyConnect(opts: DeliveryInputs & { previewFingerprint: string }): ConnectApplyResult {
   const preview = previewConnect(opts);
   if (preview.previewFingerprint !== opts.previewFingerprint) {
     throw new VcsError(VCS_CODES.GIT_PREVIEW_STALE, "connect previewFingerprint mismatch; re-run git connect preview");
@@ -213,23 +269,67 @@ export function applyConnect(opts: DeliveryInputs & { previewFingerprint: string
   const name = preview.proposedRemoteName;
   const url = opts.remoteUrl;
   if (!url) {
-    throw new VcsError(VCS_CODES.GIT_REMOTE_REQUIRED, "remoteUrl required to add a remote");
+    throw new VcsError(VCS_CODES.GIT_REMOTE_REQUIRED, "remoteUrl required to add or update a remote");
   }
-  const remotes = listRemotes(repo);
-  const existing = remotes.find((r) => r.name === name);
-  if (!existing) addRemote(repo, name, url);
-  else if (parseRemoteUrl(existing.fetchUrl).identity !== preview.proposedIdentity) {
+  const remotesBefore = listRemotes(repo);
+  const existing = remotesBefore.find((r) => r.name === name);
+  const alreadyExact = Boolean(existing && exactRemoteUrlsEqual(existing.fetchUrl, url));
+  let wrote = false;
+  if (!existing) {
+    addRemote(repo, name, url);
+    wrote = true;
+  } else if (!alreadyExact) {
     setRemoteUrl(repo, name, url);
+    wrote = true;
   }
-  let accessCheck: ConnectPreview["accessCheck"] = "ok";
+  const remotesAfter = listRemotes(repo);
+  const actual = remotesAfter.find((r) => r.name === name);
+  if (!actual) {
+    throw new VcsError(VCS_CODES.GIT_TRANSPORT_FAILED, `git remote ${name} missing after connect write`);
+  }
+  const configurationWriteSucceeded = exactRemoteUrlsEqual(actual.fetchUrl, url);
+  if (!configurationWriteSucceeded) {
+    throw new VcsError(
+      VCS_CODES.GIT_TRANSPORT_FAILED,
+      `GIT_CONNECT_POSTCONDITION: ${name} is still ${actual.displayUrl}; expected ${preview.proposedUrlDisplay}. Repository identity match is not enough when the exact URL (HTTPS vs SSH) differs.`,
+    );
+  }
+
+  let accessCheck: ConnectPreview["accessCheck"] = opts.probeRemoteAccess === false ? "skipped" : "ok";
   let accessError: string | undefined;
-  try {
-    lsRemoteHeads(repo, name);
-  } catch (err) {
-    accessCheck = "failed";
-    accessError = err instanceof Error ? err.message : String(err);
+  if (opts.probeRemoteAccess !== false) {
+    try {
+      lsRemoteHeads(repo, name);
+      accessCheck = "ok";
+    } catch (err) {
+      accessCheck = "failed";
+      accessError = err instanceof Error ? err.message : String(err);
+    }
   }
-  return { ...previewConnect({ ...opts, remoteName: name }), accessCheck, accessError, wrote: true };
+
+  const ok = accessCheck !== "failed";
+  return {
+    remotes: publicRemotes(remotesAfter),
+    proposedRemoteName: preview.proposedRemoteName,
+    proposedUrlDisplay: preview.proposedUrlDisplay,
+    proposedIdentity: preview.proposedIdentity,
+    proposedProtocol: preview.proposedProtocol,
+    provider: preview.provider,
+    createsRemote: preview.createsRemote,
+    updatesExistingUrl: preview.updatesExistingUrl,
+    previewFingerprint: opts.previewFingerprint,
+    jiraMutated: false,
+    accessCheck,
+    accessError,
+    wrote,
+    configurationWriteSucceeded: true,
+    actualRemoteUrl: actual.displayUrl,
+    actualIdentity: actual.identity,
+    actualProtocol: actual.protocol,
+    ok,
+    errors: ok ? undefined : [accessError ?? "git connect access check failed"],
+    code: ok ? undefined : VCS_CODES.GIT_TRANSPORT_FAILED,
+  };
 }
 
 export function previewIdentity(opts: DeliveryInputs): {
@@ -326,7 +426,7 @@ export type DeliveryPreview = {
   potentialConflicts: string[];
   warnings: string[];
   blockers: Array<{ code: string; message: string }>;
-  baselineRequired: boolean;
+  baselineRequired: boolean | null;
   remoteEmpty: boolean | null;
   remoteConfigured: boolean;
   pushReady: boolean;
@@ -366,6 +466,7 @@ export async function previewDelivery(opts: DeliveryInputs): Promise<DeliveryPre
       : undefined;
   const blockers: DeliveryPreview["blockers"] = [];
   const potentialConflicts: string[] = [];
+  const unknownEmptyWarnings: string[] = [];
   if (staging.foreignStaged.length) {
     blockers.push({
       code: VCS_CODES.GIT_FOREIGN_STAGED,
@@ -398,16 +499,33 @@ export async function previewDelivery(opts: DeliveryInputs): Promise<DeliveryPre
     });
   }
   let remoteEmpty: boolean | null = remotes.length ? null : true;
-  let baselineRequired = !status.remoteConfigured;
+  let baselineRequired: boolean | null = remotes.length ? null : true;
   if (remote) {
+    let apiKnown = false;
     try {
-      const heads = lsRemoteHeads(repositoryRoot, remote.name);
-      remoteEmpty = heads.empty;
-      baselineRequired = heads.empty;
-      const conflict = heads.refs.some((ref) => ref.endsWith(`/${branch}`));
-      if (conflict) potentialConflicts.push(`remote already has ${branch}`);
+      const info = await inspectRemoteRepository(opts);
+      if (info && "empty" in info && typeof info.empty === "boolean") {
+        remoteEmpty = info.empty;
+        baselineRequired = info.empty;
+        apiKnown = true;
+      }
     } catch {
-      remoteEmpty = null;
+      /* fall through to ls-remote; do not treat API failure as empty=false */
+    }
+    if (!apiKnown) {
+      try {
+        const heads = lsRemoteHeads(repositoryRoot, remote.name);
+        remoteEmpty = heads.empty;
+        baselineRequired = heads.empty;
+        const conflict = heads.refs.some((ref) => ref.endsWith(`/${branch}`));
+        if (conflict) potentialConflicts.push(`remote already has ${branch}`);
+      } catch {
+        remoteEmpty = null;
+        baselineRequired = null;
+        unknownEmptyWarnings.push(
+          "Could not determine whether the remote is empty; remoteEmpty is unknown (not false).",
+        );
+      }
     }
   }
   const proposedOperations = ["create-branch", "stage-allowlist", "commit"];
@@ -417,6 +535,7 @@ export async function previewDelivery(opts: DeliveryInputs): Promise<DeliveryPre
   const warnings = [
     ...extraDirtyWarnings(status.workingTree, staging.selected),
     ...status.configurationRequirements,
+    ...unknownEmptyWarnings,
   ];
   if (status.hooks.length) {
     warnings.push(`GIT_HOOKS_PRESENT: ${status.hooks.map((h) => h.name).join(", ")} may run on commit/push.`);

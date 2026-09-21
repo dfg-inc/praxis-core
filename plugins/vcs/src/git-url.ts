@@ -25,6 +25,11 @@ export function remoteIdentity(url: string): string {
   return parsed.identity;
 }
 
+/** Exact configured remote URL, not repository identity. HTTPS and SSH for the same repo are different. */
+export function exactRemoteUrlsEqual(a: string, b: string): boolean {
+  return a.trim() === b.trim();
+}
+
 export function parseRemoteUrl(raw: string): ParsedRemote {
   const url = raw.trim();
   const displayUrl = redactRemoteUrl(url);

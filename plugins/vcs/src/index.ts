@@ -4,6 +4,7 @@ export {
   parseRemoteUrl,
   redactRemoteUrl,
   remoteIdentity,
+  exactRemoteUrlsEqual,
   inferProvider,
   resolveProvider,
   type GitProtocol,
@@ -19,7 +20,10 @@ export {
   createGithubProvider,
   loadGithubConfig,
   githubTokenFlags,
+  validateGithubApiUrl,
   type GithubConfig,
+  type GithubApiUrlValidation,
+  type GithubApiUrlIssue,
 } from "./github-provider.js";
 export {
   createGitlabProvider,
@@ -48,10 +52,13 @@ export {
   applyMergeRequest,
   inspectRemoteRepository,
   inspectDeliveryStatus,
+  mergeGitStatusRemote,
   mergeRequestBody,
   type DeliveryInputs,
   type GitStatusReport,
   type ConnectPreview,
+  type ConnectApplyResult,
   type DeliveryPreview,
   type PublishPreview,
+  type RemoteInspectResult,
 } from "./delivery.js";

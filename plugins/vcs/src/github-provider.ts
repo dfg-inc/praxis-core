@@ -7,6 +7,76 @@ export type GithubConfig = {
   apiUrl: string;
 };
 
+export type GithubApiUrlIssue = "git-ssh-remote" | "git-https-remote" | "invalid";
+
+export type GithubApiUrlValidation = {
+  ok: boolean;
+  normalized: string;
+  issue?: GithubApiUrlIssue;
+  message?: string;
+};
+
+const DEFAULT_GITHUB_API = "https://api.github.com";
+
+export function validateGithubApiUrl(raw: string | undefined): GithubApiUrlValidation {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) {
+    return { ok: true, normalized: DEFAULT_GITHUB_API };
+  }
+  if (/^git@/i.test(trimmed) || /^ssh:\/\//i.test(trimmed)) {
+    return {
+      ok: false,
+      normalized: DEFAULT_GITHUB_API,
+      issue: "git-ssh-remote",
+      message:
+        "GITHUB_API_URL_INVALID: Git SSH remotes (git@host:owner/repo.git) are not GitHub API URLs. Use https://api.github.com, or https://HOST/api/v3 for GitHub Enterprise. Put the SSH URL in Connect Git, not github_api_url.",
+    };
+  }
+  try {
+    const u = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`);
+    if (u.protocol !== "https:" && u.protocol !== "http:") {
+      return {
+        ok: false,
+        normalized: DEFAULT_GITHUB_API,
+        issue: "invalid",
+        message:
+          "GITHUB_API_URL_INVALID: GitHub API URL must be https://api.github.com (or https://HOST/api/v3 for GitHub Enterprise).",
+      };
+    }
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.replace(/\/+$/, "") || "";
+    if (/\.git$/i.test(path) || (host === "github.com" && /^\/[^/]+\/[^/]+$/.test(path))) {
+      return {
+        ok: false,
+        normalized: DEFAULT_GITHUB_API,
+        issue: "git-https-remote",
+        message:
+          "GITHUB_API_URL_INVALID: that value is a GitHub git remote, not the API. Use https://api.github.com.",
+      };
+    }
+    const isDotComApi = host === "api.github.com" && (path === "" || path === "/");
+    const isEnterprise = path === "/api/v3" || path.endsWith("/api/v3");
+    if (!isDotComApi && !isEnterprise) {
+      return {
+        ok: false,
+        normalized: DEFAULT_GITHUB_API,
+        issue: "invalid",
+        message:
+          "GITHUB_API_URL_INVALID: GitHub API URL must be https://api.github.com (or https://HOST/api/v3 for GitHub Enterprise).",
+      };
+    }
+    return { ok: true, normalized: `${u.protocol}//${u.host}${path}`.replace(/\/$/, "") || DEFAULT_GITHUB_API };
+  } catch {
+    return {
+      ok: false,
+      normalized: DEFAULT_GITHUB_API,
+      issue: "invalid",
+      message:
+        "GITHUB_API_URL_INVALID: GitHub API URL must be https://api.github.com (or https://HOST/api/v3 for GitHub Enterprise).",
+    };
+  }
+}
+
 export function loadGithubConfig(env: NodeJS.ProcessEnv = process.env): GithubConfig {
   const token = env.PRAXIS_GITHUB_TOKEN?.trim() ?? "";
   if (!tokenConfigured(token)) {
@@ -15,19 +85,29 @@ export function loadGithubConfig(env: NodeJS.ProcessEnv = process.env): GithubCo
       "GITHUB_TOKEN_UNAVAILABLE: configure github_token in Praxis Runtime settings or PRAXIS_GITHUB_TOKEN for CLI/CI. Do not paste the token into chat. This is a GitHub PAT, not OAuth.",
     );
   }
+  const apiCheck = validateGithubApiUrl(env.PRAXIS_GITHUB_API_URL);
+  if (!apiCheck.ok) {
+    throw new VcsError(VCS_CODES.GITHUB_API_URL_INVALID, apiCheck.message ?? "GITHUB_API_URL_INVALID");
+  }
   return {
     token,
-    apiUrl: (env.PRAXIS_GITHUB_API_URL?.trim() || "https://api.github.com").replace(/\/$/, ""),
+    apiUrl: apiCheck.normalized,
   };
 }
 
 export function githubTokenFlags(env: NodeJS.ProcessEnv = process.env): {
   tokenConfigured: boolean;
   apiUrlConfigured: boolean;
+  apiUrlValid: boolean;
+  apiUrlIssue?: GithubApiUrlIssue;
 } {
+  const apiRaw = env.PRAXIS_GITHUB_API_URL?.trim() ?? "";
+  const apiCheck = validateGithubApiUrl(apiRaw);
   return {
     tokenConfigured: tokenConfigured(env.PRAXIS_GITHUB_TOKEN),
-    apiUrlConfigured: Boolean(env.PRAXIS_GITHUB_API_URL?.trim()),
+    apiUrlConfigured: Boolean(apiRaw),
+    apiUrlValid: apiCheck.ok,
+    apiUrlIssue: apiCheck.ok ? undefined : apiCheck.issue,
   };
 }
 

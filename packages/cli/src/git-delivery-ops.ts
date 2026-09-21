@@ -7,11 +7,14 @@ import {
   inspectDeliveryStatus,
   inspectGitStatus,
   inspectRemoteRepository,
+  mergeGitStatusRemote,
   previewConnect,
   previewDelivery,
   previewIdentity,
   previewPublish,
   type DeliveryInputs,
+  type GitStatusReport,
+  type RemoteInspectResult,
   type VcsProvider,
   type VcsProviderKind,
 } from "@praxis/vcs";
@@ -42,15 +45,26 @@ export function toGitInputs(ctx: GitOpContext): DeliveryInputs {
   };
 }
 
-export async function gitStatusData(ctx: GitOpContext) {
-  const status = inspectGitStatus(toGitInputs(ctx));
-  let remote: unknown = { remoteConfigured: false };
+export async function gitStatusData(
+  ctx: GitOpContext,
+): Promise<GitStatusReport & { remote: RemoteInspectResult; jiraMutated: false }> {
+  const inputs = toGitInputs(ctx);
+  const status = inspectGitStatus(inputs);
+  let remote: Awaited<ReturnType<typeof inspectRemoteRepository>> | {
+    remoteConfigured: boolean;
+    inspectFailed: true;
+    inspectError: string;
+  };
   try {
-    remote = await inspectRemoteRepository(toGitInputs(ctx));
-  } catch {
-    remote = { remoteConfigured: status.remoteConfigured };
+    remote = await inspectRemoteRepository(inputs);
+  } catch (err) {
+    remote = {
+      remoteConfigured: status.remoteConfigured,
+      inspectFailed: true,
+      inspectError: err instanceof Error ? err.message : String(err),
+    };
   }
-  return { ...status, remote, jiraMutated: false as const };
+  return mergeGitStatusRemote(status, remote);
 }
 
 export function gitConnectPreviewData(ctx: GitOpContext) {
