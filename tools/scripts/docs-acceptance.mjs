@@ -113,6 +113,9 @@ for (const needle of [
   "QUALITY_PREVIEW_STALE",
   "QUALITY_RECONCILIATION_REQUIRED",
   "previewFingerprint",
+  "praxis_quality_apply_status",
+  "praxis_quality_review_show",
+  "praxis.workPackageManifest",
 ]) {
   if (!qualityGuide.includes(needle)) fail(`quality guide missing ${needle}`);
 }
