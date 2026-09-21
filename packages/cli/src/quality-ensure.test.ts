@@ -70,6 +70,7 @@ const previous = {
   port: process.env.PRAXIS_QUALITY_PORT,
   url: process.env.PRAXIS_QUALITY_URL,
   timeout: process.env.PRAXIS_QUALITY_STARTUP_TIMEOUT_MS,
+  sqlite: process.env.PRAXIS_QUALITY_SQLITE,
 };
 
 function restoreEnv() {
@@ -78,6 +79,7 @@ function restoreEnv() {
     PRAXIS_QUALITY_PORT: previous.port,
     PRAXIS_QUALITY_URL: previous.url,
     PRAXIS_QUALITY_STARTUP_TIMEOUT_MS: previous.timeout,
+    PRAXIS_QUALITY_SQLITE: previous.sqlite,
   })) {
     if (val === undefined) delete process.env[key];
     else process.env[key] = val;
@@ -194,5 +196,47 @@ describe("quality ensure", { timeout: 20_000 }, () => {
     } finally {
       stopQuality(repo);
     }
+  });
+
+  it("probes node:sqlite in-process without mapping every failure to Node 22+", async () => {
+    const { probeSqliteInProcess, classifySqliteProbeError } = await import("./quality-ensure.js");
+    const probe = probeSqliteInProcess();
+    expect(probe.execPath).toBe(process.execPath);
+    expect(probe.version).toBe(process.version);
+    expect(["success", "failure"]).toContain(probe.moduleLoad);
+    if (probe.moduleLoad === "failure") {
+      expect(classifySqliteProbeError(probe)).not.toBe(QUALITY_CODES.QUALITY_STARTUP_FAILED);
+    }
+  });
+
+  it("classifies builtin sqlite load failures without a Node 22 message", async () => {
+    const { classifySqliteProbeError } = await import("./quality-ensure.js");
+    const code = classifySqliteProbeError({
+      execPath: "/fake/node",
+      version: "v24.20.0",
+      versionsNode: "24.20.0",
+      platform: process.platform,
+      arch: process.arch,
+      moduleLoad: "failure",
+      errorCode: "ERR_UNKNOWN_BUILTIN_MODULE",
+      errorMessage: "No such built-in module: node:sqlite",
+    });
+    expect(code).toBe(QUALITY_CODES.QUALITY_SQLITE_UNAVAILABLE);
+  });
+
+  it("starts Quality with bundled sql.js when node:sqlite is forced off", async () => {
+    const repo = tmpRepo();
+    repos.push(repo);
+    const port = await freePort();
+    process.env.PRAXIS_QUALITY_PORT = String(port);
+    process.env.PRAXIS_QUALITY_SQLITE = "sqljs";
+    delete process.env.PRAXIS_QUALITY_ENTRY;
+    const first = await ensureQuality({ repo });
+    expect(["started", "healthy"]).toContain(first.status);
+    const health = await fetch(first.url);
+    expect(health.ok).toBe(true);
+    const body = (await health.json()) as { sqliteEngine?: string };
+    expect(body.sqliteEngine).toBe("sqljs");
+    expect(existsSync(join(repo, ".praxis-quality", "quality.sqlite"))).toBe(true);
   });
 });

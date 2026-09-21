@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -49,7 +49,7 @@ export async function bundlePraxisMcp(outfile, version) {
   return outfile;
 }
 
-/** Bundle Quality HTTP service next to the MCP runtime. Uses node:sqlite (Node 22+). */
+/** Bundle Quality HTTP service next to the MCP runtime. SQLite uses node:sqlite or bundled sql.js WASM. */
 export async function bundlePraxisQuality(outfile, version) {
   const entry = join(root, "apps/quality-service/dist/main.js");
   if (!existsSync(entry)) {
@@ -57,13 +57,15 @@ export async function bundlePraxisQuality(outfile, version) {
   }
   if (!existsSync(entry)) fail(`missing Quality service build ${entry}`);
   mkdirSync(dirname(outfile), { recursive: true });
+  const wasmSrc = join(root, "node_modules/sql.js/dist/sql-wasm.wasm");
+  if (!existsSync(wasmSrc)) fail(`missing sql.js wasm ${wasmSrc}`);
   await esbuild.build({
     absWorkingDir: root,
     entryPoints: [entry],
     bundle: true,
     platform: "node",
     format: "cjs",
-    target: "node22",
+    target: "node20",
     outfile,
     legalComments: "none",
     minify: false,
@@ -74,5 +76,6 @@ export async function bundlePraxisQuality(outfile, version) {
     },
   });
   if (!existsSync(outfile)) fail(`esbuild did not write Quality bundle ${outfile}`);
+  copyFileSync(wasmSrc, join(dirname(outfile), "sql-wasm.wasm"));
   return outfile;
 }

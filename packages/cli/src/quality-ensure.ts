@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import net from "node:net";
 import { createRequire } from "node:module";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const DEFAULT_QUALITY_PORT = 8792;
@@ -25,6 +25,10 @@ export const QUALITY_CODES = {
   QUALITY_DB_INIT_FAILED: "QUALITY_DB_INIT_FAILED",
   QUALITY_HEALTH_TIMEOUT: "QUALITY_HEALTH_TIMEOUT",
   QUALITY_RUNTIME_UNREACHABLE: "QUALITY_RUNTIME_UNREACHABLE",
+  QUALITY_NODE_UNSUPPORTED: "QUALITY_NODE_UNSUPPORTED",
+  QUALITY_SQLITE_UNAVAILABLE: "QUALITY_SQLITE_UNAVAILABLE",
+  QUALITY_SQLITE_MODULE_LOAD_FAILED: "QUALITY_SQLITE_MODULE_LOAD_FAILED",
+  QUALITY_CHILD_RUNTIME_MISMATCH: "QUALITY_CHILD_RUNTIME_MISMATCH",
 } as const;
 
 export type QualityErrorCode = (typeof QUALITY_CODES)[keyof typeof QUALITY_CODES];
@@ -64,6 +68,31 @@ type HealthBody = {
   db?: string | null;
   pid?: number;
   port?: number;
+  sqliteEngine?: string | null;
+};
+
+export type SqliteModuleLoad = "success" | "failure";
+
+export type NodeRuntimeProbe = {
+  execPath: string;
+  version: string;
+  versionsNode: string;
+  platform: string;
+  arch: string;
+  electron?: string;
+  moduleLoad: SqliteModuleLoad;
+  errorCode?: string;
+  errorMessage?: string;
+  spawnStatus?: number | null;
+  spawnError?: string;
+};
+
+export type QualityChildRuntime = {
+  execPath: string;
+  extraArgs: string[];
+  extraEnv: Record<string, string>;
+  parent: NodeRuntimeProbe;
+  child: NodeRuntimeProbe;
 };
 
 const inFlight = new Map<string, Promise<QualityEnsureResult>>();
@@ -93,6 +122,33 @@ export class QualityStartupError extends Error {
 
 function qlog(msg: string): void {
   process.stderr.write(`[praxis-quality] ${msg}\n`);
+}
+
+function safeErrorMessage(raw: unknown): string {
+  const text = raw instanceof Error ? raw.message : String(raw ?? "");
+  return text
+    .replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>")
+    .replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>")
+    .replace(/Bearer\s+\S+/g, "Bearer <redacted>")
+    .slice(0, 240);
+}
+
+function safeLogTail(logFile: string): string {
+  if (!existsSync(logFile)) return "";
+  return readFileSync(logFile, "utf8")
+    .replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>")
+    .replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>")
+    .replace(/Bearer\s+\S+/g, "Bearer <redacted>")
+    .slice(-1500);
+}
+function looksLikeElectronBinary(execPath: string, electronVersion?: string): boolean {
+  if (electronVersion) return true;
+  const base = basename(execPath).toLowerCase();
+  return (
+    base.includes("electron") ||
+    base.includes("claude") ||
+    /claude\.app\/contents\/macos\//i.test(execPath)
+  );
 }
 
 function repoKey(repo: string): string {
@@ -269,11 +325,158 @@ export function resolveQualityExecutable(): string | undefined {
   return undefined;
 }
 
-function nodeSqliteAvailable(): boolean {
-  const r = spawnSync(process.execPath, ["-e", "require('node:sqlite')"], {
+const SQLITE_PROBE_SOURCE = `
+try {
+  require('node:sqlite');
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    version: process.version,
+    versionsNode: process.versions.node,
+    execPath: process.execPath,
+    platform: process.platform,
+    arch: process.arch,
+    electron: process.versions.electron || null
+  }));
+} catch (e) {
+  process.stdout.write(JSON.stringify({
+    ok: false,
+    version: process.version,
+    versionsNode: process.versions.node,
+    execPath: process.execPath,
+    platform: process.platform,
+    arch: process.arch,
+    electron: process.versions.electron || null,
+    code: e && e.code ? String(e.code) : undefined,
+    message: e && e.message ? String(e.message) : String(e)
+  }));
+  process.exitCode = 2;
+}
+`;
+
+function parseProbeJson(stdout: string | undefined): {
+  ok?: boolean;
+  version?: string;
+  versionsNode?: string;
+  execPath?: string;
+  platform?: string;
+  arch?: string;
+  electron?: string | null;
+  code?: string;
+  message?: string;
+} | undefined {
+  const text = (stdout ?? "").trim();
+  if (!text) return undefined;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return undefined;
+  try {
+    return JSON.parse(text.slice(start, end + 1)) as {
+      ok?: boolean;
+      version?: string;
+      versionsNode?: string;
+      execPath?: string;
+      platform?: string;
+      arch?: string;
+      electron?: string | null;
+      code?: string;
+      message?: string;
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function probeSqliteInProcess(): NodeRuntimeProbe {
+  let moduleLoad: SqliteModuleLoad = "failure";
+  let errorCode: string | undefined;
+  let errorMessage: string | undefined;
+  try {
+    const req = createRequire(import.meta.url);
+    req("node:sqlite");
+    moduleLoad = "success";
+  } catch (err) {
+    const e = err as { code?: string; message?: string };
+    errorCode = e.code;
+    errorMessage = safeErrorMessage(e.message);
+  }
+  return {
+    execPath: process.execPath,
+    version: process.version,
+    versionsNode: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+    electron: process.versions.electron,
+    moduleLoad,
+    errorCode,
+    errorMessage,
+  };
+}
+
+export function probeSqliteWithExecutable(
+  execPath: string,
+  extraEnv: Record<string, string> = {},
+  extraArgs: string[] = [],
+): NodeRuntimeProbe {
+  const r = spawnSync(execPath, [...extraArgs, "-e", SQLITE_PROBE_SOURCE], {
     encoding: "utf8",
+    timeout: 5000,
+    env: { ...process.env, ...extraEnv },
   });
-  return (r.status ?? 1) === 0;
+  const parsed = parseProbeJson(r.stdout);
+  const spawnError = r.error ? safeErrorMessage(r.error.message) : undefined;
+  const moduleLoad: SqliteModuleLoad = parsed?.ok === true && (r.status ?? 1) === 0 ? "success" : "failure";
+  return {
+    execPath: parsed?.execPath || execPath,
+    version: parsed?.version || "",
+    versionsNode: parsed?.versionsNode || "",
+    platform: parsed?.platform || process.platform,
+    arch: parsed?.arch || process.arch,
+    electron: parsed?.electron || (extraEnv.ELECTRON_RUN_AS_NODE ? process.versions.electron : undefined),
+    moduleLoad,
+    errorCode: parsed?.code || (spawnError ? "SPAWN_FAILED" : undefined),
+    errorMessage: safeErrorMessage(parsed?.message || spawnError || r.stderr),
+    spawnStatus: r.status,
+    spawnError,
+  };
+}
+
+export function classifySqliteProbeError(probe: NodeRuntimeProbe): QualityErrorCode {
+  const code = probe.errorCode ?? "";
+  const msg = (probe.errorMessage ?? "").toLowerCase();
+  if (code === "ERR_UNKNOWN_BUILTIN_MODULE" || msg.includes("node:sqlite")) {
+    return QUALITY_CODES.QUALITY_SQLITE_UNAVAILABLE;
+  }
+  if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
+    return QUALITY_CODES.QUALITY_SQLITE_MODULE_LOAD_FAILED;
+  }
+  if (code === "SPAWN_FAILED") {
+    return QUALITY_CODES.QUALITY_CHILD_RUNTIME_MISMATCH;
+  }
+  return QUALITY_CODES.QUALITY_SQLITE_MODULE_LOAD_FAILED;
+}
+
+export function resolveQualityChildRuntime(): QualityChildRuntime {
+  const parent = probeSqliteInProcess();
+  const extraArgs: string[] = [];
+  const extraEnv: Record<string, string> = {};
+  const override = process.env.PRAXIS_QUALITY_NODE;
+  let execPath = override && override.trim() ? override : process.execPath;
+
+  if (process.versions.electron || looksLikeElectronBinary(execPath, process.versions.electron)) {
+    extraEnv.ELECTRON_RUN_AS_NODE = "1";
+  }
+
+  let child = probeSqliteWithExecutable(execPath, extraEnv, extraArgs);
+  if (
+    child.moduleLoad !== "success" &&
+    !override &&
+    looksLikeElectronBinary(execPath, process.versions.electron || child.electron)
+  ) {
+    extraEnv.ELECTRON_RUN_AS_NODE = "1";
+    child = probeSqliteWithExecutable(execPath, extraEnv, extraArgs);
+  }
+
+  return { execPath, extraArgs, extraEnv, parent, child };
 }
 
 function portListening(port: number): Promise<boolean> {
@@ -307,6 +510,7 @@ function fail(
       errorCode: code,
       durationMs,
       safeMessage: message,
+      stage,
     },
   });
 }
@@ -367,7 +571,7 @@ export async function probeQuality(opts: { repo: string }): Promise<QualityEnsur
 
 async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureResult> {
   const t0 = Date.now();
-  qlog("ensure start");
+  qlog("quality.ensure.start");
   const repo = repoKey(opts.repo);
   const db = qualityDbPath(repo);
   const logPath = qualityLogPath(repo);
@@ -375,7 +579,7 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
 
   const probe = await probeQuality({ repo });
   if (probe.status === "healthy") {
-    qlog(`ensure done durationMs=${Date.now() - t0} reused=true`);
+    qlog(`quality.ensure.done durationMs=${Date.now() - t0} reused=true`);
     return {
       ...probe,
       status: "healthy",
@@ -385,36 +589,52 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
   }
 
   const executable = resolveQualityExecutable();
-  qlog(`package resolved ${executable ? "yes" : "no"}`);
+  qlog(`quality.entry.resolve ${executable ? "yes" : "no"}`);
   if (!executable) {
     fail(
       QUALITY_CODES.QUALITY_PACKAGE_MISSING,
       "Quality service executable is not packaged with Praxis Runtime",
-      "resolve-executable",
+      "quality.entry.resolve",
       t0,
       { healthUrl: probe.url, logPath },
     );
   }
-  qlog(`executable resolved path=${executable}`);
+  qlog(`quality.entry.resolve path=${executable}`);
   if (!existsSync(executable)) {
     fail(
       QUALITY_CODES.QUALITY_PACKAGE_MISSING,
       `Quality service executable missing: ${executable}`,
-      "resolve-executable",
+      "quality.entry.resolve",
       t0,
       { executable, healthUrl: probe.url, logPath },
     );
   }
 
-  if (!nodeSqliteAvailable()) {
-    fail(
-      QUALITY_CODES.QUALITY_STARTUP_FAILED,
-      "Quality service requires Node.js 22+ with node:sqlite",
-      "node-sqlite",
-      t0,
-      { executable, node: process.version, logPath },
+  const runtime = resolveQualityChildRuntime();
+  qlog(
+    `quality.node.resolve parent=${runtime.parent.execPath} parentVersion=${runtime.parent.version} child=${runtime.execPath} childVersion=${runtime.child.version || "unknown"} electron=${runtime.parent.electron ?? "no"}`,
+  );
+  qlog(
+    `quality.sqlite.preflight parentLoad=${runtime.parent.moduleLoad} childLoad=${runtime.child.moduleLoad} childErrorCode=${runtime.child.errorCode ?? "none"}`,
+  );
+  if (runtime.child.moduleLoad !== "success") {
+    qlog(
+      `quality.sqlite.preflight node:sqlite unavailable in child; Quality will use bundled sql.js code=${runtime.child.errorCode ?? "none"}`,
     );
   }
+
+  const diagnosticDetails = {
+    executable,
+    logPath,
+    nodeVersion: runtime.child.version || runtime.parent.version,
+    nodeExecutable: runtime.execPath,
+    parentNodeExecutable: runtime.parent.execPath,
+    parentNodeVersion: runtime.parent.version,
+    moduleLoad: runtime.child.moduleLoad,
+    moduleLoadErrorCode: runtime.child.errorCode,
+    sqlitePreflightStage: "quality.sqlite.preflight",
+    spawned: false,
+  };
 
   const port = configuredPort();
   const url = urlForPort(port);
@@ -429,7 +649,7 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
         allowedRoot: repo,
         startedAt: new Date().toISOString(),
       });
-      qlog(`ensure done durationMs=${Date.now() - t0} reused=true`);
+      qlog(`quality.ensure.done durationMs=${Date.now() - t0} reused=true`);
       return {
         status: "healthy",
         pid: occupant.pid,
@@ -448,7 +668,7 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
       `Quality port ${port} is already in use by another process`,
       "port",
       t0,
-      { healthUrl: url, logPath, port, executable },
+      { ...diagnosticDetails, healthUrl: url, port },
     );
   }
 
@@ -456,7 +676,7 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
   qlog(`cwd resolved path=${repo}`);
   qlog(`db path resolved path=${db}`);
 
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: NodeJS.ProcessEnv = { ...process.env, ...runtime.extraEnv };
   delete env.PORT;
   env.PRAXIS_QUALITY_PORT = String(port);
   env.PRAXIS_QUALITY_DB = db;
@@ -464,10 +684,10 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
   env.PRAXIS_QUALITY_HOST = "127.0.0.1";
 
   const logFd = openSync(logPath, "a");
-  qlog("spawn requested");
+  qlog("quality.spawn");
   let child: ChildProcess;
   try {
-    child = spawn(process.execPath, [executable], {
+    child = spawn(runtime.execPath, [...runtime.extraArgs, executable], {
       cwd: repo,
       env,
       detached: true,
@@ -475,18 +695,24 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
     });
   } catch (err) {
     closeSync(logFd);
+    const mismatch = looksLikeElectronBinary(runtime.execPath, runtime.parent.electron);
     fail(
-      QUALITY_CODES.QUALITY_STARTUP_FAILED,
+      mismatch ? QUALITY_CODES.QUALITY_CHILD_RUNTIME_MISMATCH : QUALITY_CODES.QUALITY_STARTUP_FAILED,
       err instanceof Error ? err.message : String(err),
-      "spawn",
+      "quality.spawn",
       t0,
-      { executable, cwd: repo, healthUrl: url, logPath },
+      {
+        ...diagnosticDetails,
+        cwd: repo,
+        healthUrl: url,
+        spawned: false,
+      },
     );
   }
   closeSync(logFd);
   child.unref();
   const pid = child.pid;
-  qlog(`process started pid=${pid ?? "unknown"}`);
+  qlog(`quality.child.start pid=${pid ?? "unknown"}`);
   let exitCode: number | null = null;
   let exitSignal: NodeJS.Signals | null = null;
   child.on("exit", (code, signal) => {
@@ -494,16 +720,16 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
     exitSignal = signal;
   });
   child.on("error", (err) => {
-    qlog(`process error ${err instanceof Error ? err.message : String(err)}`);
+    qlog(`process error ${safeErrorMessage(err)}`);
   });
 
   if (!pid) {
     fail(
       QUALITY_CODES.QUALITY_STARTUP_FAILED,
       "Quality service spawn did not return a pid",
-      "spawn",
+      "quality.spawn",
       t0,
-      { executable, cwd: repo, healthUrl: url, logPath },
+      { ...diagnosticDetails, cwd: repo, healthUrl: url, spawned: false },
     );
   }
 
@@ -519,33 +745,47 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
   let attempt = 0;
   while (Date.now() - t0 < timeoutMs) {
     attempt += 1;
-    qlog(`health attempt=${attempt}`);
+    qlog(`quality.health attempt=${attempt}`);
     if (exitCode !== null) {
-      const logTail = existsSync(logPath) ? readFileSync(logPath, "utf8").slice(-2000) : "";
-      const dbFailed = /sqlite|SQLITE|database/i.test(logTail);
+      const logTail = safeLogTail(logPath);
+      const wasmMissing = /wasm asset is missing|QUALITY_SQLITE_UNAVAILABLE/i.test(logTail);
+      const sqliteLoad = /ERR_UNKNOWN_BUILTIN_MODULE|node:sqlite/i.test(logTail);
+      const dbFailed = /sqlite|SQLITE|database|sql\.js|sqljs/i.test(logTail);
       killPid(pid);
+      const code = wasmMissing
+        ? QUALITY_CODES.QUALITY_SQLITE_UNAVAILABLE
+        : sqliteLoad && dbFailed
+          ? QUALITY_CODES.QUALITY_SQLITE_MODULE_LOAD_FAILED
+          : dbFailed
+            ? QUALITY_CODES.QUALITY_DB_INIT_FAILED
+            : QUALITY_CODES.QUALITY_PROCESS_EXITED;
       fail(
-        dbFailed ? QUALITY_CODES.QUALITY_DB_INIT_FAILED : QUALITY_CODES.QUALITY_PROCESS_EXITED,
-        dbFailed
-          ? "Quality SQLite initialization failed"
-          : `Quality service exited before becoming healthy (exit=${exitCode})`,
-        dbFailed ? "db-init" : "process-exit",
+        code,
+        wasmMissing
+          ? "Quality SQLite wasm backend is missing from the packaged Runtime"
+          : sqliteLoad
+            ? "Quality SQLite module failed to load in the child process"
+            : dbFailed
+              ? "Quality SQLite initialization failed"
+              : `Quality service exited before becoming healthy (exit=${exitCode})`,
+        wasmMissing || sqliteLoad || dbFailed ? "quality.db.init" : "quality.child.start",
         t0,
         {
-          executable,
+          ...diagnosticDetails,
           cwd: repo,
           healthUrl: url,
-          logPath,
           exitCode,
           exitSignal,
           pid,
+          spawned: true,
+          stderrTail: logTail,
         },
       );
     }
     const health = await fetchHealth(url);
     if (health && (rootsMatch(health.allowedRoot, repo) || health.pid === pid)) {
-      qlog("health ready");
-      qlog(`ensure done durationMs=${Date.now() - t0}`);
+      qlog("quality.health ready");
+      qlog(`quality.ensure.done durationMs=${Date.now() - t0}`);
       return {
         status: "started",
         pid,
@@ -566,9 +806,9 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
   fail(
     QUALITY_CODES.QUALITY_HEALTH_TIMEOUT,
     `Quality service did not become healthy within ${timeoutMs}ms`,
-    "health",
+    "quality.health",
     t0,
-    { executable, cwd: repo, healthUrl: url, logPath, pid, timeoutMs },
+    { ...diagnosticDetails, cwd: repo, healthUrl: url, pid, timeoutMs, spawned: true },
   );
 }
 

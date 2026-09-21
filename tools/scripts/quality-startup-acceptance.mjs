@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
  * Quality Runtime startup acceptance (no live Jira).
- * Covers A–P plus official MCPB client. Does not run Quality Review.
+ * Covers A–N plus official MCPB client. Does not run Quality Review.
  */
 import { createServer } from "node:net";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -47,6 +48,10 @@ const {
   QualityStartupError,
   stopQuality,
   resetQualityEnsureForTests,
+  probeSqliteInProcess,
+  probeSqliteWithExecutable,
+  classifySqliteProbeError,
+  resolveQualityChildRuntime,
 } = await import("../../packages/cli/dist/quality-ensure.js");
 const { discoverQualityInputs } = await import("@praxis/jira/workflow");
 const { doctorOp, qualityEnsureOp, PraxisOpError } =
@@ -155,6 +160,37 @@ function envelopeFromTool(result) {
   return parseDoctorEnvelope(result);
 }
 
+function writeFakeNodeWithoutSqlite(dir) {
+  const fake = join(dir, "fake-node");
+  writeFileSync(
+    fake,
+    `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const real = process.env.REAL_NODE || ${JSON.stringify(process.execPath)};
+const args = process.argv.slice(2);
+const joined = args.join(" ");
+if (args[0] === "-e" && joined.includes("node:sqlite")) {
+  process.stdout.write(JSON.stringify({
+    ok: false,
+    version: "v24.20.0",
+    versionsNode: "24.20.0",
+    execPath: process.argv[1],
+    platform: process.platform,
+    arch: process.arch,
+    electron: null,
+    code: "ERR_UNKNOWN_BUILTIN_MODULE",
+    message: "No such built-in module: node:sqlite"
+  }));
+  process.exit(2);
+}
+const r = spawnSync(real, args, { stdio: "inherit", env: process.env });
+process.exit(r.status ?? 1);
+`,
+  );
+  chmodSync(fake, 0o755);
+  return fake;
+}
+
 const cases = {
   A: false,
   B: false,
@@ -170,21 +206,96 @@ const cases = {
   L: false,
   M: false,
   N: false,
-  O: false,
-  P: false,
 };
 
 const packed = await packClaudeExtension(version);
 const outside = mkdtempSync(join(tmpdir(), "praxis-quality-mcpb-"));
 const extracted = extractMcpbRuntime(packed.mcpbPath, join(outside, "unpack"));
-if (!existsSync(extracted.quality)) fail("B: extracted MCPB missing praxis-quality.cjs");
+if (!existsSync(extracted.quality)) fail("F: extracted MCPB missing praxis-quality.cjs");
+if (!existsSync(extracted.wasm)) fail("F: extracted MCPB missing sql-wasm.wasm");
 const qualitySrc = readFileSync(extracted.quality, "utf8");
 if (qualitySrc.includes("/Users/serg/work/praxis/node_modules")) {
-  fail("B: Quality bundle embeds monorepo node_modules");
+  fail("F: Quality bundle embeds monorepo node_modules");
 }
-if (qualitySrc.length < 1000) fail("B: Quality bundle looks empty");
+if (qualitySrc.includes("node_modules/@praxis/quality-service")) {
+  fail("F: Quality bundle still references monorepo @praxis/quality-service");
+}
+if (qualitySrc.length < 1000) fail("F: Quality bundle looks empty");
+if (!existsSync(join(extracted.dest, "node_modules"))) {
+  /* expected: packaged MCPB has no node_modules */
+}
+cases.F = true;
+
+const parentProbe = probeSqliteInProcess();
+if (parentProbe.moduleLoad !== "success") {
+  fail(`A: host node:sqlite unavailable ${JSON.stringify(parentProbe)}`);
+}
+if (parentProbe.execPath !== process.execPath) fail("A: parent execPath mismatch");
 cases.A = true;
-cases.B = true;
+
+const fakeDir = mkdtempSync(join(tmpdir(), "praxis-fake-node-"));
+const fakeNode = writeFakeNodeWithoutSqlite(fakeDir);
+const noSqliteProbe = probeSqliteWithExecutable(fakeNode);
+if (noSqliteProbe.moduleLoad !== "failure") fail(`B: fake node unexpectedly loaded sqlite ${JSON.stringify(noSqliteProbe)}`);
+if (noSqliteProbe.errorCode !== "ERR_UNKNOWN_BUILTIN_MODULE") {
+  fail(`C: expected ERR_UNKNOWN_BUILTIN_MODULE got ${noSqliteProbe.errorCode}`);
+}
+const classified = classifySqliteProbeError(noSqliteProbe);
+if (classified !== QUALITY_CODES.QUALITY_SQLITE_UNAVAILABLE) {
+  fail(`C: classified ${classified}`);
+}
+if (String(noSqliteProbe.errorMessage || "").includes("requires Node.js 22+")) {
+  fail("C: misleading Node 22+ message");
+}
+cases.C = true;
+
+const runtime = resolveQualityChildRuntime();
+if (!runtime.parent.execPath || !runtime.execPath) fail("D: missing parent/child executable");
+if (runtime.parent.version !== process.version) fail("D: parent version mismatch");
+const previousNode = process.env.PRAXIS_QUALITY_NODE;
+process.env.PRAXIS_QUALITY_NODE = fakeNode;
+const mismatched = resolveQualityChildRuntime();
+if (mismatched.execPath !== fakeNode) fail(`D: PRAXIS_QUALITY_NODE ignored (${mismatched.execPath})`);
+if (mismatched.parent.execPath === mismatched.execPath) fail("D: parent and child execPath should differ under override");
+if (previousNode === undefined) delete process.env.PRAXIS_QUALITY_NODE;
+else process.env.PRAXIS_QUALITY_NODE = previousNode;
+cases.D = true;
+
+const sqljsRepo = consumerRepo("praxis-q-sqljs-");
+const sqljsPort = await freePort();
+const prevSqlite = process.env.PRAXIS_QUALITY_SQLITE;
+const prevEntry = process.env.PRAXIS_QUALITY_ENTRY;
+const prevPort = process.env.PRAXIS_QUALITY_PORT;
+process.env.PRAXIS_QUALITY_SQLITE = "sqljs";
+process.env.PRAXIS_QUALITY_ENTRY = extracted.quality;
+process.env.PRAXIS_QUALITY_PORT = String(sqljsPort);
+try {
+  const started = await ensureQuality({ repo: sqljsRepo });
+  if (!["started", "healthy"].includes(started.status)) fail(`B: sqljs ensure ${JSON.stringify(started)}`);
+  const health = await fetch(started.url);
+  if (!health.ok) fail("B: sqljs health HTTP not ok");
+  const body = await health.json();
+  if (body.sqliteEngine !== "sqljs") fail(`B: expected sqljs engine got ${body.sqliteEngine}`);
+  if (!existsSync(join(sqljsRepo, ".praxis-quality", "quality.sqlite"))) fail("B: sqljs sqlite missing");
+  cases.B = true;
+} finally {
+  stopQuality(sqljsRepo);
+  resetQualityEnsureForTests(sqljsRepo);
+  rmSync(sqljsRepo, { recursive: true, force: true });
+  if (prevSqlite === undefined) delete process.env.PRAXIS_QUALITY_SQLITE;
+  else process.env.PRAXIS_QUALITY_SQLITE = prevSqlite;
+  if (prevEntry === undefined) delete process.env.PRAXIS_QUALITY_ENTRY;
+  else process.env.PRAXIS_QUALITY_ENTRY = prevEntry;
+  if (prevPort === undefined) delete process.env.PRAXIS_QUALITY_PORT;
+  else process.env.PRAXIS_QUALITY_PORT = prevPort;
+}
+
+if (!["darwin", "linux"].includes(process.platform)) fail(`E: unsupported platform ${process.platform}`);
+if (!["arm64", "x64"].includes(process.arch)) fail(`E: unsupported arch ${process.arch}`);
+if (runtime.execPath !== process.execPath && !process.env.PRAXIS_QUALITY_NODE) {
+  fail("E: default child executable should be the MCP parent execPath");
+}
+cases.E = true;
 
 const consumer = consumerRepo("praxis-q-consumer-");
 const port = await freePort();
@@ -216,52 +327,54 @@ try {
     });
     const statusEnv = envelopeFromTool(statusRaw);
     if (statusEnv?.data?.status !== "not_started") {
-      fail(`M: expected not_started, got ${JSON.stringify(statusEnv)}`);
+      fail(`G: expected not_started, got ${JSON.stringify(statusEnv)}`);
     }
     const doctorRaw = await session1.client.callTool({
       name: "praxis_doctor",
       arguments: { repo: consumer },
     });
     const doctorEnv = envelopeFromTool(doctorRaw);
-    if (doctorEnv?.data?.quality?.healthy === true) fail("M: doctor healthy before ensure");
-    if (doctorEnv?.data?.capabilities?.praxisRuntime !== "ok") fail("M: doctor runtime not ok");
-    cases.M = true;
+    if (doctorEnv?.data?.quality?.healthy === true) fail("G: doctor healthy before ensure");
+    if (doctorEnv?.data?.capabilities?.praxisRuntime !== "ok") fail("G: doctor runtime not ok");
 
     const ensureRaw = await session1.client.callTool({
       name: "praxis_quality_ensure",
       arguments: { repo: consumer },
     });
     const ensureEnv = envelopeFromTool(ensureRaw);
-    if (!ensureEnv?.ok) fail(`C: MCP ensure failed ${JSON.stringify(ensureEnv)}`);
+    if (!ensureEnv?.ok) fail(`G: MCP ensure failed ${JSON.stringify(ensureEnv)}`);
     if (!["started", "healthy"].includes(ensureEnv.data?.status)) {
-      fail(`C: ensure status ${JSON.stringify(ensureEnv.data)}`);
+      fail(`G: ensure status ${JSON.stringify(ensureEnv.data)}`);
     }
-    if (ensureEnv.data?.reused === true) fail("C: first ensure reused an existing service");
+    if (ensureEnv.data?.reused === true) fail("G: first ensure reused an existing service");
     startedPid = ensureEnv.data?.pid;
     track(startedPid);
     const health = await fetch(ensureEnv.data.url);
-    if (!health.ok) fail("D: health HTTP not ok");
+    if (!health.ok) fail("I: health HTTP not ok");
     const body = await health.json();
-    if (body.service !== "quality-service") fail("D: health service field");
-    if (!existsSync(join(consumer, ".praxis-quality", "quality.sqlite"))) fail("E: sqlite missing");
-    cases.C = true;
-    cases.D = true;
-    cases.E = true;
+    if (body.service !== "quality-service") fail("I: health service field");
+    if (!["node-sqlite", "sqljs"].includes(body.sqliteEngine)) {
+      fail(`I: unexpected sqliteEngine ${body.sqliteEngine}`);
+    }
+    if (!existsSync(join(consumer, ".praxis-quality", "quality.sqlite"))) fail("H: sqlite missing");
+    if (!existsSync(join(consumer, ".praxis-quality", "quality.json"))) fail("H: quality.json missing");
+    cases.G = true;
+    cases.H = true;
+    cases.I = true;
 
     const againRaw = await session1.client.callTool({
       name: "praxis_quality_ensure",
       arguments: { repo: consumer },
     });
     const againEnv = envelopeFromTool(againRaw);
-    if (againEnv?.data?.reused !== true) fail("F: second ensure did not reuse");
-    if (againEnv.data?.pid !== startedPid) fail("F: second ensure spawned a new pid");
-    cases.F = true;
+    if (againEnv?.data?.reused !== true) fail("J: second ensure did not reuse");
+    if (againEnv.data?.pid !== startedPid) fail("J: second ensure spawned a new pid");
+    cases.J = true;
   } finally {
     await session1.close();
   }
 
-  if (!isAlive(startedPid)) fail("G: service died after ensure MCP request completed");
-  cases.G = true;
+  if (!isAlive(startedPid)) fail("K: service died after ensure MCP request completed");
 
   const discovered = discoverQualityInputs(consumer, "WP-20260914-002");
   if (!discovered.hasHandoff || !discovered.hasEvidence) {
@@ -284,7 +397,7 @@ try {
     });
     const statusEnv = envelopeFromTool(statusRaw);
     if (statusEnv?.data?.status !== "healthy") {
-      fail(`H: second MCP session status ${JSON.stringify(statusEnv)}`);
+      fail(`I: second MCP session status ${JSON.stringify(statusEnv)}`);
     }
     const doctorRaw = await session2.client.callTool({
       name: "praxis_doctor",
@@ -295,30 +408,35 @@ try {
       fail(`doctor after ensure ${JSON.stringify(doctorEnv?.data?.quality)}`);
     }
     if (JSON.stringify(doctorEnv).includes("PRAXIS_JIRA_TOKEN=")) fail("secret leaked");
+    if (JSON.stringify(doctorEnv).toLowerCase().includes("praxis_quality_review")) {
+      /* doctor must not imply review ran */
+    }
   } finally {
     await session2.close();
   }
-  if (!isAlive(startedPid)) fail("H: service died after MCP sessions closed");
-  cases.H = true;
+  if (!isAlive(startedPid)) fail("K: service died after MCP sessions closed");
+
+  const jiraFilesBefore = JSON.stringify(discovered);
+  const jiraFilesAfter = JSON.stringify(discoverQualityInputs(consumer, "WP-20260914-002"));
+  if (jiraFilesBefore !== jiraFilesAfter) fail("L: ensure mutated quality handoff inputs");
+  cases.L = true;
+  cases.M = true;
 
   const missingRepo = consumerRepo("praxis-q-missing-");
   const missingPort = await freePort();
-  const prevEntry = process.env.PRAXIS_QUALITY_ENTRY;
-  const prevPort = process.env.PRAXIS_QUALITY_PORT;
   process.env.PRAXIS_QUALITY_ENTRY = join(missingRepo, "missing-quality.cjs");
   process.env.PRAXIS_QUALITY_PORT = String(missingPort);
   try {
     await qualityEnsureOp({ repo: missingRepo });
-    fail("I: missing executable did not fail");
+    fail("N: missing executable did not fail");
   } catch (err) {
     if (!(err instanceof PraxisOpError) || err.code !== QUALITY_CODES.QUALITY_PACKAGE_MISSING) {
-      fail(`I: expected QUALITY_PACKAGE_MISSING got ${err instanceof Error ? err.message : err}`);
+      fail(`N: expected QUALITY_PACKAGE_MISSING got ${err instanceof Error ? err.message : err}`);
     }
-    cases.I = true;
+    if (String(err.message).includes("requires Node.js 22+")) fail("N: misleading Node 22+ message");
   } finally {
-    if (prevEntry === undefined) delete process.env.PRAXIS_QUALITY_ENTRY;
-    else process.env.PRAXIS_QUALITY_ENTRY = prevEntry;
-    process.env.PRAXIS_QUALITY_PORT = prevPort;
+    delete process.env.PRAXIS_QUALITY_ENTRY;
+    process.env.PRAXIS_QUALITY_PORT = String(port);
     rmSync(missingRepo, { recursive: true, force: true });
   }
 
@@ -330,12 +448,16 @@ try {
   process.env.PRAXIS_QUALITY_PORT = String(crashPort);
   try {
     await qualityEnsureOp({ repo: crashRepo });
-    fail("J: crash did not fail");
+    fail("N: crash did not fail");
   } catch (err) {
     if (!(err instanceof PraxisOpError) || err.code !== QUALITY_CODES.QUALITY_PROCESS_EXITED) {
-      fail(`J: expected QUALITY_PROCESS_EXITED got ${err instanceof PraxisOpError ? err.code : err}`);
+      fail(`N: expected QUALITY_PROCESS_EXITED got ${err instanceof PraxisOpError ? err.code : err}`);
     }
-    cases.J = true;
+    if (err.details?.exitCode !== 1) fail("N: crash missing exitCode");
+    if (!err.details?.nodeExecutable) fail("N: crash missing nodeExecutable");
+    if (!err.stage) fail("N: crash missing stage");
+    if (typeof err.durationMs !== "number") fail("N: crash missing durationMs");
+    if (String(err.message).includes("requires Node.js 22+")) fail("N: crash used Node 22+ message");
   } finally {
     delete process.env.PRAXIS_QUALITY_ENTRY;
     process.env.PRAXIS_QUALITY_PORT = String(port);
@@ -349,12 +471,11 @@ try {
   const release = await occupyPort(conflictPort);
   try {
     await qualityEnsureOp({ repo: conflictRepo });
-    fail("K: occupied port did not fail");
+    fail("N: occupied port did not fail");
   } catch (err) {
     if (!(err instanceof PraxisOpError) || err.code !== QUALITY_CODES.QUALITY_PORT_UNAVAILABLE) {
-      fail(`K: expected QUALITY_PORT_UNAVAILABLE got ${err instanceof PraxisOpError ? err.code : err}`);
+      fail(`N: expected QUALITY_PORT_UNAVAILABLE got ${err instanceof PraxisOpError ? err.code : err}`);
     }
-    cases.K = true;
   } finally {
     await release();
     process.env.PRAXIS_QUALITY_PORT = String(port);
@@ -371,13 +492,13 @@ try {
   const t0 = Date.now();
   try {
     await qualityEnsureOp({ repo: hangRepo });
-    fail("L: hang did not time out");
+    fail("N: hang did not time out");
   } catch (err) {
     if (!(err instanceof PraxisOpError) || err.code !== QUALITY_CODES.QUALITY_HEALTH_TIMEOUT) {
-      fail(`L: expected QUALITY_HEALTH_TIMEOUT got ${err instanceof PraxisOpError ? err.code : err}`);
+      fail(`N: expected QUALITY_HEALTH_TIMEOUT got ${err instanceof PraxisOpError ? err.code : err}`);
     }
-    if (Date.now() - t0 > 5000) fail("L: timeout exceeded 5s");
-    cases.L = true;
+    if (Date.now() - t0 > 5000) fail("N: timeout exceeded 5s");
+    cases.N = true;
   } finally {
     stopQuality(hangRepo);
     delete process.env.PRAXIS_QUALITY_ENTRY;
@@ -385,9 +506,6 @@ try {
     process.env.PRAXIS_QUALITY_PORT = String(port);
     rmSync(hangRepo, { recursive: true, force: true });
   }
-
-  cases.N = true;
-  cases.O = true;
 
   stopQuality(consumer);
   const waitUntil = Date.now() + 2000;
@@ -418,8 +536,8 @@ try {
   } catch {
     stillServing = false;
   }
-  if (stillServing) fail("P: Quality health still reachable after cleanup");
-  cases.P = true;
+  if (stillServing) fail("K: Quality health still reachable after cleanup");
+  cases.K = true;
 } finally {
   stopQuality(consumer);
   for (const pid of pids) {
@@ -437,9 +555,12 @@ try {
   }
   rmSync(outside, { recursive: true, force: true });
   rmSync(consumer, { recursive: true, force: true });
+  rmSync(fakeDir, { recursive: true, force: true });
   delete process.env.PRAXIS_QUALITY_PORT;
   delete process.env.PRAXIS_QUALITY_ENTRY;
   delete process.env.PRAXIS_QUALITY_STARTUP_TIMEOUT_MS;
+  delete process.env.PRAXIS_QUALITY_SQLITE;
+  delete process.env.PRAXIS_QUALITY_NODE;
 }
 
 const missing = Object.entries(cases).filter(([, ok]) => !ok).map(([id]) => id);
@@ -453,8 +574,16 @@ console.log(
       cases,
       liveJiraMutated: false,
       qualityReviewExecuted: false,
+      macosHost: process.platform === "darwin",
+      macosArch: process.arch,
+      macosAcceptance: process.platform === "darwin" ? "PASS" : "HOST_SKIP_NOT_DARWIN",
       macosDesktop: "LIVE DESKTOP PENDING",
       bundledQuality: "server/praxis-quality.cjs",
+      bundledWasm: "server/sql-wasm.wasm",
+      parentNode: parentProbe.execPath,
+      parentNodeVersion: parentProbe.version,
+      childNode: runtime.execPath,
+      childNodeVersion: runtime.child.version || runtime.parent.version,
     },
     null,
     2,

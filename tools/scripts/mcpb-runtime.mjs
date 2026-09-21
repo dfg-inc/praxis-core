@@ -44,15 +44,18 @@ export function extractMcpbRuntime(mcpbPath, dest) {
   extractZip(readFileSync(mcpbPath), dest);
   const runtime = join(dest, "server", "praxis-mcp.cjs");
   const quality = join(dest, "server", "praxis-quality.cjs");
+  const wasm = join(dest, "server", "sql-wasm.wasm");
   const manifestPath = join(dest, "manifest.json");
   if (!existsSync(runtime)) throw new Error(`MCPB missing ${runtime}`);
   if (!existsSync(quality)) throw new Error(`MCPB missing ${quality}`);
+  if (!existsSync(wasm)) throw new Error(`MCPB missing ${wasm}`);
   if (!existsSync(manifestPath)) throw new Error(`MCPB missing ${manifestPath}`);
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   return {
     dest,
     runtime,
     quality,
+    wasm,
     manifest,
     args: [runtime, "--role", "runtime"],
   };
