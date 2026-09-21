@@ -93,7 +93,7 @@ try {
     if (!field) fail(`missing user_config.${key}`);
     if (field.type !== spec.type) fail(`${key}.type ${field.type}`);
     if (field.title !== spec.title) fail(`${key}.title ${field.title}`);
-    if (field.required !== true) fail(`${key}.required !== true`);
+    if (field.required !== spec.required) fail(`${key}.required !== ${spec.required}`);
   }
   for (const [envName, subst] of Object.entries(JIRA_ENV_MAP)) {
     if (manifest.server.mcp_config.env[envName] !== subst) {
