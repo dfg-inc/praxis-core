@@ -62,6 +62,7 @@ const requiredPages = [
   "workflows/ba-only.md",
   "workflows/architect-only.md",
   "workflows/developer-only.md",
+  "workflows/github-delivery.md",
   "workflows/quality-only.md",
   "workflows/resume.md",
   "reference/configuration.md",
@@ -130,8 +131,10 @@ for (const needle of [
   "praxis_developer_git_commit",
   "praxis_developer_git_publish",
   "praxis_developer_git_merge_request",
+  "praxis_developer_git_merge_request_preview",
   "github_token",
   "baseline",
+  "refspec",
 ]) {
   if (!developerGuide.includes(needle)) fail(`developer guide missing ${needle}`);
 }
