@@ -545,7 +545,13 @@ void applyMergeRequest;
 }
 
 {
-  const { packClaudeExtension } = await import("./pack-claude-extension.mjs");
+if (!existsSync(join(root, "packages/mcp"))) {
+  console.log(
+    JSON.stringify({ ok: true, skipped: "extracted-MCPB Git Delivery requires praxis-runtime" }, null, 2),
+  );
+  process.exit(0);
+}
+const { packClaudeExtension } = await import("./pack-claude-extension.mjs");
   const { extractMcpbRuntime } = await import("./mcpb-runtime.mjs");
   const { connectOfficialMcp, hostedCleanEnv, parseDoctorEnvelope, versionNegotiationModern } = await import(
     "./official-mcp-client.mjs"

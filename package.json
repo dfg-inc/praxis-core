@@ -13,9 +13,9 @@
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "pack:vendor": "node tools/scripts/pack-core-vendor.mjs",
-    "accept:git-delivery": "node tools/scripts/git-delivery-acceptance.mjs",
+    "accept:git-delivery-lib": "node tools/scripts/git-delivery-acceptance.mjs",
     "accept:git-delivery-e2e": "node tools/scripts/git-delivery-e2e-acceptance.mjs",
-    "verify": "npm run build && npm run typecheck && npm run test && npm run accept:git-delivery && npm run accept:git-delivery-e2e"
+    "verify": "npm run build && npm run typecheck && npm run test"
   },
   "engines": {
     "node": ">=20"

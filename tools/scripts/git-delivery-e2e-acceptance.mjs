@@ -533,6 +533,9 @@ const consumerBefore = consumerSnapshot();
 }
 
 {
+if (!existsSync(join(root, "packages/mcp"))) {
+  console.log("SKIP extracted-MCPB Git Delivery E2E (praxis-core has no Runtime MCP)");
+} else {
   const { packClaudeExtension } = await import("./pack-claude-extension.mjs");
   const { extractMcpbRuntime } = await import("./mcpb-runtime.mjs");
   const { connectOfficialMcp, hostedCleanEnv, parseDoctorEnvelope, versionNegotiationModern } = await import(
@@ -643,6 +646,7 @@ const consumerBefore = consumerSnapshot();
     rmSync(bare, { recursive: true, force: true });
     rmSync(dest, { recursive: true, force: true });
   }
+}
 }
 
 assertConsumerUntouched(consumerBefore);
