@@ -6,7 +6,6 @@
   "workspaces": [
     "packages/*",
     "plugins/*",
-    "tools/e2e",
     "tools/scripts"
   ],
   "scripts": {
