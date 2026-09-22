@@ -1,0 +1,99 @@
+# praxis-core — GitLab CI (Node 22, no DinD)
+stages:
+  - verify
+  - package
+
+default:
+  image: node:22-bookworm
+  interruptible: true
+  cache:
+    key:
+      files: [package-lock.json]
+    paths: [.npm/]
+  before_script:
+    - node -v && npm -v
+    - npm ci --cache .npm --prefer-offline
+
+variables:
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+build:
+  stage: verify
+  script:
+    - npm run build
+
+typecheck:
+  stage: verify
+  script:
+    - npm run build
+    - npm run typecheck
+
+test:
+  stage: verify
+  script:
+    - npm run build
+    - npm run test
+
+contracts:
+  stage: verify
+  script:
+    - npm run build
+    - npm run test -w @praxis/contracts --if-present
+    - npm run accept:git-delivery-lib
+
+pack_vendor:
+  stage: package
+  needs: [build, typecheck, test, contracts]
+  script:
+    - npm run build
+    - npm run pack:vendor
+    - |
+      python3 - <<'PY'
+      import hashlib, json, pathlib
+      version = json.loads(pathlib.Path("package.json").read_text())["version"]
+      root = pathlib.Path("dist/vendor") / version
+      if not root.exists():
+          root = pathlib.Path("dist/vendor")
+      files = sorted(root.glob("*.tgz"))
+      assert files, f"no vendor tgz under {root}"
+      rows = []
+      for f in files:
+          rows.append({"file": str(f), "sha256": hashlib.sha256(f.read_bytes()).hexdigest(), "bytes": f.stat().st_size})
+          print(rows[-1]["sha256"], f)
+      pathlib.Path("dist/vendor-checksums.json").write_text(json.dumps({"version": version, "packages": rows}, indent=2) + "\n")
+      PY
+  artifacts:
+    paths:
+      - dist/vendor/
+      - dist/vendor-checksums.json
+    expire_in: 30 days
+    name: "praxis-core-vendor-$CI_COMMIT_SHORT_SHA"
+
+# Manual gate: publish versioned packages to GitLab Package Registry.
+# Tracked vendor/*.tgz in consumers remains the default until they migrate.
+publish_registry:
+  stage: package
+  needs: [pack_vendor]
+  when: manual
+  allow_failure: true
+  script:
+    - |
+      set -euo pipefail
+      VERSION=$(node -p "require('./package.json').version")
+      REGISTRY="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
+      {
+        echo "@praxis:registry=${REGISTRY}"
+        echo "//${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/npm/:_authToken=${CI_JOB_TOKEN}"
+      } > .npmrc.ci
+      echo "Publishing vendor tgz for ${VERSION} (manual)"
+      shopt -s nullglob
+      for tgz in dist/vendor/${VERSION}/*.tgz dist/vendor/*.tgz; do
+        echo "npm publish $(basename "$tgz")"
+        npm publish "$tgz" --userconfig .npmrc.ci --registry "$REGISTRY"
+      done
+      rm -f .npmrc.ci
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+    - if: $CI_COMMIT_TAG
+      when: manual
