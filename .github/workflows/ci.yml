@@ -1,12 +1,16 @@
-name: Praxis CI
+name: Praxis Core CI
 
 on:
   push:
     branches: [main, master]
   pull_request:
 
+concurrency:
+  group: core-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,5 +18,77 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - run: npm install
-      - run: npm run verify
+      - run: npm ci
+      - run: npm run build
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test
+
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test -w @praxis/contracts --if-present
+      - run: npm run accept:git-delivery-lib
+
+  pack_vendor:
+    runs-on: ubuntu-latest
+    needs: [build, typecheck, test, contracts]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run pack:vendor
+      - name: Checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          version = json.loads(pathlib.Path("package.json").read_text())["version"]
+          root = pathlib.Path("dist/vendor") / version
+          if not root.exists():
+              root = pathlib.Path("dist/vendor")
+          files = sorted(root.glob("*.tgz"))
+          assert files, f"no vendor tgz under {root}"
+          rows = []
+          for f in files:
+              rows.append({"file": str(f), "sha256": hashlib.sha256(f.read_bytes()).hexdigest(), "bytes": f.stat().st_size})
+              print(rows[-1]["sha256"], f)
+          pathlib.Path("dist/vendor-checksums.json").write_text(json.dumps({"version": version, "packages": rows}, indent=2) + "\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: praxis-core-vendor
+          path: |
+            dist/vendor/
+            dist/vendor-checksums.json

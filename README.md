@@ -1,43 +1,36 @@
 # praxis-core
 
-Shared Praxis libraries. Independent product repository under `engineering/ai-tooling/praxis-core`.
+Shared Praxis libraries published by **dfg-inc**.
 
-## Packages
+Packages: `@praxis/contracts`, `@praxis/cli`, `@praxis/vcs`, `@praxis/jira`, `@praxis/plugin-sdk`, `@praxis/project-config`, `@praxis/knowledge`, `@praxis/catalog`, `@praxis/testing`.
 
-`@praxis/contracts`, `@praxis/cli`, `@praxis/vcs`, `@praxis/jira`, `@praxis/plugin-sdk`, `@praxis/project-config`, `@praxis/knowledge`, `@praxis/catalog`, `@praxis/testing`.
+Jira and VCS are **libraries** here. Desktop MCPB lives in [`praxis-runtime`](https://github.com/dfg-inc/praxis-runtime). Role Skills live in the four role repositories.
 
-Jira and VCS are **libraries** here. Desktop MCPB lives in `praxis-runtime`. Role Skills live in the four role repositories.
-
-## Development
+## Clone
 
 ```bash
+git clone https://github.com/dfg-inc/praxis-core.git
+cd praxis-core
 npm ci
-npm run build
-npm run typecheck
-npm run test
-npm run verify          # build + typecheck + test
-npm run pack:vendor     # write dist/vendor/<version>/*.tgz
+npm run verify
+npm run pack:vendor   # write dist/vendor/<version>/*.tgz
 ```
 
 Node.js `>=20` (CI uses 22).
 
+## Consumers
+
+Downstream products pin Core via tracked `vendor/*.tgz` (`file:vendor/...`). See [DEPENDENCIES.md](./DEPENDENCIES.md).
+
 ## Testing
 
-- Unit/workspace tests via `npm run test`
-- Contracts package tests in CI `contracts` job
-- Git Delivery **library** acceptance: `npm run accept:git-delivery-lib` (no MCPB)
+- Unit/workspace tests: `npm run test`
+- Contracts + Git Delivery library acceptance: `npm run accept:git-delivery-lib`
 
-## Release
+## Release (libraries)
 
-1. Bump `package.json` / workspace package versions independently (do **not** reuse a monorepo alpha tag as a required release tag).
+1. Bump workspace package versions independently.
 2. `npm run verify && npm run pack:vendor`
-3. Publish CI artifacts (`dist/vendor/`) or manually trigger `publish_registry` to GitLab Package Registry.
-4. Downstream products must **deliberately** pin the new vendor tgzs and re-verify — no automatic cascade.
+3. Publish `dist/vendor/` artifacts from CI or copy tgzs into consumer `vendor/` folders.
 
-See [DEPENDENCIES.md](./DEPENDENCIES.md).
-
-## GitLab CI
-
-`.gitlab-ci.yml` stages: `build`, `typecheck`, `test`, `contracts`, `pack_vendor` (+ optional manual `publish_registry`).
-
-No Docker-in-Docker. Image: `node:22-bookworm`.
+Installable desktop artifacts are **not** shipped from this repository.

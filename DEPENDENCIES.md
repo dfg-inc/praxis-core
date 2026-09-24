@@ -10,6 +10,7 @@ Properties:
 - Clean-clone build works with `npm ci`
 - Versions are explicit and reviewable in git
 - Updating Core is **manual**: pack in Core → copy tgzs → refresh lockfile → `npm run verify` in the consumer
+- Public consumers do **not** require a private package registry
 
 ### Update procedure (consumer)
 
@@ -18,34 +19,19 @@ Properties:
 3. Update `package.json` `file:vendor/...` pins and `vendor/manifest.json`
 4. `npm install` to refresh `package-lock.json`
 5. `npm run verify` in the consumer
-6. Open MR — do not auto-update other products
+6. Open a PR — do not auto-update other products
 
 ### Compatibility
 
 A Core bump is compatible only after each consumer's verify (and role ZIP / MCPB acceptance where applicable) passes. There is no shared "force all products to alpha.N" release.
 
-## Target mechanism: GitLab Package Registry
+## Optional future: public npm / GitHub Packages
 
-Core CI includes a **manual** `publish_registry` job that publishes packed tgzs to the project npm Package Registry:
-
-`https://gl.jetru.by/api/v4/projects/<praxis-core-id>/packages/npm/`
-
-Consumers can later switch from `file:vendor/...` to:
-
-```json
-"@praxis/contracts": "0.1.0-alpha.45"
-```
-
-with `.npmrc`:
-
-```
-@praxis:registry=https://gl.jetru.by/api/v4/projects/<id>/packages/npm/
-```
-
-**Do not remove tracked vendor tgzs until** every consumer has a registry-based install path verified in CI. Keep the vendor fallback during transition.
+A registry-based `@praxis/*` install path may be added later. **Do not remove tracked vendor tgzs** until every consumer has a registry-based install path verified in CI.
 
 ## What not to do
 
-- Do not `npm install` from `/Users/serg/work/praxis`
+- Do not `npm install` from a local monorepo path
 - Do not silently bump consumer pins without verify
 - Do not require a shared monorepo alpha tag on every product
+- Do not require corporate GitLab Package Registry for public builds
