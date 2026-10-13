@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { rollupStoryVerdict } from "./story.js";
 import {
   applyWorkflowCommand,
   BULK_IMPORT_REQUIREMENTS,
@@ -348,6 +349,9 @@ describe("capabilities, Jira failure, compatibility", () => {
       jira_token: "[redacted]",
       note: "ok",
     });
+    expect(redactPersistent({ commitSha: "4c7270ce0b4ec1c0353342b9ae32d996c16c47b4" })).toEqual({
+      commitSha: "4c7270ce0b4ec1c0353342b9ae32d996c16c47b4",
+    });
     const state = openLocalWorkflow({ projectId: "P", title: "T", request: "r" });
     expect(() => transition(state, "completed", "skip")).toThrow(WorkflowError);
   });
@@ -477,5 +481,95 @@ describe("capabilities, Jira failure, compatibility", () => {
     const feature = evaluateFeature(state);
     expect(feature.verdict).toBe("FAIL");
     expect(feature.gaps.join(" ")).toContain("REQ-BUI-063");
+  });
+
+  it("stores a user story and refuses to treat a missing happy path as pass", () => {
+    let state = applyWorkflowCommand(null, {
+      action: "open",
+      projectId: "PRJ",
+      title: "Bulk User Import",
+      request: "Import users from CSV",
+    }).state;
+    state = applyWorkflowCommand(state, {
+      action: "add-requirement",
+      id: "REQ-BUI-061",
+      statement: "Invalid rows never prevent valid rows from being created.",
+      acceptanceCriteria: ["AC-BUI-061 valid rows are created."],
+    }).state;
+    state = applyWorkflowCommand(state, {
+      action: "add-story",
+      id: "US-BUI-001",
+      requirementIds: ["REQ-BUI-061"],
+      actor: "organization admin",
+      narrative: "As a organization admin, I want to import users from a CSV, so that I can onboard them without manual entry.",
+      objective: "Create valid users from a CSV",
+      userValue: "Faster onboarding",
+      happyPath: ["Upload a valid CSV", "Confirm the import", "See the created users"],
+      acceptanceCriteria: [
+        {
+          id: "US-BUI-001-AC-01",
+          given: "an organization admin and a valid CSV",
+          when: "the admin confirms the import",
+          then: "the valid users are created and the summary is shown",
+        },
+      ],
+      expectedResults: ["Users exist and the summary says completed"],
+      serviceIds: ["api", "frontend"],
+      confirmedBehavior: true,
+    }).state;
+    expect(state.stories[0]?.confirmedBehavior).toBe(true);
+    state = applyWorkflowCommand(state, {
+      action: "set-service",
+      service: {
+        id: "api",
+        name: "API",
+        kind: "api",
+        localPath: "/tmp/api",
+        responsibilities: ["preview"],
+        requirementIds: ["REQ-BUI-061"],
+        dependsOn: [],
+        status: "in_progress",
+      },
+    }).state;
+    const located = applyWorkflowCommand(state, { action: "locate-repositories" });
+    expect(located.result).toEqual({
+      questions: [
+        {
+          id: "Q-REPO-FRONTEND",
+          prompt:
+            "This feature affects frontend. I need the local path or repository URL for frontend to complete end-to-end verification.",
+        },
+      ],
+    });
+    const handed = applyWorkflowCommand(state, {
+      action: "handoff",
+      sourceRole: "ba",
+      targetRole: "architect",
+      requirementIds: ["REQ-BUI-061"],
+      serviceIds: ["api", "frontend"],
+      readiness: "ready",
+    });
+    expect(handed.state.handoffs[0]?.storyIds).toEqual(["US-BUI-001"]);
+    expect(() =>
+      applyWorkflowCommand(state, { action: "verify-stories" }),
+    ).toThrow(/must run in Praxis Runtime/);
+    expect(
+      rollupStoryVerdict([
+        {
+          storyId: "US-BUI-001",
+          requirementId: "REQ-BUI-061",
+          acceptanceCriterionId: "US-BUI-001-AC-01",
+          scenarioId: "US-BUI-001-HAPPY",
+          kind: "happy",
+          serviceId: "frontend",
+          repository: "",
+          implementationPath: "",
+          testRef: "",
+          evidence: ["missing"],
+          status: "NOT_VERIFIED",
+          critical: true,
+        },
+      ]).verdict,
+    ).toBe("FAIL");
   });
 });

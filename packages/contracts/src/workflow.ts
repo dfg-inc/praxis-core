@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  assertStoryNarrative,
+  ChangeRecordSchema,
+  CoverageEntrySchema,
+  missingRepositoryPrompts,
+  rollupStoryVerdict,
+  StoryIdSchema,
+  UserStorySchema,
+} from "./story.js";
 
 /**
  * Jira-independent workflow domain.
@@ -131,6 +140,11 @@ export const ServiceSchema = z.object({
     "external",
   ]),
   repository: z.string().optional(),
+  localPath: z.string().optional(),
+  remoteUrl: z.string().optional(),
+  branch: z.string().optional(),
+  commitSha: z.string().optional(),
+  changeRequest: z.string().optional(),
   responsibilities: z.array(z.string()),
   requirementIds: z.array(RequirementIdSchema),
   dependsOn: z.array(z.string()),
@@ -156,6 +170,7 @@ export const RoleHandoffSchema = z.object({
   serviceIds: z.array(z.string()),
   requirementIds: z.array(RequirementIdSchema),
   acceptanceCriterionIds: z.array(z.string()),
+  storyIds: z.array(z.string()).default([]),
   artifactRefs: z.array(ArtifactRefSchema),
   decisions: z.array(z.string()),
   assumptions: z.array(z.string()),
@@ -179,6 +194,15 @@ export const FindingSchema = z.object({
   summary: z.string().min(1),
   evidence: z.array(z.string()).min(1),
   status: z.enum(["open", "resolved"]),
+  severity: z.enum(["critical", "high", "medium", "low"]).optional(),
+  storyIds: z.array(z.string()).optional(),
+  acceptanceCriterionIds: z.array(z.string()).optional(),
+  repository: z.string().optional(),
+  file: z.string().optional(),
+  expected: z.string().optional(),
+  observed: z.string().optional(),
+  reproduction: z.array(z.string()).optional(),
+  suggestion: z.string().optional(),
 });
 export type Finding = z.infer<typeof FindingSchema>;
 
@@ -250,6 +274,9 @@ export const WorkflowStateSchema = z.object({
       }),
     )
     .default([]),
+  stories: z.array(UserStorySchema).default([]),
+  coverage: z.array(CoverageEntrySchema).default([]),
+  changes: z.array(ChangeRecordSchema).default([]),
   stage: WorkflowStageSchema,
   history: z.array(
     z.object({
@@ -273,7 +300,12 @@ export function redactPersistent<T>(value: T): T {
     }
     return out as T;
   }
-  if (typeof value === "string" && /^(Bearer\s+)?[A-Za-z0-9_\-]{40,}$/.test(value)) {
+  if (
+    typeof value === "string" &&
+    /^(Bearer\s+)?[A-Za-z0-9_\-]{40,}$/.test(value) &&
+    !/^[0-9a-f]{40}$/i.test(value) &&
+    !/^[0-9a-f]{64}$/i.test(value)
+  ) {
     return "[redacted]" as T;
   }
   return value;
@@ -404,11 +436,17 @@ export function reviseRequirement(
       ? { ...unit, stale: true }
       : unit,
   );
+  const stories = state.stories.map((story) =>
+    story.requirementIds.includes(id as Requirement["id"])
+      ? { ...story, stale: true, revision: story.revision + 1 }
+      : story,
+  );
   return {
     ...state,
     requirements: state.requirements.map((r) => (r.id === id ? revised : r)),
     verdicts,
     implementationUnits,
+    stories,
     history: [
       ...state.history,
       {
@@ -437,7 +475,8 @@ export function createHandoff(
     | "revision"
     | "fingerprint"
     | "supersedes"
-  > & { supersedes?: string },
+    | "storyIds"
+  > & { supersedes?: string; storyIds?: string[] },
 ): { state: WorkflowState; handoff: RoleHandoff; duplicate: boolean } {
   const body = {
     workflowId: state.workflowId,
@@ -447,6 +486,7 @@ export function createHandoff(
     serviceIds: input.serviceIds,
     requirementIds: input.requirementIds,
     acceptanceCriterionIds: input.acceptanceCriterionIds,
+    storyIds: input.storyIds ?? [],
     artifactRefs: input.artifactRefs,
     decisions: input.decisions,
     assumptions: input.assumptions,
@@ -833,6 +873,59 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     action: z.literal("feature-verdict"),
   }),
   z.object({
+    action: z.literal("add-story"),
+    id: StoryIdSchema,
+    requirementIds: z.array(RequirementIdSchema).min(1),
+    actor: z.string().min(1),
+    narrative: z.string().min(1),
+    objective: z.string().min(1),
+    userValue: z.string().min(1),
+    preconditions: z.array(z.string()).default([]),
+    happyPath: z.array(z.string()).min(1),
+    alternatives: z.array(z.string()).default([]),
+    negative: z.array(z.string()).default([]),
+    edgeCases: z.array(z.string()).default([]),
+    businessRules: z.array(z.string()).default([]),
+    acceptanceCriteria: z.array(
+      z.object({
+        id: z.string().min(1),
+        given: z.string().min(1),
+        when: z.string().min(1),
+        then: z.string().min(1),
+      }),
+    ).min(1),
+    expectedResults: z.array(z.string()).min(1),
+    dependencies: z.array(z.string()).default([]),
+    assumptionIds: z.array(z.string()).default([]),
+    unresolvedDecisionIds: z.array(z.string()).default([]),
+    serviceIds: z.array(z.string()).default([]),
+    confirmedBehavior: z.boolean(),
+  }),
+  z.object({
+    action: z.literal("locate-repositories"),
+  }),
+  z.object({
+    action: z.literal("verify-stories"),
+    independentRerun: z.boolean().optional(),
+  }),
+  z.object({
+    action: z.literal("prepare-fix"),
+    serviceId: z.string().min(1),
+    authorized: z.boolean(),
+    existingBranch: z.string().min(1).optional(),
+  }),
+  z.object({
+    action: z.literal("record-verification"),
+    independentRerun: z.boolean().default(false),
+    testsGreen: z.boolean().optional(),
+    scenarios: z.array(CoverageEntrySchema).default([]),
+    findings: z.array(FindingSchema).default([]),
+  }),
+  z.object({
+    action: z.literal("record-change"),
+    change: ChangeRecordSchema,
+  }),
+  z.object({
     action: z.literal("quality-check"),
     requirementId: RequirementIdSchema,
     observedBehavior: z.enum(["partial-success", "all-or-nothing", "unspecified"]).optional(),
@@ -937,6 +1030,113 @@ export function applyWorkflowCommand(
       result: { implementationId: command.id, serviceId: command.serviceId },
     };
   }
+  if (command.action === "add-story") {
+    try {
+      assertStoryNarrative(command.narrative);
+    } catch (err) {
+      throw new WorkflowError(
+        "STORY_NARRATIVE",
+        err instanceof Error ? err.message : "story narrative is not in the required form",
+      );
+    }
+    if (state.stories.some((story) => story.id === command.id && story.status !== "superseded")) {
+      throw new WorkflowError("DUPLICATE_STORY", `story ${command.id} already exists`);
+    }
+    const story = UserStorySchema.parse({
+      ...command,
+      revision: 1,
+      status: command.confirmedBehavior ? "confirmed" : "proposed",
+      stale: false,
+    });
+    return {
+      state: { ...state, stories: [...state.stories, story] },
+      duplicate: false,
+      result: { storyId: story.id, confirmedBehavior: story.confirmedBehavior },
+    };
+  }
+  if (command.action === "verify-stories" || command.action === "prepare-fix") {
+    throw new WorkflowError(
+      "EXECUTION_REQUIRED",
+      `${command.action} must run in Praxis Runtime so Quality executes the implementation`,
+    );
+  }
+  if (command.action === "locate-repositories") {
+    const required = [
+      ...new Set([
+        ...state.stories.flatMap((story) => story.serviceIds),
+        ...state.services.map((service) => service.id),
+      ]),
+    ];
+    const questions = missingRepositoryPrompts({ services: state.services, requiredServiceIds: required });
+    return { state, duplicate: false, result: { questions } };
+  }
+  if (command.action === "record-verification") {
+    const scenarios = command.scenarios.map((scenario) =>
+      scenario.critical || scenario.kind === "happy" ? { ...scenario, critical: true } : scenario,
+    );
+    const unconfirmed = state.stories.filter((story) => !story.confirmedBehavior && story.status !== "superseded");
+    for (const story of unconfirmed) {
+      scenarios.push({
+        storyId: story.id,
+        requirementId: story.requirementIds[0]!,
+        acceptanceCriterionId: story.acceptanceCriteria[0]?.id ?? story.id,
+        scenarioId: `${story.id}-CONFIRMATION`,
+        kind: "happy",
+        serviceId: story.serviceIds[0] ?? "feature",
+        repository: "",
+        implementationPath: "",
+        testRef: "",
+        evidence: ["story behavior is an assumption until BA confirms it"],
+        status: "PASS_WITH_RISKS",
+        critical: false,
+      });
+    }
+    const feature = rollupStoryVerdict(scenarios);
+    let next = {
+      ...state,
+      coverage: scenarios,
+      findings: mergeFindings(state.findings, command.findings),
+    };
+    if (!command.independentRerun) {
+      for (const finding of command.findings.filter((item) => item.status === "open")) {
+        const returned = returnFinding(next, finding);
+        next = returned.state;
+      }
+    }
+    const verdictId = `V-STORY-${next.verdicts.length + 1}`;
+    next = recordVerdict(next, {
+      id: verdictId,
+      scope: "feature",
+      scopeId: state.workItem.id,
+      verdict: feature.verdict,
+      evidenceRefs: [
+        ...(command.testsGreen ? ["testsGreen:true", "green tests are not story evidence"] : []),
+        ...(command.independentRerun ? ["independentRerun:true"] : ["independentRerun:false"]),
+        ...feature.reasons,
+        ...scenarios.map((scenario) => `${scenario.scenarioId}:${scenario.status}`),
+      ],
+      requirementIds: [...new Set(scenarios.map((scenario) => scenario.requirementId))],
+    });
+    return {
+      state: next,
+      duplicate: false,
+      result: { verdict: feature.verdict, reasons: feature.reasons, scenarios },
+    };
+  }
+  if (command.action === "record-change") {
+    const changes = [...state.changes.filter((item) => item.id !== command.change.id), command.change];
+    return {
+      state: { ...state, changes },
+      duplicate: false,
+      result: {
+        changeId: command.change.id,
+        commitSha: command.change.commitSha,
+        changeRequest: command.change.changeRequest ?? null,
+        mrStatus: command.change.mrStatus,
+        resolved: false,
+      },
+    };
+  }
   if (command.action === "feature-verdict") {
     const feature = evaluateFeature(state);
     const verdictId = `V-FEATURE-${state.verdicts.length + 1}`;
@@ -959,6 +1159,13 @@ export function applyWorkflowCommand(
       acceptanceCriterionIds: state.requirements
         .filter((item) => command.requirementIds.includes(item.id))
         .flatMap((item) => item.acceptanceCriteria.map((criterion) => criterion.id)),
+      storyIds: state.stories
+        .filter(
+          (story) =>
+            story.status !== "superseded" &&
+            story.requirementIds.some((id) => command.requirementIds.includes(id)),
+        )
+        .map((story) => story.id),
       artifactRefs: state.implementationUnits
         .filter((unit) => !unit.stale && command.serviceIds.includes(unit.serviceId))
         .map((unit) => ({
@@ -1037,6 +1244,12 @@ export function applyWorkflowCommand(
     duplicate: false,
     result: { verdict: check.verdict, observedBehavior, finding: finding ?? null },
   };
+}
+
+function mergeFindings(current: Finding[], incoming: Finding[]): Finding[] {
+  const merged = new Map(current.map((finding) => [finding.id, finding]));
+  for (const finding of incoming) merged.set(finding.id, finding);
+  return [...merged.values()];
 }
 
 export function evaluateFeature(state: WorkflowState): { verdict: QualityVerdict; gaps: string[] } {

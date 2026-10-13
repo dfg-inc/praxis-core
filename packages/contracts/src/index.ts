@@ -434,6 +434,17 @@ export {
   applyWorkflowCommand,
   BULK_IMPORT_REQUIREMENTS,
 } from "./workflow.js";
+export {
+  StoryIdSchema,
+  UserStorySchema,
+  CoverageStatusSchema,
+  CoverageEntrySchema,
+  ChangeRecordSchema,
+  missingRepositoryPrompts,
+  rollupStoryVerdict,
+  assertStoryNarrative,
+} from "./story.js";
+export type { StoryId, UserStory, CoverageStatus, CoverageEntry, ChangeRecord } from "./story.js";
 export type {
   WorkflowStage,
   WorkflowRole,
