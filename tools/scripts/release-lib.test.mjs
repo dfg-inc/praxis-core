@@ -7,6 +7,7 @@ import {
   applyInternalWorkspaceDeps,
   applyVersionToData,
   applyVersionToFile,
+  checkEcosystemRelease,
   checkInternalWorkspaceDeps,
   checkVersionConsistency,
   discoverVersionFiles,
@@ -242,6 +243,57 @@ describe("discover + sync on temp tree", () => {
         ),
       ).versions.every((v) => v === "0.1.0-alpha.2"),
     ).toBe(true);
+  });
+
+  it("rejects a stale vendor tarball pin", () => {
+    const root = mkdtempSync(join(tmpdir(), "praxis-vendor-"));
+    mkdirSync(join(root, "vendor"), { recursive: true });
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify(
+        {
+          name: "praxis-runtime",
+          version: "0.1.0-alpha.47",
+          dependencies: {
+            "@praxis/contracts": "file:vendor/praxis-contracts-0.1.0-alpha.45.tgz",
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(
+      join(root, "ecosystem.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          policy: "lockstep",
+          version: "0.1.0-alpha.47",
+          repositories: [
+            "praxis-core",
+            "praxis-runtime",
+            "praxis-ba",
+            "praxis-architect",
+            "praxis-developer",
+            "praxis-quality",
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(join(root, "vendor", "praxis-contracts-0.1.0-alpha.45.tgz"), "stale");
+    writeFileSync(
+      join(root, "vendor", "manifest.json"),
+      JSON.stringify({ version: "0.1.0-alpha.45", packages: ["@praxis/contracts"] }) + "\n",
+    );
+    const before = checkEcosystemRelease(root);
+    expect(before.ok).toBe(false);
+    syncAllVersions(root, "0.1.0-alpha.47", { dryRun: false });
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    expect(pkg.dependencies["@praxis/contracts"]).toBe(
+      "file:vendor/praxis-contracts-0.1.0-alpha.47.tgz",
+    );
   });
 
   it("checkVersionConsistency reports mismatches", () => {

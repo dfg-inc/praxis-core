@@ -1,6 +1,6 @@
 {
   "name": "@praxis/jira",
-  "version": "0.1.0-alpha.45",
+  "version": "0.1.0-alpha.47",
   "private": true,
   "type": "module",
   "description": "Praxis Jira Cloud and Data Center orchestration (company infra)",

@@ -1,8 +1,8 @@
 {
   "name": "praxis-core",
   "private": true,
-  "version": "0.1.0-alpha.45",
-  "description": "Shared Praxis libraries \u2014 contracts, CLI, VCS, Jira, plugin-sdk, knowledge",
+  "version": "0.1.0-alpha.47",
+  "description": "Shared Praxis libraries — contracts, CLI, VCS, Jira, plugin-sdk, knowledge",
   "workspaces": [
     "packages/*",
     "plugins/*",
@@ -15,7 +15,8 @@
     "pack:vendor": "node tools/scripts/pack-core-vendor.mjs",
     "accept:git-delivery-lib": "node tools/scripts/git-delivery-acceptance.mjs",
     "accept:git-delivery-e2e": "node tools/scripts/git-delivery-e2e-acceptance.mjs",
-    "verify": "npm run build && npm run typecheck && npm run test"
+    "verify": "npm run build && npm run typecheck && npm run test",
+    "check:version": "node tools/scripts/check-ecosystem-version.mjs"
   },
   "engines": {
     "node": ">=20"
