@@ -1,7 +1,7 @@
 {
   "name": "praxis-core",
   "private": true,
-  "version": "0.1.0-alpha.44",
+  "version": "0.1.0-alpha.45",
   "description": "Shared Praxis libraries \u2014 contracts, CLI, VCS, Jira, plugin-sdk, knowledge",
   "workspaces": [
     "packages/*",
