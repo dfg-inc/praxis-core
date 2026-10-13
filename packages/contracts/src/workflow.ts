@@ -1103,6 +1103,25 @@ export function applyWorkflowCommand(
         next = returned.state;
       }
     }
+    const grouped = new Map<string, typeof scenarios>();
+    for (const scenario of scenarios) {
+      const entries = grouped.get(scenario.serviceId) ?? [];
+      entries.push(scenario);
+      grouped.set(scenario.serviceId, entries);
+    }
+    const serviceVerdicts = [];
+    for (const [serviceId, entries] of grouped) {
+      const rolled = rollupStoryVerdict(entries);
+      serviceVerdicts.push({ serviceId, verdict: rolled.verdict, reasons: rolled.reasons });
+      next = recordVerdict(next, {
+        id: `V-SERVICE-${serviceId}-${next.verdicts.length + 1}`,
+        scope: "service",
+        scopeId: serviceId,
+        verdict: rolled.verdict,
+        evidenceRefs: rolled.reasons.length ? rolled.reasons : [`${serviceId} scenarios passed`],
+        requirementIds: [...new Set(entries.map((scenario) => scenario.requirementId))],
+      });
+    }
     const verdictId = `V-STORY-${next.verdicts.length + 1}`;
     next = recordVerdict(next, {
       id: verdictId,
@@ -1120,7 +1139,7 @@ export function applyWorkflowCommand(
     return {
       state: next,
       duplicate: false,
-      result: { verdict: feature.verdict, reasons: feature.reasons, scenarios },
+      result: { verdict: feature.verdict, reasons: feature.reasons, scenarios, serviceVerdicts },
     };
   }
   if (command.action === "record-change") {
