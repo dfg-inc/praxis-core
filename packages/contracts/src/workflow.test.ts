@@ -7,7 +7,9 @@ import {
   classifyJiraFailure,
   createHandoff,
   diagnoseCompatibility,
+  evaluateFeature,
   evaluateRequirementBehavior,
+  inspectImportImplementation,
   featureReadiness,
   openLocalWorkflow,
   questionsToAsk,
@@ -348,5 +350,132 @@ describe("capabilities, Jira failure, compatibility", () => {
     });
     const state = openLocalWorkflow({ projectId: "P", title: "T", request: "r" });
     expect(() => transition(state, "completed", "skip")).toThrow(WorkflowError);
+  });
+
+  it("inspects implementation source and ignores a contradictory claim", () => {
+    const defective = `
+      export async function importRows(db, rows) {
+        await db.transaction(async (tx) => {
+          for (const row of rows) {
+            if (row.invalid) throw new Error("abort");
+            await tx.insert(row);
+          }
+        });
+      }
+    `;
+    const partial = `
+      export async function importRows(db, rows) {
+        for (const row of rows) {
+          if (row.invalid) continue;
+          await db.insert(row);
+        }
+      }
+    `;
+    expect(inspectImportImplementation(defective)).toBe("all-or-nothing");
+    expect(inspectImportImplementation(partial)).toBe("partial-success");
+    const statement =
+      "Invalid, duplicate or failed rows never prevent valid rows from being created. The import is not all-or-nothing; each row has its own outcome.";
+    let state = applyWorkflowCommand(null, {
+      action: "open",
+      projectId: "PRJ",
+      title: "Bulk User Import",
+      request: "Import users from CSV",
+    }).state;
+    state = applyWorkflowCommand(state, {
+      action: "add-requirement",
+      id: "REQ-BUI-061",
+      statement,
+      acceptanceCriteria: ["AC-BUI-061: 950 valid rows are created when 50 rows are invalid."],
+      serviceIds: ["worker"],
+    }).state;
+    const failed = applyWorkflowCommand(state, {
+      action: "quality-check",
+      requirementId: "REQ-BUI-061",
+      implementationSource: defective,
+      observedBehavior: "partial-success",
+      testsGreen: true,
+      developerClaimsPass: true,
+      serviceId: "worker",
+    });
+    expect(failed.result).toMatchObject({
+      verdict: "FAIL",
+      observedBehavior: "all-or-nothing",
+    });
+    expect(JSON.stringify(failed.result)).toContain("unsupported-claim:partial-success");
+    const passed = applyWorkflowCommand(failed.state, {
+      action: "quality-check",
+      requirementId: "REQ-BUI-061",
+      implementationSource: partial,
+      serviceId: "worker",
+    });
+    expect(passed.result).toMatchObject({ verdict: "PASS", observedBehavior: "partial-success" });
+  });
+
+  it("asks only blocking questions and keeps other requirements moving", () => {
+    let state = applyWorkflowCommand(null, {
+      action: "open",
+      projectId: "PRJ",
+      title: "Bulk User Import",
+      request: "Import users from CSV",
+    }).state;
+    const clarified = applyWorkflowCommand(state, {
+      action: "clarify",
+      role: "ba",
+      known: ["columns are email, name, and role"],
+      questions: [
+        {
+          id: "Q-COLUMNS",
+          prompt: "Which columns does the CSV contain?",
+          alreadyKnown: true,
+        },
+        {
+          id: "Q-ROLES",
+          prompt: "Which product roles may appear in the role column?",
+          changesBehavior: true,
+        },
+        {
+          id: "Q-RETRY",
+          prompt: "How many automatic retries?",
+          safeAssumption: true,
+          assumption: "A failed row is retried by the platform default before it is marked FAILED.",
+        },
+      ],
+    });
+    expect(clarified.result).toMatchObject({
+      questions: [{ id: "Q-ROLES" }],
+    });
+    expect(clarified.state.assumptions.map((item) => item.id)).toEqual(["A-Q-RETRY"]);
+    state = applyWorkflowCommand(clarified.state, {
+      action: "add-requirement",
+      id: "REQ-BUI-063",
+      statement: "Each data row ends with exactly one final outcome.",
+      acceptanceCriteria: ["No completed row remains PENDING."],
+    }).state;
+    expect(state.requirements.map((item) => item.id)).toEqual(["REQ-BUI-063"]);
+    state = applyWorkflowCommand(state, {
+      action: "record-decision",
+      id: "ADR-ROLES",
+      statement: "The role column accepts organization admin and member.",
+      confirmed: true,
+    }).state;
+    expect(state.stage).toBe("ready");
+    state = applyWorkflowCommand(state, {
+      action: "record-implementation",
+      id: "IMPL-WORKER",
+      serviceId: "worker",
+      requirementIds: ["REQ-BUI-063"],
+      path: "src/import-rows.js",
+      summary: "Per-row outcomes",
+      contractRef: "row-outcome",
+    }).state;
+    state = applyWorkflowCommand(state, {
+      action: "revise-requirement",
+      id: "REQ-BUI-063",
+      statement: "Each data row ends with exactly one final outcome, including FAILED.",
+    }).state;
+    expect(state.implementationUnits[0]?.stale).toBe(true);
+    const feature = evaluateFeature(state);
+    expect(feature.verdict).toBe("FAIL");
+    expect(feature.gaps.join(" ")).toContain("REQ-BUI-063");
   });
 });

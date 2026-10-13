@@ -237,6 +237,19 @@ export const WorkflowStateSchema = z.object({
       requirementIds: z.array(RequirementIdSchema),
     }),
   ),
+  implementationUnits: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        serviceId: z.string().min(1),
+        requirementIds: z.array(RequirementIdSchema),
+        path: z.string().min(1),
+        summary: z.string().min(1),
+        contractRef: z.string().optional(),
+        stale: z.boolean(),
+      }),
+    )
+    .default([]),
   stage: WorkflowStageSchema,
   history: z.array(
     z.object({
@@ -386,10 +399,16 @@ export function reviseRequirement(
       ? { ...v, stale: true, invalidatedBy: id }
       : v,
   );
+  const implementationUnits = state.implementationUnits.map((unit) =>
+    unit.requirementIds.includes(id as Requirement["id"])
+      ? { ...unit, stale: true }
+      : unit,
+  );
   return {
     ...state,
     requirements: state.requirements.map((r) => (r.id === id ? revised : r)),
     verdicts,
+    implementationUnits,
     history: [
       ...state.history,
       {
@@ -503,7 +522,27 @@ export function featureReadiness(state: WorkflowState): {
 }
 
 const PARTIAL_SUCCESS =
-  /invalid[^.]*must not (?:prevent|block)[^.]*valid/i;
+  /invalid[^.]*must not (?:prevent|block)[^.]*valid|never prevent valid rows|not all-or-nothing|each row has its own outcome/i;
+
+/** Classify import code. A caller-supplied label is not evidence. */
+export function inspectImportImplementation(
+  source: string,
+): "partial-success" | "all-or-nothing" | "unspecified" {
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+  const continues =
+    /if\s*\([^)]*invalid[^)]*\)[\s\S]{0,120}?\bcontinue\b/i.test(code) ||
+    /invalid rows are recorded[\s\S]{0,160}?\bcontinue\b/i.test(code);
+  const wrapsAllRows =
+    /\.transaction\s*\(\s*(?:async\s*)?\([^)]*\)\s*=>\s*\{[\s\S]*\bfor\s*\([\s\S]*\bthrow\b/i.test(
+      code,
+    );
+  if (wrapsAllRows && !continues) return "all-or-nothing";
+  if (continues && !wrapsAllRows) return "partial-success";
+  if (wrapsAllRows) return "all-or-nothing";
+  return "unspecified";
+}
 
 export function evaluateRequirementBehavior(input: {
   requirementId: string;
@@ -760,9 +799,45 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     service: ServiceSchema,
   }),
   z.object({
+    action: z.literal("clarify"),
+    role: WorkflowRoleSchema,
+    known: z.array(z.string()).default([]),
+    questions: z.array(
+      z.object({
+        id: z.string().min(1),
+        prompt: z.string().min(1),
+        alreadyKnown: z.boolean().optional(),
+        contradictsApproved: z.boolean().optional(),
+        safeAssumption: z.boolean().optional(),
+        assumption: z.string().min(1).optional(),
+        changesBehavior: z.boolean().optional(),
+      }),
+    ).default([]),
+  }),
+  z.object({
+    action: z.literal("record-decision"),
+    id: z.string().min(1),
+    statement: z.string().min(1),
+    confirmed: z.boolean(),
+  }),
+  z.object({
+    action: z.literal("record-implementation"),
+    id: z.string().min(1),
+    serviceId: z.string().min(1),
+    requirementIds: z.array(RequirementIdSchema).min(1),
+    path: z.string().min(1),
+    summary: z.string().min(1),
+    contractRef: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("feature-verdict"),
+  }),
+  z.object({
     action: z.literal("quality-check"),
     requirementId: RequirementIdSchema,
-    observedBehavior: z.enum(["partial-success", "all-or-nothing", "unspecified"]),
+    observedBehavior: z.enum(["partial-success", "all-or-nothing", "unspecified"]).optional(),
+    implementationSource: z.string().min(1).optional(),
+    serviceId: z.string().min(1).optional(),
     testsGreen: z.boolean().optional(),
     developerClaimsPass: z.boolean().optional(),
   }),
@@ -799,14 +874,103 @@ export function applyWorkflowCommand(
     ];
     return { state: { ...state, services }, duplicate: false, result: featureReadiness({ ...state, services }) };
   }
+  if (command.action === "clarify") {
+    const asked = questionsToAsk(command.questions);
+    const assumptions = [...state.assumptions];
+    for (const question of command.questions) {
+      if (asked.some((item) => item.id === question.id)) continue;
+      if (!question.assumption) continue;
+      if (assumptions.some((item) => item.id === `A-${question.id}`)) continue;
+      assumptions.push({
+        id: `A-${question.id}`,
+        statement: question.assumption,
+        requirementIds: [],
+      });
+    }
+    const next =
+      asked.length > 0 && TRANSITIONS[state.stage].includes("clarification_required")
+        ? transition(state, "clarification_required", `clarification requested by ${command.role}`)
+        : state;
+    return {
+      state: { ...next, assumptions },
+      duplicate: false,
+      result: { questions: asked, continued: state.requirements.map((item) => item.id) },
+    };
+  }
+  if (command.action === "record-decision") {
+    const decisions = [
+      ...state.decisions.filter((item) => item.id !== command.id),
+      {
+        id: command.id,
+        statement: command.statement,
+        confirmed: command.confirmed,
+        revision: state.workItem.revision,
+      },
+    ];
+    let next: WorkflowState = { ...state, decisions };
+    if (
+      command.confirmed &&
+      next.stage === "clarification_required" &&
+      TRANSITIONS[next.stage].includes("ready")
+    ) {
+      next = transition(next, "ready", `decision ${command.id} confirmed`);
+      next = { ...next, decisions };
+    }
+    return { state: next, duplicate: false, result: { decisionId: command.id, confirmed: command.confirmed } };
+  }
+  if (command.action === "record-implementation") {
+    const implementationUnits = [
+      ...state.implementationUnits.filter((unit) => unit.id !== command.id),
+      {
+        id: command.id,
+        serviceId: command.serviceId,
+        requirementIds: command.requirementIds,
+        path: command.path,
+        summary: command.summary,
+        ...(command.contractRef ? { contractRef: command.contractRef } : {}),
+        stale: false,
+      },
+    ];
+    return {
+      state: { ...state, implementationUnits },
+      duplicate: false,
+      result: { implementationId: command.id, serviceId: command.serviceId },
+    };
+  }
+  if (command.action === "feature-verdict") {
+    const feature = evaluateFeature(state);
+    const verdictId = `V-FEATURE-${state.verdicts.length + 1}`;
+    const next = recordVerdict(state, {
+      id: verdictId,
+      scope: "feature",
+      scopeId: state.workItem.id,
+      verdict: feature.verdict,
+      evidenceRefs: feature.gaps.length ? feature.gaps : ["feature trace complete"],
+      requirementIds: state.requirements.map((item) => item.id),
+    });
+    return { state: next, duplicate: false, result: feature };
+  }
   if (command.action === "handoff") {
     const created = createHandoff(state, {
       sourceRole: command.sourceRole,
       targetRole: command.targetRole,
       serviceIds: command.serviceIds,
       requirementIds: command.requirementIds,
-      acceptanceCriterionIds: [],
-      artifactRefs: [],
+      acceptanceCriterionIds: state.requirements
+        .filter((item) => command.requirementIds.includes(item.id))
+        .flatMap((item) => item.acceptanceCriteria.map((criterion) => criterion.id)),
+      artifactRefs: state.implementationUnits
+        .filter((unit) => !unit.stale && command.serviceIds.includes(unit.serviceId))
+        .map((unit) => ({
+          id: unit.id,
+          path: unit.path,
+          revision: unit.requirementIds.reduce(
+            (max, id) =>
+              Math.max(max, state.requirements.find((item) => item.id === id)?.revision ?? 1),
+            1,
+          ),
+          role: command.sourceRole,
+        })),
       decisions: state.decisions.filter((d) => d.confirmed).map((d) => d.id),
       assumptions: command.assumptions,
       openQuestions: command.openQuestions,
@@ -814,7 +978,9 @@ export function applyWorkflowCommand(
       blockers: command.blockers,
       nextActions: command.nextActions,
       readiness: command.readiness,
-      evidenceRefs: [],
+      evidenceRefs: state.implementationUnits
+        .filter((unit) => !unit.stale)
+        .map((unit) => `${unit.serviceId}:${unit.path}`),
     });
     return {
       state: created.state,
@@ -822,17 +988,39 @@ export function applyWorkflowCommand(
       result: { handoffId: created.handoff.handoffId, duplicate: created.duplicate },
     };
   }
+  if (command.action !== "quality-check") {
+    throw new WorkflowError("COMMAND_UNRESOLVED", "unsupported workflow command");
+  }
+  const observedBehavior = command.implementationSource
+    ? inspectImportImplementation(command.implementationSource)
+    : (command.observedBehavior ?? "unspecified");
   const check = evaluateRequirementBehavior({
     requirementId: command.requirementId,
     statement:
       state.requirements.find((r) => r.id === command.requirementId)?.statement ?? "",
-    observedBehavior: command.observedBehavior,
+    observedBehavior,
     testsGreen: command.testsGreen,
     developerClaimsPass: command.developerClaimsPass,
   });
+  const evidence = [
+    ...(check.finding?.evidence ?? [`observed:${observedBehavior}`]),
+  ];
+  if (command.implementationSource) {
+    evidence.push(`implementation:${fingerprintPayload(command.implementationSource)}`);
+    if (command.observedBehavior && command.observedBehavior !== observedBehavior) {
+      evidence.push(`unsupported-claim:${command.observedBehavior}`);
+    }
+  }
+  const finding = check.finding
+    ? {
+        ...check.finding,
+        serviceIds: command.serviceId ? [command.serviceId] : check.finding.serviceIds,
+        evidence,
+      }
+    : undefined;
   let next = state;
-  if (check.finding) {
-    const returned = returnFinding(next, check.finding);
+  if (finding) {
+    const returned = returnFinding(next, finding);
     next = returned.state;
   }
   const verdictId = `V-${command.requirementId}-${next.verdicts.length + 1}`;
@@ -841,10 +1029,43 @@ export function applyWorkflowCommand(
     scope: "requirement",
     scopeId: command.requirementId,
     verdict: check.verdict,
-    evidenceRefs: check.finding?.evidence ?? [`observed:${command.observedBehavior}`],
+    evidenceRefs: evidence,
     requirementIds: [command.requirementId],
   });
-  return { state: next, duplicate: false, result: { verdict: check.verdict, finding: check.finding ?? null } };
+  return {
+    state: next,
+    duplicate: false,
+    result: { verdict: check.verdict, observedBehavior, finding: finding ?? null },
+  };
+}
+
+export function evaluateFeature(state: WorkflowState): { verdict: QualityVerdict; gaps: string[] } {
+  const gaps: string[] = [];
+  const active = state.requirements.filter((item) => item.status !== "superseded");
+  if (active.length === 0) gaps.push("no requirements");
+  for (const requirement of active) {
+    const latest = [...state.verdicts]
+      .reverse()
+      .find(
+        (verdict) =>
+          verdict.scope === "requirement" && verdict.scopeId === requirement.id && !verdict.stale,
+      );
+    if (!latest) gaps.push(`missing verdict for ${requirement.id}`);
+    else if (latest.verdict !== "PASS") gaps.push(`${requirement.id} is ${latest.verdict}`);
+  }
+  for (const service of state.services) {
+    const unit = state.implementationUnits.find(
+      (item) => item.serviceId === service.id && !item.stale,
+    );
+    if (!unit) gaps.push(`missing implementation for ${service.id}`);
+  }
+  const readiness = featureReadiness(state);
+  if (!readiness.ready) {
+    for (const id of readiness.missingIntegration) gaps.push(`dependency not done: ${id}`);
+    if (state.services.length === 0) gaps.push("no services");
+    else gaps.push("services are not approved");
+  }
+  return { verdict: gaps.length === 0 ? "PASS" : "FAIL", gaps };
 }
 
 export const BULK_IMPORT_REQUIREMENTS: Array<{
