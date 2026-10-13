@@ -1,0 +1,124 @@
+name: Praxis Core Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable tag to publish (does not move the tag)
+        required: true
+        default: v0.1.0-alpha.45
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Assert tag matches the checked-out version
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VER=$(node -p 'require("./package.json").version')
+          echo "tag=${RELEASE_TAG} version=${VER} head=$(git rev-parse HEAD)"
+          test "${RELEASE_TAG}" = "v${VER}"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "${RELEASE_TAG}^{commit}")"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm run pack:vendor
+      - name: Write vendor checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          version = json.loads(pathlib.Path("package.json").read_text())["version"]
+          root = pathlib.Path("dist/vendor") / version
+          if not root.exists():
+              root = pathlib.Path("dist/vendor")
+          files = sorted(root.glob("*.tgz"))
+          assert files, f"no vendor tgz under {root}"
+          rows = []
+          for f in files:
+              rows.append({"file": str(f), "sha256": hashlib.sha256(f.read_bytes()).hexdigest(), "bytes": f.stat().st_size})
+              print(rows[-1]["sha256"], f)
+          pathlib.Path("dist/vendor-checksums.json").write_text(json.dumps({"version": version, "packages": rows}, indent=2) + "\n")
+          PY
+
+      - name: Write release-meta.json
+        env:
+          GITHUB_REF_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -f tools/scripts/write-release-meta.mjs ]; then
+            node tools/scripts/write-release-meta.mjs
+          else
+            # v0.1.0-alpha.45 predates this script. The workflow file itself
+            # (from the default branch) still records that tag's commit.
+            node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { execFileSync } from "node:child_process";
+          import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+          const version = JSON.parse(readFileSync("package.json", "utf8")).version;
+          const tag = process.env.GITHUB_REF_NAME;
+          if (tag !== `v${version}`) throw new Error(`tag ${tag} != v${version}`);
+          const checksumPath = "dist/vendor-checksums.json";
+          const checksumBytes = readFileSync(checksumPath);
+          const checksums = JSON.parse(checksumBytes.toString("utf8"));
+          if (checksums.version !== version) throw new Error("checksum version mismatch");
+          const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+          const tagSha = execFileSync("git", ["rev-parse", `${tag}^{commit}`], { encoding: "utf8" }).trim();
+          if (sourceSha !== tagSha) throw new Error(`HEAD ${sourceSha} != ${tag} ${tagSha}`);
+          const meta = {
+            schemaVersion: 1,
+            product: "praxis-core",
+            version,
+            tag,
+            sourceSha,
+            repository: "https://github.com/dfg-inc/praxis-core",
+            artifact: {
+              file: "vendor-checksums.json",
+              path: checksumPath,
+              sha256: createHash("sha256").update(checksumBytes).digest("hex"),
+              bytes: checksumBytes.length,
+              kind: "vendor",
+              packages: checksums.packages,
+            },
+            compatibility: {
+              productVersion: version,
+              packageJsonVersion: version,
+              engines: JSON.parse(readFileSync("package.json", "utf8")).engines || {},
+              installModel: "npm vendor tarballs for Praxis Runtime and role plugins",
+              requires: [],
+              notes: "Nine @praxis/* tarballs plus vendor-checksums.json.",
+            },
+            publishedAt: new Date().toISOString(),
+          };
+          mkdirSync("dist", { recursive: true });
+          writeFileSync("dist/release-meta.json", JSON.stringify(meta, null, 2) + "\n");
+          console.log(sourceSha, meta.artifact.sha256);
+          NODE
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          files: |
+            dist/vendor/**/*.tgz
+            dist/vendor/**/manifest.json
+            dist/vendor-checksums.json
+            dist/release-meta.json
+          generate_release_notes: true
