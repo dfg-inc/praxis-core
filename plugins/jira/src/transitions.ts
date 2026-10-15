@@ -1,3 +1,5 @@
+import { requireMutationLease } from "@praxis/contracts";
+
 export type SemanticTransition =
   | "START_DEVELOPMENT"
   | "READY_FOR_QA"
@@ -269,6 +271,7 @@ export async function applySemanticIssueTransition(
   if (plan.alreadySatisfied || !plan.id) {
     return { alreadySatisfied: true, available: plan.available };
   }
+  requireMutationLease();
   await provider.transitionIssue(key, plan.id);
   return {
     alreadySatisfied: false,

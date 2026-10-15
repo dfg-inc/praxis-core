@@ -9,23 +9,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
 } from "../src/rest-provider.js";
 import {
-  architectPlanEpic,
-  baAnalyzeEpic,
-  claimWorkPackage,
-} from "../src/workflows.js";
-import {
-  applyDeveloperCompleteRecovery,
-  developerCompleteWp,
   inspectDeveloperCompletion,
   parseTestCounts,
   previewDeveloperCompleteRecovery,
 } from "../src/developer-complete.js";
+import {
+  applyDeveloperCompleteRecovery,
+  architectPlanEpic,
+  baAnalyzeEpic,
+  claimWorkPackage,
+  developerCompleteWp,
+} from "./permit-mutation.js";
 import type { JiraConfig } from "../src/config.js";
 
 function cfg(): JiraConfig {
@@ -108,7 +108,7 @@ async function seedReady(opts?: { availableTransitions?: typeof LOCALIZED_RU_TRA
     availableTransitions: opts?.availableTransitions ?? LOCALIZED_RU_TRANSITIONS,
   });
   const fetchImpl = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
-  const provider = createJiraProvider({ config: cfg(), fetchImpl });
+  const provider = createFixtureJiraProvider({ config: cfg(), fetchImpl });
   const epic = await provider.createIssue({ summary: "E", issueType: "Epic" });
   const repo = mkdtempSync(join(tmpdir(), "praxis-complete-"));
   await baAnalyzeEpic({

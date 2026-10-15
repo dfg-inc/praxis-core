@@ -1,3 +1,4 @@
+import { requireMutationLease } from "@praxis/contracts";
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { CiStatus } from "./provider.js";
@@ -65,6 +66,7 @@ export function readJournal(repo: string, workPackageId: string): GitDeliveryJou
 }
 
 export function writeJournal(repo: string, entry: GitDeliveryJournal): void {
+  requireMutationLease();
   const safe: GitDeliveryJournal = {
     ...entry,
     deliveryLifecycle: entry.lifecycle,

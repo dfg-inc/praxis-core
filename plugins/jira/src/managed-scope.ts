@@ -1,3 +1,4 @@
+import { requireMutationLease } from "@praxis/contracts";
 import type { JiraIssueLite, JiraProvider } from "./provider.js";
 import { findWriteOpByArtifact } from "./write-journal.js";
 
@@ -139,6 +140,7 @@ export async function markSuperseded(
   duplicateKey: string,
   canonicalKey: string,
 ): Promise<void> {
+  requireMutationLease();
   await provider.setIssueProperty(duplicateKey, SUPERSEDED_PROP, true);
   await provider.setIssueProperty(duplicateKey, SUPERSEDED_BY_PROP, canonicalKey);
   const issue = await provider.getIssue(duplicateKey);

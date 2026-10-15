@@ -11,6 +11,7 @@ import type {
   Transition,
 } from "./provider.js";
 import type { PraxisRichTextDocument } from "@praxis/contracts";
+import { requireMutationLease } from "@praxis/contracts";
 import { renderRichText } from "./rich-text.js";
 import {
   contextualTransportError,
@@ -1177,7 +1178,41 @@ export class RestJiraProvider implements JiraProvider {
   }
 }
 
+const JIRA_WRITE_METHODS = [
+  "createIssue",
+  "updateIssue",
+  "addComment",
+  "transitionIssue",
+  "setIssueProperty",
+  "createIssueLink",
+  "writePraxisState",
+  "writeArchitectureMetadata",
+] as const;
+
+function gateProductionWrites(provider: RestJiraProvider): JiraProvider {
+  for (const name of JIRA_WRITE_METHODS) {
+    const original = provider[name].bind(provider) as (...args: unknown[]) => unknown;
+    (provider as unknown as Record<string, (...args: unknown[]) => unknown>)[name] = async (
+      ...args: unknown[]
+    ) => {
+      requireMutationLease();
+      return original(...args);
+    };
+  }
+  return provider;
+}
+
 export function createJiraProvider(opts: {
+  config: JiraConfig;
+  fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): JiraProvider {
+  return gateProductionWrites(new RestJiraProvider(opts));
+}
+
+/** Test-only provider. Production createJiraProvider refuses writes without a mutation lease. */
+export function createFixtureJiraProvider(opts: {
   config: JiraConfig;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;

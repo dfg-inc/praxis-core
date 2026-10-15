@@ -48,6 +48,7 @@ import { createGithubProvider, githubTokenFlags } from "./github-provider.js";
 import { createGitlabProvider, gitlabTokenFlags } from "./gitlab-provider.js";
 import type { CiStatus, RemoteRepositoryInfo, VcsProvider } from "./provider.js";
 import { requireCleanSecretScan } from "./secret-scan.js";
+import { authorizeLocal, hasMutationLease, localMutation } from "./mutation-auth.js";
 
 export type DeliveryInputs = {
   repo: string;
@@ -278,6 +279,14 @@ export function applyConnect(opts: DeliveryInputs & { previewFingerprint: string
   const remotesBefore = listRemotes(repo);
   const existing = remotesBefore.find((r) => r.name === name);
   const alreadyExact = Boolean(existing && exactRemoteUrlsEqual(existing.fetchUrl, url));
+  if ((!existing || !alreadyExact) && !hasMutationLease()) {
+    return authorizeLocal(localMutation(repo, {
+      action: "praxis_developer_git_connect_apply",
+      operation: "repository_edit",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint,
+    }), () => applyConnect(opts));
+  }
   let wrote = false;
   if (!existing) {
     addRemote(repo, name, url);
@@ -372,6 +381,14 @@ export function applyIdentity(opts: DeliveryInputs & { previewFingerprint: strin
     );
   }
   const repo = requireGitRepo(opts.repo);
+  if (!hasMutationLease()) {
+    return authorizeLocal(localMutation(repo, {
+      action: "praxis_developer_git_identity_apply",
+      operation: "repository_edit",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint,
+    }), () => applyIdentity(opts));
+  }
   setLocalIdentity(repo, opts.gitUserName, opts.gitUserEmail);
   return readGitIdentity(repo);
 }
@@ -650,6 +667,14 @@ export async function applyCommit(
       recoveryInstructions: "Commit already exists at HEAD; retry is a no-op.",
     };
   }
+  if (!hasMutationLease()) {
+    return authorizeLocal(localMutation(repo, {
+      action: "praxis_developer_git_commit",
+      operation: "git_commit",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint,
+    }), () => applyCommit(opts));
+  }
   const headBefore = gitHeadSha(repo);
   const current = gitCurrentBranch(repo);
   if (current !== preview.branch) {
@@ -901,6 +926,14 @@ export async function applyPublish(
       VCS_CODES.GIT_BASELINE_REQUIRED,
       "GitHub/GitLab repository has no commits. Human-gated baseline publication is required before a pull/merge request. This will not force-push.",
     );
+  }
+  if (!hasMutationLease()) {
+    return authorizeLocal(localMutation(repo, {
+      action: "praxis_developer_git_publish",
+      operation: "git_push",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint,
+    }), () => applyPublish(opts));
   }
   if (pub.mode === "baseline" && !heads.empty) {
     const existingMain = lsRemoteHeadSha(repo, remote.name, pub.targetRemoteBranch);
@@ -1178,6 +1211,14 @@ export async function applyMergeRequest(
       VCS_CODES.GIT_COMMIT_DIVERGED,
       "Remote feature SHA does not match the approved local commit. Praxis will not create a PR from a different SHA.",
     );
+  }
+  if (!hasMutationLease()) {
+    return authorizeLocal(localMutation(repo, {
+      action: "praxis_developer_git_merge_request",
+      operation: "merge_request",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint,
+    }), () => applyMergeRequest(opts));
   }
   const existing = await provider.listOpenMergeRequests({
     owner: remote.owner,

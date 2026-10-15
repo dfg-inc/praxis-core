@@ -1,3 +1,4 @@
+import { requireMutationLease } from "@praxis/contracts";
 import { VCS_CODES, VcsError } from "./errors.js";
 import { tokenConfigured } from "./redact.js";
 import type { CiStatus, MergeRequestInfo, RemoteRepositoryInfo, VcsProvider } from "./provider.js";
@@ -109,6 +110,7 @@ export function createGitlabProvider(opts?: {
       return items.map(mapMr);
     },
     async createMergeRequest(opts) {
+      requireMutationLease();
       const existing = await this.listOpenMergeRequests(opts);
       if (existing[0]) return existing[0];
       const id = projectId(opts);

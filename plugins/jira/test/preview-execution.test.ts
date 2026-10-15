@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
 } from "../src/rest-provider.js";
-import { baAnalyzeEpic, architectPlanEpic, collectEpicStatus } from "../src/workflows.js";
+import { collectEpicStatus } from "../src/workflows.js";
+import { architectPlanEpic, baAnalyzeEpic } from "./permit-mutation.js";
 import type { JiraConfig } from "../src/config.js";
 import { PRAXIS_ISSUE_PROPERTIES } from "../src/provider.js";
 
@@ -130,7 +131,7 @@ function seedProjectAndWp(repo: string) {
 }
 
 async function seedLiveLikeState(fetchImpl: typeof fetch) {
-  const provider = createJiraProvider({ config: cfg(), fetchImpl });
+  const provider = createFixtureJiraProvider({ config: cfg(), fetchImpl });
   const epic = await provider.createIssue({ summary: "Counter management", issueType: "Epic" });
   const dup = await provider.createIssue({
     summary: "[DUPLICATE — superseded by PRX-3] Counter library: add reset()",
@@ -302,7 +303,7 @@ describe("alpha.31 vs alpha.32 preview execution", () => {
       });
       return new Response("{}", { status: 200 });
     };
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: hung,
       timeoutMs: 200,
@@ -314,7 +315,7 @@ describe("alpha.31 vs alpha.32 preview execution", () => {
     ).rejects.toThrow(/aborted|timeout/i);
     expect(aborted).toBe(true);
     const state = createMockJiraState();
-    const healthy = createJiraProvider({
+    const healthy = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });

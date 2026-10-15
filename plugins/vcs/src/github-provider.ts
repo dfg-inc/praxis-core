@@ -1,3 +1,4 @@
+import { requireMutationLease } from "@praxis/contracts";
 import { VCS_CODES, VcsError } from "./errors.js";
 import { tokenConfigured } from "./redact.js";
 import type { CiStatus, MergeRequestInfo, RemoteRepositoryInfo, VcsProvider } from "./provider.js";
@@ -199,6 +200,7 @@ export function createGithubProvider(opts?: {
       return items.map((p) => mapPr(p));
     },
     async createMergeRequest(opts) {
+      requireMutationLease();
       const path = repoPath(opts);
       const existing = await this.listOpenMergeRequests(opts);
       if (existing[0]) return existing[0];

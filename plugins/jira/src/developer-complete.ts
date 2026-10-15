@@ -11,6 +11,7 @@ import {
   type PraxisWorkPackage,
   type WorkPackageClaim,
 } from "@praxis/contracts";
+import { authorizeJira, hasMutationLease, jiraMutation } from "./mutation-auth.js";
 import type { JiraProvider } from "./provider.js";
 import { assertRole } from "./role-policy.js";
 import {
@@ -280,6 +281,13 @@ export async function developerCompleteWp(opts: {
       },
     );
   }
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_developer_complete",
+      operation: "external_state_change",
+      workItemId: opts.wpKey,
+    }), () => developerCompleteWp(opts));
+  }
 
   const manifest =
     (await opts.provider.getIssueProperty<PraxisWorkPackage>(
@@ -541,6 +549,14 @@ export async function applyDeveloperCompleteRecovery(opts: {
       "previewFingerprint mismatch; re-run recovery preview",
       { expected: preview.previewFingerprint, got: opts.previewFingerprint },
     );
+  }
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_developer_complete_recovery_apply",
+      operation: "external_state_change",
+      workItemId: opts.wpKey,
+      previewFingerprint: opts.previewFingerprint,
+    }), () => applyDeveloperCompleteRecovery(opts));
   }
   if (preview.prematureDone) {
     assertRole("developer", "transition-in-progress");

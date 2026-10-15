@@ -1,7 +1,8 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { installHostApproval, runAuthorizedMutation } from "@praxis/contracts";
 import { loadProjectConfig, inferProjectConfig, writeProjectConfig, usesGherkinAcceptance } from "./index.js";
 
 describe("loadProjectConfig", () => {
@@ -86,7 +87,28 @@ describe("loadProjectConfig", () => {
     );
     const inferred = inferProjectConfig(dir);
     expect(loadProjectConfig(dir).status).toBe("missing");
-    writeProjectConfig(dir, inferred.yaml);
+    expect(() => writeProjectConfig(dir, inferred.yaml)).toThrow(/not authorized/);
+    const root = resolve(dir);
+    installHostApproval(root, {
+      planId: "project-init",
+      role: "developer",
+      provider: "local",
+      workItemIds: ["project"],
+      repositories: [root],
+      operations: ["repository_edit"],
+      inScope: ["praxis_project_init_apply"],
+      outOfScope: [],
+      assumptions: [],
+      risks: ["writes .project"],
+    });
+    runAuthorizedMutation({
+      repo: root,
+      operation: "repository_edit",
+      provider: "local",
+      repository: root,
+      workItemId: "project",
+      action: "praxis_project_init_apply",
+    }, () => writeProjectConfig(dir, inferred.yaml));
     const loaded = loadProjectConfig(dir);
     expect(loaded.status).toBe("loaded");
     if (loaded.status !== "loaded") return;

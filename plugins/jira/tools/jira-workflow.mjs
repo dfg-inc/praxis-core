@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolve } from "node:path";
 import { loadJiraConfig } from "../dist/config.js";
 import { createJiraProvider } from "../dist/rest-provider.js";
 import {
@@ -6,12 +7,46 @@ import {
   baAnalyzeEpic,
   collectEpicStatus,
 } from "../dist/workflows.js";
+import {
+  abortConsumption,
+  beginConsumption,
+  completeConsumption,
+  inspectMutation,
+} from "@praxis/contracts";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 function flag(name) {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
+}
+
+function requireStoredApproval(repo, action, operation, workItemId) {
+  const root = resolve(repo);
+  let inspection;
+  try {
+    inspection = inspectMutation({
+      repo: root,
+      operation,
+      provider: "jira",
+      instanceId: process.env.PRAXIS_JIRA_BASE_URL,
+      workItemId,
+      repository: root,
+      previewFingerprint: flag("--fingerprint"),
+      action,
+    });
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? error.code : "APPROVAL_REQUIRED";
+    console.error(`${code}: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+  if (inspection.kind === "replay") return inspection;
+  if (flag("--confirm") !== "YES") {
+    console.error(`${action} requires --confirm YES`);
+    process.exit(1);
+  }
+  if (inspection.kind === "ready") beginConsumption(root, inspection.planId, inspection.key, action);
+  return { ...inspection, root };
 }
 
 function formatIssue(issue) {
@@ -110,18 +145,26 @@ if (cmd === "ba-preview") {
 }
 
 if (cmd === "ba-apply") {
-  if (flag("--confirm") !== "YES") {
-    console.error("ba-apply requires --confirm YES");
-    process.exit(1);
-  }
   const epic = flag("--epic");
   const repo = flag("--repo") ?? ".";
-  const ba = await baAnalyzeEpic({
-    provider,
-    epicKey: epic,
-    repo,
-    dryRun: false,
-  });
+  const gate = requireStoredApproval(repo, "praxis_ba_apply", "external_record_update", epic);
+  if (gate.kind === "replay") {
+    console.log(JSON.stringify({ ok: true, replayed: true }, null, 2));
+    process.exit(0);
+  }
+  let ba;
+  try {
+    ba = await baAnalyzeEpic({
+      provider,
+      epicKey: epic,
+      repo,
+      dryRun: false,
+    });
+    completeConsumption(gate.root, gate.planId, gate.key, "praxis_ba_apply", { ok: ba.ok });
+  } catch (error) {
+    abortConsumption(gate.root, gate.planId, gate.key, "praxis_ba_apply");
+    throw error;
+  }
   console.log(ba.planText);
   console.log(JSON.stringify({ ok: ba.ok, created: ba.created, storyKeys: ba.storyKeys }, null, 2));
   process.exit(ba.ok ? 0 : 1);
@@ -148,18 +191,26 @@ if (cmd === "architect-preview") {
 }
 
 if (cmd === "architect-apply") {
-  if (flag("--confirm") !== "YES") {
-    console.error("architect-apply requires --confirm YES");
-    process.exit(3);
-  }
   const epic = flag("--epic");
   const repo = flag("--repo") ?? ".";
-  const arch = await architectPlanEpic({
-    provider,
-    epicKey: epic,
-    repo,
-    dryRun: false,
-  });
+  const gate = requireStoredApproval(repo, "praxis_architect_apply", "external_record_update", epic);
+  if (gate.kind === "replay") {
+    console.log(JSON.stringify({ ok: true, replayed: true, dryRun: false }, null, 2));
+    process.exit(0);
+  }
+  let arch;
+  try {
+    arch = await architectPlanEpic({
+      provider,
+      epicKey: epic,
+      repo,
+      dryRun: false,
+    });
+    completeConsumption(gate.root, gate.planId, gate.key, "praxis_architect_apply", { ok: arch.ok !== false });
+  } catch (error) {
+    abortConsumption(gate.root, gate.planId, gate.key, "praxis_architect_apply");
+    throw error;
+  }
   if (arch.planText) console.log(arch.planText);
   console.log(
     JSON.stringify(

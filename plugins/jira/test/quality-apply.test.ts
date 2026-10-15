@@ -3,17 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
 } from "../src/rest-provider.js";
 import type { JiraConfig } from "../src/config.js";
 import {
-  applyQualityReview,
   previewQualityApply,
   writeQualityEvidence,
 } from "../src/quality-apply.js";
+import { applyQualityReview } from "./permit-mutation.js";
 
 function cfg(): JiraConfig {
   return {
@@ -36,7 +36,7 @@ function cfg(): JiraConfig {
 describe("quality apply", () => {
   it("PASSED preview is read-only and apply reconciles local qualityState", async () => {
     const state = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });
@@ -109,7 +109,7 @@ describe("quality apply", () => {
 
   it("rejects stale fingerprint", async () => {
     const state = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });
@@ -140,7 +140,7 @@ describe("quality apply", () => {
 
   it("rejects Jira status drift before any write", async () => {
     const state = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });
@@ -188,7 +188,7 @@ describe("quality apply", () => {
         statusCategory: { key: "done", name: "Закрыто" },
       },
     });
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });
@@ -229,7 +229,7 @@ describe("quality apply", () => {
 
   it("does not mark missing manifest committed", async () => {
     const state = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });
@@ -262,7 +262,7 @@ describe("quality apply", () => {
 
   it("does not claim success when QualityStore sync fails", async () => {
     const state = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });
@@ -309,7 +309,7 @@ describe("quality apply", () => {
 
   it("discloses bookkeeping properties in preview", async () => {
     const state = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });

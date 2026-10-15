@@ -12,6 +12,7 @@ import {
   type NormalizedWorkPackage,
 } from "./work-package-read.js";
 import { traced, type PreviewTrace } from "./preview-trace.js";
+import { authorizeJira, hasMutationLease, jiraMutation } from "./mutation-auth.js";
 
 export type ArchitectPlanItem = {
   action: "CREATE" | "UPDATE" | "UNCHANGED" | "LINK" | "IGNORED";
@@ -109,6 +110,7 @@ export async function architectMaterialize(opts: {
   dryRun?: boolean;
   trace?: PreviewTrace;
   workPackageId?: string;
+  previewFingerprint?: string;
 }): Promise<{
   ok: boolean;
   reason?: string;
@@ -125,6 +127,14 @@ export async function architectMaterialize(opts: {
   };
   outOfScopeWorkPackages: Array<{ id: string; lifecycle: string }>;
 }> {
+  if (!opts.dryRun && !hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_architect_apply",
+      operation: "external_record_update",
+      workItemId: opts.epicKey,
+      previewFingerprint: opts.previewFingerprint,
+    }), () => architectMaterialize(opts));
+  }
   assertRole("architect", "read-epic");
   const remoteHandoff = await traced(opts.trace, "jira-status", () =>
     opts.provider.getIssueProperty<{

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
 } from "@praxis/jira";
@@ -87,7 +87,7 @@ describe("preview operations timeout and fingerprint", () => {
 
   it("direct BA and Architect preview complete under budget with deterministic fingerprints", async () => {
     const state = createMockJiraState();
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });
@@ -154,7 +154,7 @@ describe("preview operations timeout and fingerprint", () => {
           reject(err);
         });
       });
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: hung,
       timeoutMs: 50,

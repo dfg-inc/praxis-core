@@ -11,6 +11,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { redactSecrets } from "./redact.js";
 import { parseRemoteUrl, type ParsedRemote } from "./git-url.js";
+import { requireMutationLease } from "@praxis/contracts";
 import { VCS_CODES, VcsError } from "./errors.js";
 
 export type GitRunResult = {
@@ -239,6 +240,7 @@ export function branchExists(repo: string, name: string): boolean {
 }
 
 export function createBranch(repo: string, name: string): void {
+  requireMutationLease();
   const r = runGit(repo, ["checkout", "-b", name]);
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_STAGING_BLOCKED, redactSecrets(r.stderr || "git checkout -b failed"));
@@ -246,6 +248,7 @@ export function createBranch(repo: string, name: string): void {
 }
 
 export function checkoutBranch(repo: string, name: string): void {
+  requireMutationLease();
   const r = runGit(repo, ["checkout", name]);
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_STAGING_BLOCKED, redactSecrets(r.stderr || "git checkout failed"));
@@ -253,6 +256,7 @@ export function checkoutBranch(repo: string, name: string): void {
 }
 
 export function stagePaths(repo: string, paths: string[]): void {
+  requireMutationLease();
   if (paths.length === 0) return;
   const r = runGit(repo, ["add", "--", ...paths]);
   if (r.status !== 0) {
@@ -261,6 +265,7 @@ export function stagePaths(repo: string, paths: string[]): void {
 }
 
 export function commitStaged(repo: string, message: string): string {
+  requireMutationLease();
   const r = runGit(repo, ["commit", "-m", message]);
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_STAGING_BLOCKED, redactSecrets(r.stderr || "git commit failed"));
@@ -277,6 +282,7 @@ export function gitTreeSha(repo: string, rev = "HEAD"): string | null {
 }
 
 export function addRemote(repo: string, name: string, url: string): void {
+  requireMutationLease();
   const r = runGit(repo, ["remote", "add", name, url]);
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_TRANSPORT_FAILED, redactSecrets(r.stderr || "git remote add failed"));
@@ -284,6 +290,7 @@ export function addRemote(repo: string, name: string, url: string): void {
 }
 
 export function setRemoteUrl(repo: string, name: string, url: string): void {
+  requireMutationLease();
   const r = runGit(repo, ["remote", "set-url", name, url]);
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_TRANSPORT_FAILED, redactSecrets(r.stderr || "git remote set-url failed"));
@@ -291,6 +298,7 @@ export function setRemoteUrl(repo: string, name: string, url: string): void {
 }
 
 export function setLocalIdentity(repo: string, name: string, email: string): void {
+  requireMutationLease();
   const n = runGit(repo, ["config", "user.name", name]);
   const e = runGit(repo, ["config", "user.email", email]);
   if (n.status !== 0 || e.status !== 0) {
@@ -365,6 +373,7 @@ export function pushRefspec(
   destinationBranch: string,
   opts?: { setUpstream?: boolean },
 ): { pushed: true; force: false; refspec: string } {
+  requireMutationLease();
   if (!destinationBranch || destinationBranch.includes("..") || destinationBranch.startsWith("-")) {
     throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "invalid destination branch");
   }
@@ -418,6 +427,7 @@ export function hasGithubWorkflows(repo: string, rev = "HEAD"): boolean {
 }
 
 export function writeTextFile(repo: string, rel: string, body: string): void {
+  requireMutationLease();
   const abs = join(repo, rel);
   mkdirSync(dirname(abs), { recursive: true });
   writeFileSync(abs, body);

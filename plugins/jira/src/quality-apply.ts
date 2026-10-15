@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { JiraProvider } from "./provider.js";
+import { authorizeJira, hasMutationLease, jiraMutation } from "./mutation-auth.js";
 import { ARTIFACT_PROP } from "./managed-scope.js";
 import { headingParagraphs, textDocument } from "./rich-text.js";
 import {
@@ -616,6 +617,14 @@ export async function applyQualityReview(opts: {
   }
   if (saved.plan.jiraWorkPackageKey !== evidence.jiraWorkPackageKey) {
     throw new QualityApplyError("QUALITY_INPUTS_INCONSISTENT", "Jira work package mismatch");
+  }
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_quality_apply",
+      operation: "external_state_change",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint,
+    }), () => applyQualityReview(opts));
   }
 
   const wpKey = evidence.jiraWorkPackageKey;

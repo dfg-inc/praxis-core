@@ -17,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@praxis/contracts": "*",
     "yaml": "^2.9.0",
     "zod": "^3.25.76"
   },

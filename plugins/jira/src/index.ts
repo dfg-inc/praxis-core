@@ -396,6 +396,7 @@ export class JiraClient {
 
 export {
   createJiraProvider,
+  createFixtureJiraProvider,
   RestJiraProvider,
   createMockFetch,
   createMockJiraState,

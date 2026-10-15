@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
@@ -61,7 +61,7 @@ function write(repo, rel, body) {
 
 const proven = [];
 const state = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-const provider = createJiraProvider({
+const provider = createFixtureJiraProvider({
   config: JIRA_CFG,
   fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
 });

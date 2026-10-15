@@ -1,14 +1,16 @@
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { runAuthorizedMutation } from "@praxis/contracts";
+import { permitLocal } from "./permit-mutation.js";
 import {
-  applyCommit,
-  applyConnect,
-  applyMergeRequest,
-  applyPublish,
+  applyCommit as applyCommitRaw,
+  applyConnect as applyConnectRaw,
+  applyMergeRequest as applyMergeRequestRaw,
+  applyPublish as applyPublishRaw,
   createGithubProvider,
   createGitlabProvider,
   createMockGithubFetch,
@@ -35,6 +37,66 @@ import {
 } from "../src/index.js";
 
 const WP = "WP-20260914-002";
+
+function applyConnect(opts: Parameters<typeof applyConnectRaw>[0]) {
+  permitLocal(opts.repo, {
+    action: "praxis_developer_git_connect_apply",
+    operation: "repository_edit",
+    workItemId: opts.workPackageId,
+    previewFingerprint: opts.previewFingerprint,
+  });
+  return applyConnectRaw(opts);
+}
+
+function applyCommit(opts: Parameters<typeof applyCommitRaw>[0]) {
+  permitLocal(opts.repo, {
+    action: "praxis_developer_git_commit",
+    operation: "git_commit",
+    workItemId: opts.workPackageId,
+    previewFingerprint: opts.previewFingerprint,
+  });
+  return applyCommitRaw(opts);
+}
+
+function applyPublish(opts: Parameters<typeof applyPublishRaw>[0]) {
+  permitLocal(opts.repo, {
+    action: "praxis_developer_git_publish",
+    operation: "git_push",
+    workItemId: opts.workPackageId,
+    previewFingerprint: opts.previewFingerprint,
+  });
+  return applyPublishRaw(opts);
+}
+
+function withDeliveryLease<T>(write: () => T): T {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "praxis-lease-")));
+  const previewFingerprint = `sha256:${"ab".repeat(32)}`;
+  permitLocal(repo, {
+    action: "praxis_developer_git_merge_request",
+    operation: "merge_request",
+    workItemId: "WP-1",
+    previewFingerprint,
+  });
+  return runAuthorizedMutation({
+    repo,
+    operation: "merge_request",
+    provider: "local",
+    repository: repo,
+    workItemId: "WP-1",
+    action: "praxis_developer_git_merge_request",
+    previewFingerprint,
+  }, write);
+}
+
+function applyMergeRequest(opts: Parameters<typeof applyMergeRequestRaw>[0]) {
+  permitLocal(opts.repo, {
+    action: "praxis_developer_git_merge_request",
+    operation: "merge_request",
+    workItemId: opts.workPackageId,
+    previewFingerprint: opts.previewFingerprint,
+  });
+  return applyMergeRequestRaw(opts);
+}
 
 function sha(text: string) {
   return createHash("sha256").update(text).digest("hex");
@@ -310,7 +372,7 @@ describe("git status / connect", () => {
   it("reports git remote set-url failure without claiming wrote", () => {
     const dir = mkdtempSync(join(tmpdir(), "praxis-vcs-nowrite-"));
     expect(() => setRemoteUrl(dir, "origin", "git@github.com:hisagedru/praxis-acceptance-test.git")).toThrow(
-      /GIT_TRANSPORT_FAILED|not a git repository|failed/i,
+      /not authorized/,
     );
   });
 
@@ -511,21 +573,24 @@ describe("GitHub and GitLab mocked APIs", () => {
       config: { token: "ghp_not_a_real_token_value", apiUrl: "https://api.github.com" },
       fetchImpl: createMockGithubFetch(state),
     });
-    const first = await provider.createMergeRequest({
-      owner: "hisagedru",
-      repo: "praxis-acceptance-test",
-      sourceBranch: "feature/PRX-4-counter-reset",
-      targetBranch: "master",
-      title: "PRX-4",
-      body: "body",
-    });
-    const second = await provider.createMergeRequest({
-      owner: "hisagedru",
-      repo: "praxis-acceptance-test",
-      sourceBranch: "feature/PRX-4-counter-reset",
-      targetBranch: "master",
-      title: "PRX-4",
-      body: "body",
+    const { first, second } = await withDeliveryLease(async () => {
+      const created = await provider.createMergeRequest({
+        owner: "hisagedru",
+        repo: "praxis-acceptance-test",
+        sourceBranch: "feature/PRX-4-counter-reset",
+        targetBranch: "master",
+        title: "PRX-4",
+        body: "body",
+      });
+      const again = await provider.createMergeRequest({
+        owner: "hisagedru",
+        repo: "praxis-acceptance-test",
+        sourceBranch: "feature/PRX-4-counter-reset",
+        targetBranch: "master",
+        title: "PRX-4",
+        body: "body",
+      });
+      return { first: created, second: again };
     });
     expect(first.url).toContain("/pull/1");
     expect(second.id).toBe(first.id);
@@ -555,13 +620,13 @@ describe("GitHub and GitLab mocked APIs", () => {
       config: { token: "glpat-not-real", baseUrl: "https://gitlab.example.com" },
       fetchImpl: createMockGitlabFetch(state),
     });
-    const mr = await provider.createMergeRequest({
+    const mr = await withDeliveryLease(() => provider.createMergeRequest({
       projectPath: "group/project",
       sourceBranch: "feature/x",
       targetBranch: "main",
       title: "t",
       body: "b",
-    });
+    }));
     expect(mr.kind).toBe("merge-request");
     expect(mr.merged).toBe(false);
   });

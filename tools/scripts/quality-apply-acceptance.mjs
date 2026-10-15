@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
@@ -106,7 +106,7 @@ const state = createMockJiraState({
   ],
 });
 const fetchImpl = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
-const provider = createJiraProvider({ config: JIRA_CFG, fetchImpl });
+const provider = createFixtureJiraProvider({ config: JIRA_CFG, fetchImpl });
 const wp = await provider.createIssue({ summary: "WP reset", issueType: "Task" });
 const story = await provider.createIssue({ summary: "Story", issueType: "Story" });
 await provider.writePraxisState(wp.key, { qualityState: "pending" });
@@ -276,7 +276,7 @@ console.error("quality-apply: drift checks");
 
 {
   const extraState = createMockJiraState({ availableTransitions: [...LOCALIZED_RU_TRANSITIONS] });
-  const extraProvider = createJiraProvider({
+  const extraProvider = createFixtureJiraProvider({
     config: JIRA_CFG,
     fetchImpl: createMockFetch(extraState, { flavor: "cloud", projectKey: "PRX" }),
   });
@@ -366,7 +366,7 @@ const failState = createMockJiraState({
   ],
 });
 const failFetch = createMockFetch(failState, { flavor: "cloud", projectKey: "PRX" });
-const failProvider = createJiraProvider({ config: JIRA_CFG, fetchImpl: failFetch });
+const failProvider = createFixtureJiraProvider({ config: JIRA_CFG, fetchImpl: failFetch });
 const failWp = await failProvider.createIssue({ summary: "WP fail", issueType: "Task" });
 const failRepo = mkdtempSync(join(tmpdir(), "praxis-qapply-fail-"));
 write(failRepo, "src/counter.js", "export function reset(){ return 0; }\n");
@@ -415,7 +415,7 @@ proven.push("O-P failed review bugs / no Done / dedupe");
 
 {
   const partState = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-  const partProvider = createJiraProvider({
+  const partProvider = createFixtureJiraProvider({
     config: JIRA_CFG,
     fetchImpl: createMockFetch(partState, { flavor: "cloud", projectKey: "PRX" }),
   });
@@ -519,7 +519,7 @@ proven.push("O-P failed review bugs / no Done / dedupe");
 {
   const { callTool } = await import("../../packages/mcp/dist/tools.js");
   const nState = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-  const nProvider = createJiraProvider({
+  const nProvider = createFixtureJiraProvider({
     config: JIRA_CFG,
     fetchImpl: createMockFetch(nState, { flavor: "cloud", projectKey: "PRX" }),
   });

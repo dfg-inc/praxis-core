@@ -18,6 +18,7 @@ import {
   upsertWriteOp,
 } from "./write-journal.js";
 import { headingParagraphs } from "./rich-text.js";
+import { authorizeJira, hasMutationLease, jiraMutation } from "./mutation-auth.js";
 
 export type BaStorySpec = {
   logicalId?: string;
@@ -155,6 +156,13 @@ export async function planAndApplyBaStories(opts: {
   applied: AppliedStory[];
   flags: IssueScopeFlags[];
 }> {
+  if (!opts.dryRun && !hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_ba_apply",
+      operation: "external_record_update",
+      workItemId: opts.epicKey,
+    }), () => planAndApplyBaStories(opts));
+  }
   const flags =
     opts.flags ?? (await loadEpicIssueFlags(opts.provider, opts.epicKey));
   const claimed = new Set<string>();

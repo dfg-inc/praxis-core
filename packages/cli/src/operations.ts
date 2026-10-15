@@ -37,6 +37,12 @@ import {
 } from "@praxis/jira/workflow";
 import { VcsError, githubTokenFlags, gitlabTokenFlags, type GitDeliveryJournal, type GitWriteFields } from "@praxis/vcs";
 import {
+  inspectMutation,
+  runAuthorizedMutation,
+  WorkflowError,
+  type ApprovalOperation,
+} from "@praxis/contracts";
+import {
   gitCommitData,
   gitConnectApplyData,
   gitConnectPreviewData,
@@ -108,6 +114,17 @@ export const OP_CODES = {
   QUALITY_POSTCONDITION_FAILED: "QUALITY_POSTCONDITION_FAILED",
   QUALITY_STORE_SYNC_PENDING: "QUALITY_STORE_SYNC_PENDING",
   QUALITY_APPLY_INCOMPLETE: "QUALITY_APPLY_INCOMPLETE",
+  APPROVAL_REQUIRED: "APPROVAL_REQUIRED",
+  APPROVAL_FINGERPRINT_MISMATCH: "APPROVAL_FINGERPRINT_MISMATCH",
+  APPROVAL_SCOPE_MISMATCH: "APPROVAL_SCOPE_MISMATCH",
+  APPROVAL_SCOPE_SEPARATE: "APPROVAL_SCOPE_SEPARATE",
+  APPROVAL_EXPIRED: "APPROVAL_EXPIRED",
+  APPROVAL_REVOKED: "APPROVAL_REVOKED",
+  APPROVAL_REJECTED: "APPROVAL_REJECTED",
+  APPROVAL_RECONCILIATION_REQUIRED: "APPROVAL_RECONCILIATION_REQUIRED",
+  APPROVAL_SELF_GRANT_FORBIDDEN: "APPROVAL_SELF_GRANT_FORBIDDEN",
+  APPROVAL_AMBIGUOUS: "APPROVAL_AMBIGUOUS",
+  APPROVAL_TRANSITION_FORBIDDEN: "APPROVAL_TRANSITION_FORBIDDEN",
   GIT_REPOSITORY_UNAVAILABLE: "GIT_REPOSITORY_UNAVAILABLE",
   GIT_IDENTITY_REQUIRED: "GIT_IDENTITY_REQUIRED",
   GIT_REMOTE_REQUIRED: "GIT_REMOTE_REQUIRED",
@@ -193,6 +210,11 @@ export type OpContext = {
   providerKind?: "github" | "gitlab";
   vcsFetchImpl?: typeof fetch;
   vcsProvider?: import("@praxis/vcs").VcsProvider;
+  planId?: string;
+  planFingerprint?: string;
+  instanceId?: string;
+  /** Set when an outer entry point already started the consumption ledger. */
+  approvalConsumed?: boolean;
 };
 
 export function loadPraxisDotenv(repo: string): void {
@@ -410,6 +432,73 @@ function requireConfirm(confirmation: string | undefined, what: string): void {
   }
 }
 
+type ProtectedSpec = {
+  what: string;
+  action: string;
+  operation: ApprovalOperation;
+  provider: "local" | "jira";
+  repository: string;
+  workItemId?: string;
+  requireYes: boolean;
+};
+
+function replayResult<T>(result: unknown): T {
+  if (result && typeof result === "object") return { ...(result as object), replayed: true } as T;
+  return { replayed: true, result } as T;
+}
+
+function asApprovalError(err: unknown): never {
+  if (err instanceof WorkflowError && err.code in OP_CODES) {
+    throw new PraxisOpError(err.code as OpCode, err.message);
+  }
+  throw err;
+}
+
+/**
+ * confirmation=YES is an extra compatibility check. It never authorizes a write.
+ * The persisted approval is checked before the mutation.
+ */
+async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => Promise<T> | T): Promise<T> {
+  if (spec.requireYes) requireConfirm(ctx.confirmation, spec.what);
+  const repo = resolve(spec.repository);
+  let inspection;
+  try {
+    inspection = inspectMutation({
+      repo,
+      planId: ctx.planId,
+      planFingerprint: ctx.planFingerprint,
+      operation: spec.operation,
+      provider: spec.provider,
+      instanceId: spec.provider === "local" ? undefined : (ctx.instanceId ?? process.env.PRAXIS_JIRA_BASE_URL),
+      workItemId: spec.workItemId,
+      repository: repo,
+      previewFingerprint: ctx.previewFingerprint,
+      action: spec.action,
+      resumeInFlight: Boolean(ctx.approvalConsumed),
+    });
+  } catch (err) {
+    asApprovalError(err);
+  }
+  if (inspection.kind === "replay") return replayResult<T>(inspection.result);
+  try {
+    return await runAuthorizedMutation({
+      repo,
+      planId: ctx.planId,
+      planFingerprint: ctx.planFingerprint,
+      operation: spec.operation,
+      provider: spec.provider,
+      instanceId: spec.provider === "local" ? undefined : (ctx.instanceId ?? process.env.PRAXIS_JIRA_BASE_URL),
+      workItemId: spec.workItemId,
+      repository: repo,
+      previewFingerprint: ctx.previewFingerprint,
+      action: spec.action,
+      resumeInFlight: true,
+    }, write);
+  } catch (err) {
+    asApprovalError(err);
+  }
+}
+
 function requireFingerprint(expected: string, got: string | undefined, what: string): void {
   if (!got) {
     throw new PraxisOpError(
@@ -524,18 +613,26 @@ export async function projectInitPreviewOp(ctx: OpContext) {
 }
 
 export async function projectInitApplyOp(ctx: OpContext) {
-  requireConfirm(ctx.confirmation, "project init");
   const repo = requireRepo(ctx.repo);
   const inferred = inferProjectConfig(repo);
-  if (inferred.existing.status === "loaded") {
-    return {
-      wrote: false,
-      reason: "already-exists",
-      path: inferred.existing.path,
-    };
-  }
-  const path = writeProjectConfig(repo, inferred.yaml);
-  return { wrote: true, path, config: inferred.proposed };
+  return guardWrite(ctx, {
+    what: "project init",
+    action: "praxis_project_init_apply",
+    operation: "repository_edit",
+    provider: "local",
+    repository: repo,
+    requireYes: true,
+  }, async () => {
+    if (inferred.existing.status === "loaded") {
+      return {
+        wrote: false,
+        reason: "already-exists" as const,
+        path: inferred.existing.path,
+      };
+    }
+    const path = writeProjectConfig(repo, inferred.yaml);
+    return { wrote: true, path, config: inferred.proposed };
+  });
 }
 
 export async function jiraSmokeOp(ctx: OpContext) {
@@ -612,12 +709,19 @@ export async function baPreviewOp(ctx: OpContext) {
 }
 
 export async function baApplyOp(ctx: OpContext) {
-  requireConfirm(ctx.confirmation, "ba apply");
   if (!ctx.epic) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "ba apply requires epic");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
+  return guardWrite(ctx, {
+    what: "ba apply",
+    action: "praxis_ba_apply",
+    operation: "external_record_update",
+    provider: "jira",
+    repository: repo,
+    workItemId: ctx.epic,
+    requireYes: true,
+  }, () => withProvider({ ...ctx, repo }, async (p) => {
     const preview = await baAnalyzeEpic({
       provider: p,
       epicKey: ctx.epic!,
@@ -635,7 +739,7 @@ export async function baApplyOp(ctx: OpContext) {
       dryRun: false,
     });
     return { ...result, previewFingerprint: previewFingerprint(result.plan) };
-  });
+  }));
 }
 
 export async function architectStatusOp(ctx: OpContext) {
@@ -702,12 +806,19 @@ export async function architectPreviewOp(ctx: OpContext) {
 }
 
 export async function architectApplyOp(ctx: OpContext) {
-  requireConfirm(ctx.confirmation, "architect apply");
   if (!ctx.epic) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "architect apply requires epic");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
+  return guardWrite(ctx, {
+    what: "architect apply",
+    action: "praxis_architect_apply",
+    operation: "external_record_update",
+    provider: "jira",
+    repository: repo,
+    workItemId: ctx.epic,
+    requireYes: true,
+  }, () => withProvider({ ...ctx, repo }, async (p) => {
     try {
       const preview = await architectPlanEpic({
         provider: p,
@@ -732,7 +843,7 @@ export async function architectApplyOp(ctx: OpContext) {
       if (e instanceof WorkPackageScopeError) mapArchitectWpError(e);
       throw e;
     }
-  });
+  }));
 }
 
 export async function workPackageListOp(ctx: OpContext) {
@@ -844,7 +955,15 @@ export async function developerClaimOp(ctx: OpContext) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer claim requires workPackage");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
+  return guardWrite(ctx, {
+    what: "developer claim",
+    action: "praxis_developer_claim",
+    operation: "external_state_change",
+    provider: "jira",
+    repository: repo,
+    workItemId: ctx.wp,
+    requireYes: false,
+  }, () => withProvider({ ...ctx, repo }, async (p) => {
     const user = await p.getCurrentUser();
     return claimWorkPackage({
       provider: p,
@@ -853,39 +972,54 @@ export async function developerClaimOp(ctx: OpContext) {
       actor: ctx.actor ?? user.displayName ?? "developer",
       accountId: user.accountId,
     });
-  });
+  }));
 }
 
 export async function developerReleaseOp(ctx: OpContext) {
-  requireConfirm(ctx.confirmation, "developer release");
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer release requires workPackage");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
+  return guardWrite(ctx, {
+    what: "developer release",
+    action: "praxis_developer_release",
+    operation: "external_state_change",
+    provider: "jira",
+    repository: repo,
+    workItemId: ctx.wp,
+    requireYes: true,
+  }, () => withProvider({ ...ctx, repo }, async (p) => {
     await releaseWorkPackage({
       provider: p,
       wpKey: resolveRemoteWpKey(repo, ctx.wp!),
+      repo,
       confirm: true,
     });
     return { released: true, wp: ctx.wp };
-  });
+  }));
 }
 
 export async function developerCompleteOp(ctx: OpContext): Promise<DeveloperCompleteResult> {
-  requireConfirm(ctx.confirmation, "developer complete");
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer complete requires workPackage");
   }
   const repo = requireRepo(ctx.repo);
   const wp = ctx.wp;
-  return withProvider({ ...ctx, repo }, (p) =>
+  return guardWrite(ctx, {
+    what: "developer complete",
+    action: "praxis_developer_complete",
+    operation: "external_state_change",
+    provider: "jira",
+    repository: repo,
+    workItemId: wp,
+    requireYes: true,
+  }, () => withProvider({ ...ctx, repo }, (p) =>
     developerCompleteWp({
       provider: p,
       wpKey: wp,
       repo,
     }),
-  );
+  ));
 }
 
 export async function developerCompleteRecoveryPreviewOp(
@@ -908,7 +1042,6 @@ export async function developerCompleteRecoveryPreviewOp(
 export async function developerCompleteRecoveryApplyOp(
   ctx: OpContext,
 ): Promise<DeveloperCompleteResult> {
-  requireConfirm(ctx.confirmation, "developer complete recovery");
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer complete recovery apply requires workPackage");
   }
@@ -921,14 +1054,22 @@ export async function developerCompleteRecoveryApplyOp(
   const repo = requireRepo(ctx.repo);
   const wp = ctx.wp;
   const previewFingerprint = ctx.previewFingerprint;
-  return withProvider({ ...ctx, repo }, (p) =>
+  return guardWrite(ctx, {
+    what: "developer complete recovery",
+    action: "praxis_developer_complete_recovery_apply",
+    operation: "external_state_change",
+    provider: "jira",
+    repository: repo,
+    workItemId: wp,
+    requireYes: true,
+  }, () => withProvider({ ...ctx, repo }, (p) =>
     applyDeveloperCompleteRecovery({
       provider: p,
       wpKey: wp,
       repo,
       previewFingerprint,
     }),
-  );
+  ));
 }
 
 export async function qualityStatusOp(ctx: OpContext) {
@@ -1120,7 +1261,6 @@ export async function qualityApplyOp(ctx: OpContext): Promise<QualityApplyResult
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "quality apply requires workPackage");
   }
-  requireConfirm(ctx.confirmation, "quality apply");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(
       OP_CODES.CONFIRMATION_REQUIRED,
@@ -1129,7 +1269,15 @@ export async function qualityApplyOp(ctx: OpContext): Promise<QualityApplyResult
   }
   const repo = requireRepo(ctx.repo);
   const workPackageId = resolveLocalWorkPackage(repo, ctx.wp)?.id ?? ctx.wp;
-  return withProvider({ ...ctx, repo }, async (p) => {
+  return guardWrite(ctx, {
+    what: "quality apply",
+    action: "praxis_quality_apply",
+    operation: "external_state_change",
+    provider: "jira",
+    repository: repo,
+    workItemId: workPackageId,
+    requireYes: true,
+  }, () => withProvider({ ...ctx, repo }, async (p) => {
     try {
       const { markQualityReviewApplied } = await import("./quality-lifecycle.js");
       const { ensureQuality } = await import("./quality-ensure.js");
@@ -1156,7 +1304,7 @@ export async function qualityApplyOp(ctx: OpContext): Promise<QualityApplyResult
     } catch (err) {
       mapQualityReviewError(err);
     }
-  });
+  }));
 }
 
 function gitCtx(ctx: OpContext): GitOpContext {
@@ -1222,12 +1370,20 @@ export async function developerGitConnectPreviewOp(ctx: OpContext) {
 
 export async function developerGitConnectApplyOp(ctx: OpContext) {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git connect");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git connect requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   try {
-    return gitConnectApplyData(gitCtx(ctx));
+    return await guardWrite(ctx, {
+      what: "git connect",
+      action: "praxis_developer_git_connect_apply",
+      operation: "repository_edit",
+      provider: "local",
+      repository: repo,
+      workItemId: ctx.wp,
+      requireYes: true,
+    }, () => gitConnectApplyData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
   }
@@ -1244,12 +1400,20 @@ export async function developerGitIdentityPreviewOp(ctx: OpContext) {
 
 export async function developerGitIdentityApplyOp(ctx: OpContext) {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git identity");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git identity requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   try {
-    return gitIdentityApplyData(gitCtx(ctx));
+    return await guardWrite(ctx, {
+      what: "git identity",
+      action: "praxis_developer_git_identity_apply",
+      operation: "repository_edit",
+      provider: "local",
+      repository: repo,
+      workItemId: ctx.wp,
+      requireYes: true,
+    }, () => gitIdentityApplyData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
   }
@@ -1266,12 +1430,20 @@ export async function developerGitPreviewOp(ctx: OpContext) {
 
 export async function developerGitCommitOp(ctx: OpContext): Promise<GitDeliveryJournal & GitWriteFields> {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git commit");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git commit requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   try {
-    return await gitCommitData(gitCtx(ctx));
+    return await guardWrite(ctx, {
+      what: "git commit",
+      action: "praxis_developer_git_commit",
+      operation: "git_commit",
+      provider: "local",
+      repository: repo,
+      workItemId: ctx.wp,
+      requireYes: true,
+    }, () => gitCommitData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
   }
@@ -1288,12 +1460,20 @@ export async function developerGitPublishPreviewOp(ctx: OpContext) {
 
 export async function developerGitPublishOp(ctx: OpContext): Promise<GitDeliveryJournal & GitWriteFields> {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git publish");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git publish requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   try {
-    return await gitPublishData(gitCtx(ctx));
+    return await guardWrite(ctx, {
+      what: "git publish",
+      action: "praxis_developer_git_publish",
+      operation: "git_push",
+      provider: "local",
+      repository: repo,
+      workItemId: ctx.wp,
+      requireYes: true,
+    }, () => gitPublishData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
   }
@@ -1310,12 +1490,20 @@ export async function developerGitMergeRequestPreviewOp(ctx: OpContext) {
 
 export async function developerGitMergeRequestOp(ctx: OpContext): Promise<GitDeliveryJournal & GitWriteFields> {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git merge request");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git merge request requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   try {
-    return await gitMergeRequestData(gitCtx(ctx));
+    return await guardWrite(ctx, {
+      what: "git merge request",
+      action: "praxis_developer_git_merge_request",
+      operation: "merge_request",
+      provider: "local",
+      repository: repo,
+      workItemId: ctx.wp,
+      requireYes: true,
+    }, () => gitMergeRequestData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
   }
@@ -1348,10 +1536,10 @@ export async function developerGitLinkJiraPreviewOp(ctx: OpContext) {
 
 export async function developerGitLinkJiraApplyOp(ctx: OpContext) {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git link jira");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git link jira requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   const preview = await developerGitLinkJiraPreviewOp(ctx);
   if (preview.previewFingerprint !== ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.GIT_PREVIEW_STALE, "git link jira previewFingerprint mismatch");
@@ -1359,8 +1547,16 @@ export async function developerGitLinkJiraApplyOp(ctx: OpContext) {
   if (!preview.jiraIssueKey || !preview.proposedComment) {
     throw new PraxisOpError(OP_CODES.GIT_PUSH_BLOCKED, "No merge/pull request URL to link");
   }
-  return withProvider(ctx, async (p) => {
-    await p.addComment(preview.jiraIssueKey!, preview.proposedComment);
+  return guardWrite(ctx, {
+    what: "git link jira",
+    action: "praxis_developer_git_link_jira_apply",
+    operation: "external_record_update",
+    provider: "jira",
+    repository: repo,
+    workItemId: ctx.wp,
+    requireYes: true,
+  }, () => withProvider(ctx, async (p) => {
+    await p.addComment(preview.jiraIssueKey!, preview.proposedComment!);
     return {
       jiraMutated: true,
       issueKey: preview.jiraIssueKey,
@@ -1368,5 +1564,5 @@ export async function developerGitLinkJiraApplyOp(ctx: OpContext) {
       transitioned: false,
       qualityApply: false,
     };
-  });
+  }));
 }

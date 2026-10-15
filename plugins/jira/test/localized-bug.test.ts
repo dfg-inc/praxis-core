@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   LOCALIZED_RU_ISSUE_TYPES,
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
 } from "../src/rest-provider.js";
-import { architectPlanEpic, baAnalyzeEpic, previewQualityApply, applyQualityReview, writeQualityEvidence } from "../src/workflows.js";
+import { previewQualityApply, writeQualityEvidence } from "../src/workflows.js";
+import { applyQualityReview, architectPlanEpic, baAnalyzeEpic } from "./permit-mutation.js";
 import type { JiraConfig } from "../src/config.js";
 
 function cfg(): JiraConfig {
@@ -39,7 +40,7 @@ describe("localized bug type", () => {
         { id: "10012", name: "Баг", hierarchyLevel: 0, subtask: false },
       ],
     });
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });

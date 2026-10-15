@@ -6,7 +6,7 @@ import http from "node:http";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
 } from "@praxis/jira";
@@ -149,7 +149,7 @@ quality:
 }
 
 export async function seedCanonicalJira(fetchImpl) {
-  const provider = createJiraProvider({ config: JIRA_CFG, fetchImpl });
+  const provider = createFixtureJiraProvider({ config: JIRA_CFG, fetchImpl });
   const epic = await provider.createIssue({ summary: "Counter management improvements", issueType: "Epic" });
   const dup = await provider.createIssue({
     summary: "[DUPLICATE — superseded by PRX-3] Counter library: add reset() to return the counter to zero",

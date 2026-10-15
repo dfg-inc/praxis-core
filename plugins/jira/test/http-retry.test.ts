@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
 } from "../src/rest-provider.js";
@@ -30,7 +30,7 @@ describe("jira transport retry", () => {
     process.env.PRAXIS_JIRA_RETRY_BACKOFF_MS = "0";
     const state = createMockJiraState();
     const inner = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
-    const provider = createJiraProvider({ config: cfg(), fetchImpl: inner });
+    const provider = createFixtureJiraProvider({ config: cfg(), fetchImpl: inner });
     const epic = await provider.createIssue({ summary: "E", issueType: "Epic" });
     let failed = false;
     const flaky: typeof fetch = async (input, init) => {
@@ -43,7 +43,7 @@ describe("jira transport retry", () => {
       }
       return inner(input, init);
     };
-    const retrying = createJiraProvider({ config: cfg(), fetchImpl: flaky });
+    const retrying = createFixtureJiraProvider({ config: cfg(), fetchImpl: flaky });
     const got = await retrying.getIssue(epic.key);
     expect(got.key).toBe(epic.key);
     expect(failed).toBe(true);
@@ -56,7 +56,7 @@ describe("jira transport retry", () => {
       (err as { code?: string }).code = "UND_ERR_SOCKET";
       throw err;
     };
-    const provider = createJiraProvider({ config: cfg(), fetchImpl: flaky });
+    const provider = createFixtureJiraProvider({ config: cfg(), fetchImpl: flaky });
     await expect(provider.getIssue("PRX-1")).rejects.toThrow(
       /Jira cloud GET .* failed after 3 attempt/,
     );
@@ -78,7 +78,7 @@ describe("jira transport retry", () => {
       }
       return inner(input, init);
     };
-    const provider = createJiraProvider({ config: cfg(), fetchImpl: flaky });
+    const provider = createFixtureJiraProvider({ config: cfg(), fetchImpl: flaky });
     await expect(
       provider.createIssue({ summary: "x", issueType: "Task" }),
     ).rejects.toThrow(/failed after 1 attempt/);

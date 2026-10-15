@@ -3,11 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
 } from "../src/rest-provider.js";
-import { architectPlanEpic, baAnalyzeEpic, claimWorkPackage } from "../src/workflows.js";
+import { architectPlanEpic, baAnalyzeEpic, claimWorkPackage } from "./permit-mutation.js";
 import { resolveLocalWorkPackage, resolveRemoteWpKey } from "../src/work-package-local.js";
 import type { JiraConfig } from "../src/config.js";
 
@@ -43,7 +43,7 @@ function seedWp(repo: string, id = "WP-20260914-002") {
 describe("architect materialization", () => {
   it("previews CREATE of canonical WP without generic tech tasks or placeholder mermaid", async () => {
     const state = createMockJiraState();
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });
@@ -83,7 +83,7 @@ describe("architect materialization", () => {
 
   it("explicit workPackageId scopes CREATE to one WP despite ready/PLANNED sibling", async () => {
     const state = createMockJiraState();
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });
@@ -159,7 +159,7 @@ describe("architect materialization", () => {
 
   it("apply creates one Jira WP correlated to WP-20260914-002 and is idempotent", async () => {
     const state = createMockJiraState();
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });
@@ -220,7 +220,7 @@ describe("architect materialization", () => {
 
   it("does not create a parallel wp:PRX-3 identity", async () => {
     const state = createMockJiraState();
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     });

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
@@ -58,7 +58,7 @@ function seedLocal(repo, wpKey, extra = {}) {
 
 const proven = [];
 const state = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-const provider = createJiraProvider({
+const provider = createFixtureJiraProvider({
   config: JIRA_CFG,
   fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
 });
@@ -135,7 +135,7 @@ proven.push("M status did not shrink Jira transition log");
 
 {
   const partState = createMockJiraState({ availableTransitions: LOCALIZED_RU_TRANSITIONS });
-  const partProvider = createJiraProvider({
+  const partProvider = createFixtureJiraProvider({
     config: JIRA_CFG,
     fetchImpl: createMockFetch(partState, { flavor: "cloud", projectKey: "PRX" }),
   });

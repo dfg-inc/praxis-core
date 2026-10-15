@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
@@ -15,7 +15,8 @@ import {
   resolveSemanticTransition,
   type TransitionInfo,
 } from "../src/transitions.js";
-import { architectPlanEpic, baAnalyzeEpic, claimWorkPackage, loadJournal } from "../src/workflows.js";
+import { loadJournal } from "../src/workflows.js";
+import { architectPlanEpic, baAnalyzeEpic, claimWorkPackage } from "./permit-mutation.js";
 import type { JiraConfig } from "../src/config.js";
 
 function cfg(transitions: Record<string, string> = {}): JiraConfig {
@@ -60,7 +61,7 @@ async function seedReadyWp(opts?: {
     transitionPostStatus: opts?.transitionPostStatus,
   });
   const fetchImpl = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
-  const provider = createJiraProvider({ config: cfg(opts?.transitions), fetchImpl });
+  const provider = createFixtureJiraProvider({ config: cfg(opts?.transitions), fetchImpl });
   const epic = await provider.createIssue({ summary: "E", issueType: "Epic" });
   const repo = mkdtempSync(join(tmpdir(), "praxis-claim-"));
   await baAnalyzeEpic({

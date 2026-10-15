@@ -8,7 +8,7 @@ import {
   detectJiraMode,
 } from "../src/config.js";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
   LOCALIZED_RU_ISSUE_TYPES,
@@ -16,18 +16,84 @@ import {
 import { renderRichTextAdf, renderRichTextWiki } from "../src/rich-text.js";
 import { assertRole, roleAllows } from "../src/role-policy.js";
 import {
-  architectPlanEpic,
+  architectPlanEpic as architectPlanEpicRaw,
   assertQaPathAllowed,
-  baAnalyzeEpic,
-  claimWorkPackage,
+  baAnalyzeEpic as baAnalyzeEpicRaw,
+  claimWorkPackage as claimWorkPackageRaw,
   collectEpicStatus,
-  developerCompleteWp,
+  developerCompleteWp as developerCompleteWpRaw,
   parseCoverage,
-  qaVerifyWorkPackage,
+  qaVerifyWorkPackage as qaVerifyWorkPackageRaw,
   previewQualityApply,
-  applyQualityReview,
+  applyQualityReview as applyQualityReviewRaw,
   writeQualityEvidence,
 } from "../src/workflows.js";
+import { permitMutation } from "./permit-mutation.js";
+
+function baAnalyzeEpic(opts: Parameters<typeof baAnalyzeEpicRaw>[0]) {
+  if (!opts.dryRun) {
+    permitMutation(opts.repo, {
+      action: "praxis_ba_apply",
+      operation: "external_record_update",
+      workItemId: opts.epicKey,
+      role: "ba",
+      previewFingerprint: opts.previewFingerprint,
+    });
+  }
+  return baAnalyzeEpicRaw(opts);
+}
+
+function architectPlanEpic(opts: Parameters<typeof architectPlanEpicRaw>[0]) {
+  if (!opts.dryRun) {
+    permitMutation(opts.repo, {
+      action: "praxis_architect_apply",
+      operation: "external_record_update",
+      workItemId: opts.epicKey,
+      role: "architect",
+      previewFingerprint: opts.previewFingerprint,
+    });
+  }
+  return architectPlanEpicRaw(opts);
+}
+
+function claimWorkPackage(opts: Parameters<typeof claimWorkPackageRaw>[0]) {
+  permitMutation(opts.repo, {
+    action: "praxis_developer_claim",
+    operation: "external_state_change",
+    workItemId: opts.wpKey,
+  });
+  return claimWorkPackageRaw(opts);
+}
+
+function developerCompleteWp(opts: Parameters<typeof developerCompleteWpRaw>[0]) {
+  permitMutation(opts.repo, {
+    action: "praxis_developer_complete",
+    operation: "external_state_change",
+    workItemId: opts.wpKey,
+  });
+  return developerCompleteWpRaw(opts);
+}
+
+function applyQualityReview(opts: Parameters<typeof applyQualityReviewRaw>[0]) {
+  permitMutation(opts.repo, {
+    action: "praxis_quality_apply",
+    operation: "external_state_change",
+    workItemId: opts.workPackageId,
+    role: "quality",
+    previewFingerprint: opts.previewFingerprint,
+  });
+  return applyQualityReviewRaw(opts);
+}
+
+function qaVerifyWorkPackage(opts: Parameters<typeof qaVerifyWorkPackageRaw>[0]) {
+  permitMutation(opts.repo, {
+    action: "praxis_quality_verify",
+    operation: "validation_with_side_effects",
+    workItemId: opts.wpKey,
+    role: "quality",
+  });
+  return qaVerifyWorkPackageRaw(opts);
+}
 import { loadWriteJournal } from "../src/write-journal.js";
 import { resolveBaArtifactId } from "../src/artifact-id.js";
 import { writeJsonAtomic, readJsonFile } from "../src/atomic-json.js";
@@ -89,7 +155,7 @@ async function seedEpic(mode: "cloud" | "datacenter") {
     flavor: mode,
     projectKey: "PRX",
   });
-  const provider = createJiraProvider({ config: cfg(mode), fetchImpl });
+  const provider = createFixtureJiraProvider({ config: cfg(mode), fetchImpl });
   const epic = await provider.createIssue({
     summary: "Demo epic",
     issueType: "Epic",
@@ -326,7 +392,7 @@ describe("jira workflow orchestration", () => {
       }
       return res;
     };
-    const racingProvider = createJiraProvider({
+    const racingProvider = createFixtureJiraProvider({
       config: cfg("cloud"),
       fetchImpl: racing,
     });
@@ -812,7 +878,7 @@ describe("child hydration", () => {
       }
       return res;
     };
-    const hydrating = createJiraProvider({
+    const hydrating = createFixtureJiraProvider({
       config: cfg("cloud"),
       fetchImpl: sparse,
     });
@@ -1012,7 +1078,7 @@ describe("localized issue types", () => {
   async function seedRu() {
     const state = createMockJiraState({ issueTypes: LOCALIZED_RU_ISSUE_TYPES });
     const fetchImpl = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
-    const provider = createJiraProvider({ config: cfg("cloud"), fetchImpl });
+    const provider = createFixtureJiraProvider({ config: cfg("cloud"), fetchImpl });
     const epic = await provider.createIssue({
       summary: "Counter management improvements",
       issueType: "Epic",
@@ -1075,7 +1141,7 @@ describe("localized issue types", () => {
       ],
     });
     const fetchImpl = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
-    const provider = createJiraProvider({
+    const provider = createFixtureJiraProvider({
       config: { ...cfg("cloud"), storyTypeId: "999" },
       fetchImpl,
     });
@@ -1118,7 +1184,7 @@ describe("empty property PUT + partial BA apply resume", () => {
       propertyPutStatus: 200,
     });
     const fetchImpl = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
-    const provider = createJiraProvider({ config: cfg("cloud"), fetchImpl });
+    const provider = createFixtureJiraProvider({ config: cfg("cloud"), fetchImpl });
     const epic = await provider.createIssue({
       summary: "Counter management improvements",
       issueType: "Epic",

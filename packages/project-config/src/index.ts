@@ -1,3 +1,4 @@
+import { requireMutationLease } from "@praxis/contracts";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -158,6 +159,7 @@ export function inferProjectConfig(repoRoot: string): InferProjectResult {
 }
 
 export function writeProjectConfig(repoRoot: string, yamlOrConfig: string | ProjectConfig): string {
+  requireMutationLease();
   const path = join(repoRoot, ".project");
   const yaml =
     typeof yamlOrConfig === "string"

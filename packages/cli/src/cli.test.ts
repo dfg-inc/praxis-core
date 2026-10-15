@@ -1,7 +1,8 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { installHostApproval } from "@praxis/contracts";
 import { EXIT } from "./exit.js";
 import { envelope, isCliEnvelope } from "./envelope.js";
 import { helpFor } from "./help.js";
@@ -132,6 +133,18 @@ describe("CLI flags and exits", () => {
       join(dir, "package.json"),
       `${JSON.stringify({ name: "x", scripts: { test: "node --test" } }, null, 2)}\n`,
     );
+    installHostApproval(dir, {
+      planId: "init-1",
+      role: "ba",
+      provider: "local",
+      workItemIds: ["local"],
+      repositories: [resolve(dir)],
+      operations: ["repository_edit"],
+      inScope: ["praxis_project_init_apply"],
+      outOfScope: [],
+      assumptions: [],
+      risks: ["writes .project"],
+    });
     const { code, stdout } = await capture(() =>
       runCli([
         "project",

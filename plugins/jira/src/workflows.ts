@@ -16,6 +16,7 @@ import type {
   QualityWpReport,
 } from "@praxis/contracts";
 import { JiraBaHandoffSchema, JiraBaProposalSchema } from "@praxis/contracts";
+import { authorizeJira, hasMutationLease, jiraMutation } from "./mutation-auth.js";
 import type { JiraProvider } from "./provider.js";
 import { assertRole } from "./role-policy.js";
 import { spawnSync } from "node:child_process";
@@ -238,6 +239,7 @@ export async function baAnalyzeEpic(opts: {
   dryRun?: boolean;
   hooks?: BaWriteHooks;
   trace?: PreviewTrace;
+  previewFingerprint?: string;
 }): Promise<{
   ok: boolean;
   reason?: string;
@@ -249,6 +251,14 @@ export async function baAnalyzeEpic(opts: {
   proposalReady: boolean;
   migration?: string;
 }> {
+  if (!opts.dryRun && !hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_ba_apply",
+      operation: "external_record_update",
+      workItemId: opts.epicKey,
+      previewFingerprint: opts.previewFingerprint,
+    }), () => baAnalyzeEpic(opts));
+  }
   assertRole("ba", "read-epic");
   const { epicIssue, children, flags } = await traced(opts.trace, "jira-status", async () => {
     const epicIssue = await opts.provider.getIssue(opts.epicKey);
@@ -464,6 +474,7 @@ export async function architectPlanEpic(opts: {
   dryRun?: boolean;
   trace?: PreviewTrace;
   workPackageId?: string;
+  previewFingerprint?: string;
 }): Promise<{
   workPackages: PraxisWorkPackage[];
   taskKeys: string[];
@@ -526,6 +537,13 @@ export async function claimWorkPackage(opts: {
   }
   if (existing && existing.jiraAccountId === opts.accountId) {
     return existing;
+  }
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_developer_claim",
+      operation: "external_state_change",
+      workItemId: opts.wpKey,
+    }), () => claimWorkPackage(opts));
   }
   const token = randomUUID();
   const manifest =
@@ -637,11 +655,19 @@ export async function claimWorkPackage(opts: {
 export async function releaseWorkPackage(opts: {
   provider: JiraProvider;
   wpKey: string;
+  repo: string;
   confirm: boolean;
   force?: boolean;
 }): Promise<void> {
   if (!opts.confirm) {
     throw new Error("release-work-package requires --confirm");
+  }
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_developer_release",
+      operation: "external_state_change",
+      workItemId: opts.wpKey,
+    }), () => releaseWorkPackage(opts));
   }
   if (opts.force && !opts.confirm) {
     throw new Error("force-release requires --confirm");
@@ -713,6 +739,13 @@ export async function qaVerifyWorkPackage(opts: {
   addTests?: string[];
   findings?: Array<{ fingerprint: string; blocking: boolean; summary: string }>;
 }): Promise<QualityWpReport> {
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_quality_verify",
+      operation: "validation_with_side_effects",
+      workItemId: opts.wpKey,
+    }), () => qaVerifyWorkPackage(opts));
+  }
   const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
 
   assertRole("qa", "qa-report");
@@ -792,6 +825,9 @@ export async function simulateClaimRace(opts: {
   wpKey: string;
   first: WorkPackageClaim;
 }): Promise<"blocked"> {
+  if (!hasMutationLease()) {
+    throw new Error("APPROVAL_REQUIRED: direct mutation is not authorized");
+  }
   await opts.provider.setIssueProperty(opts.wpKey, "praxis.claim", {
     ...opts.first,
     claimToken: randomUUID(),

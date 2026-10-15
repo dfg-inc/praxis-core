@@ -22,6 +22,9 @@
     "dist",
     "README.md"
   ],
+  "dependencies": {
+    "@praxis/contracts": "*"
+  },
   "devDependencies": {
     "@types/node": "^22.20.0",
     "typescript": "~5.8.3",

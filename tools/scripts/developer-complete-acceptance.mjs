@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
@@ -145,7 +145,7 @@ async function setupReady() {
   if (!applied.ok) fail(`architect apply failed: ${JSON.stringify(applied)}`);
   const wp = (applied.workPackages ?? []).find((w) => w.id === WP_ID);
   if (!wp?.jiraIssueKey) fail(`missing Jira WP: ${JSON.stringify(applied.workPackages)}`);
-  const provider = createJiraProvider({ config: JIRA_CFG, fetchImpl });
+  const provider = createFixtureJiraProvider({ config: JIRA_CFG, fetchImpl });
   await developerClaimOp({
     repo,
     wp: WP_ID,

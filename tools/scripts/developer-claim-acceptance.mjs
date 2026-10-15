@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { createJiraProvider, createMockFetch, createMockJiraState, LOCALIZED_RU_TRANSITIONS } from "@praxis/jira";
+import { createFixtureJiraProvider, createMockFetch, createMockJiraState, LOCALIZED_RU_TRANSITIONS } from "@praxis/jira";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
@@ -122,7 +122,7 @@ async function setupReady(overrides = {}) {
   if (!wp?.jiraIssueKey || wp.jiraIssueKey === "PLANNED") {
     fail(`missing Jira WP key: ${JSON.stringify(applied.workPackages)}`);
   }
-  const claimProvider = createJiraProvider({
+  const claimProvider = createFixtureJiraProvider({
     config: { ...JIRA_CFG, transitions: overrides.transitions ?? {} },
     fetchImpl,
   });
