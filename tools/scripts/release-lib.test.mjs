@@ -16,6 +16,7 @@ import {
   listInternalDependencyRefs,
   syncAllVersions,
   syncInternalWorkspaceDeps,
+  syncVendorPins,
 } from "./release-lib.mjs";
 
 describe("isValidSemVer", () => {
@@ -45,7 +46,7 @@ describe("applyVersionToData", () => {
     expect(data.version).toBe("0.2.0-alpha.1");
   });
 
-  it("updates catalog plugin versions", () => {
+  it("leaves other products' catalog versions unchanged", () => {
     const data = {
       updated: "2020-01-01",
       plugins: [
@@ -54,10 +55,10 @@ describe("applyVersionToData", () => {
       ],
     };
     expect(applyVersionToData("packages/catalog/catalog.json", data, "9.0.0")).toBe(
-      true,
+      false,
     );
-    expect(data.plugins.every((p) => p.version === "9.0.0")).toBe(true);
-    expect(data.updated).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(data.plugins.map((p) => p.version)).toEqual(["0.1.0", "0.4.0"]);
+    expect(data.updated).toBe("2020-01-01");
   });
 
   it("updates marketplace.json plugin versions", () => {
@@ -241,21 +242,20 @@ describe("discover + sync on temp tree", () => {
         JSON.parse(
           readFileSync(join(root, "packages/catalog/catalog.json"), "utf8"),
         ),
-      ).versions.every((v) => v === "0.1.0-alpha.2"),
-    ).toBe(true);
+      ).versions,
+    ).toEqual(["0.4.0"]);
   });
 
-  it("rejects a stale vendor tarball pin", () => {
-    const root = mkdtempSync(join(tmpdir(), "praxis-vendor-"));
+  function writeIndependentRepo(root, { product, vendor, pin }) {
     mkdirSync(join(root, "vendor"), { recursive: true });
     writeFileSync(
       join(root, "package.json"),
       JSON.stringify(
         {
           name: "praxis-runtime",
-          version: "0.1.0-alpha.47",
+          version: product,
           dependencies: {
-            "@praxis/contracts": "file:vendor/praxis-contracts-0.1.0-alpha.45.tgz",
+            "@praxis/contracts": `file:vendor/praxis-contracts-${pin}.tgz`,
           },
         },
         null,
@@ -267,8 +267,8 @@ describe("discover + sync on temp tree", () => {
       JSON.stringify(
         {
           schemaVersion: 1,
-          policy: "lockstep",
-          version: "0.1.0-alpha.47",
+          policy: "independent",
+          version: product,
           repositories: [
             "praxis-core",
             "praxis-runtime",
@@ -282,17 +282,88 @@ describe("discover + sync on temp tree", () => {
         2,
       ) + "\n",
     );
-    writeFileSync(join(root, "vendor", "praxis-contracts-0.1.0-alpha.45.tgz"), "stale");
+    writeFileSync(join(root, "vendor", `praxis-contracts-${pin}.tgz`), "vendor");
     writeFileSync(
       join(root, "vendor", "manifest.json"),
-      JSON.stringify({ version: "0.1.0-alpha.45", packages: ["@praxis/contracts"] }) + "\n",
+      JSON.stringify({ version: vendor, packages: ["@praxis/contracts"] }) + "\n",
     );
+  }
+
+  it("rejects a vendor pin that disagrees with the vendor manifest", () => {
+    const root = mkdtempSync(join(tmpdir(), "praxis-vendor-"));
+    writeIndependentRepo(root, {
+      product: "0.1.0-alpha.47",
+      vendor: "0.1.0-alpha.47",
+      pin: "0.1.0-alpha.45",
+    });
     const before = checkEcosystemRelease(root);
     expect(before.ok).toBe(false);
+    expect(before.mismatches.some((m) => m.kind === "vendor-pin" || m.kind === "stale-vendor-tarball")).toBe(
+      true,
+    );
+  });
+
+  it("allows this product to differ from a consistent Core vendor pin", () => {
+    const root = mkdtempSync(join(tmpdir(), "praxis-vendor-"));
+    writeIndependentRepo(root, {
+      product: "0.1.0-alpha.47",
+      vendor: "0.1.0-alpha.45",
+      pin: "0.1.0-alpha.45",
+    });
+    expect(checkEcosystemRelease(root).ok).toBe(true);
+    syncAllVersions(root, "0.1.0-alpha.48", { dryRun: false });
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    expect(pkg.version).toBe("0.1.0-alpha.48");
+    expect(pkg.dependencies["@praxis/contracts"]).toBe(
+      "file:vendor/praxis-contracts-0.1.0-alpha.45.tgz",
+    );
+    const pins = syncVendorPins(root, "0.1.0-alpha.46", { dryRun: false });
+    expect(pins.changed).toContain("package.json");
+    const after = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    expect(after.version).toBe("0.1.0-alpha.48");
+    expect(after.dependencies["@praxis/contracts"]).toBe(
+      "file:vendor/praxis-contracts-0.1.0-alpha.46.tgz",
+    );
+    expect(JSON.parse(readFileSync(join(root, "vendor", "manifest.json"), "utf8")).version).toBe(
+      "0.1.0-alpha.46",
+    );
+  });
+
+  it("does not require a sibling checkout to use the same version", () => {
+    const parent = mkdtempSync(join(tmpdir(), "praxis-siblings-"));
+    const root = join(parent, "praxis-runtime");
+    mkdirSync(root, { recursive: true });
+    writeIndependentRepo(root, {
+      product: "0.1.0-alpha.47",
+      vendor: "0.1.0-alpha.45",
+      pin: "0.1.0-alpha.45",
+    });
+    const sibling = join(parent, "praxis-ba");
+    mkdirSync(sibling, { recursive: true });
+    writeFileSync(
+      join(sibling, "ecosystem.json"),
+      JSON.stringify({ schemaVersion: 1, policy: "independent", version: "0.1.0-alpha.40" }) + "\n",
+    );
+    expect(checkEcosystemRelease(root).ok).toBe(true);
+  });
+
+  it("rejects a lockstep policy and does not retarget vendor pins", () => {
+    const root = mkdtempSync(join(tmpdir(), "praxis-vendor-"));
+    writeIndependentRepo(root, {
+      product: "0.1.0-alpha.47",
+      vendor: "0.1.0-alpha.45",
+      pin: "0.1.0-alpha.45",
+    });
+    const ecosystem = JSON.parse(readFileSync(join(root, "ecosystem.json"), "utf8"));
+    ecosystem.policy = "lockstep";
+    writeFileSync(join(root, "ecosystem.json"), JSON.stringify(ecosystem, null, 2) + "\n");
+    const before = checkEcosystemRelease(root);
+    expect(before.ok).toBe(false);
+    expect(before.mismatches.some((m) => m.kind === "ecosystem" && m.found === "lockstep")).toBe(true);
     syncAllVersions(root, "0.1.0-alpha.47", { dryRun: false });
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
     expect(pkg.dependencies["@praxis/contracts"]).toBe(
-      "file:vendor/praxis-contracts-0.1.0-alpha.47.tgz",
+      "file:vendor/praxis-contracts-0.1.0-alpha.45.tgz",
     );
   });
 

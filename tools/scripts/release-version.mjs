@@ -210,7 +210,7 @@ function cmdCheck() {
 function cmdRelease(version) {
   if (!dryRun) {
     fail(
-      "live release from this command is disabled. It pushed origin before GitLab. Use set-ecosystem-version.mjs, then the GitLab-first lockstep release.",
+      "live release from this command is disabled. It pushed origin before GitLab. Set this repository's version, push GitLab, then publish GitHub.",
     );
   }
   if (!version) fail("usage: release-version <semver> [--dry-run]");
