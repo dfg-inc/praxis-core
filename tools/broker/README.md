@@ -6,9 +6,10 @@ Secure mode requires a trust boundary the agent cannot cross.
 
 | Component | Identity | Responsibility |
 | --- | --- | --- |
-| `praxis-broker.mjs` | broker UID | Show exact plan; approve/reject; sign Ed25519 authorization; audit |
+| `praxis-broker.mjs` | broker UID | Show exact plan; `serve-operator` Unix socket; machine approve only with flag; audit |
+| `praxis-operator-console.mjs` | operator / broker identity | Human show/reject/approve via operator socket (TTY alone is not auth) |
 | `praxis-executor.mjs` | broker UID | Hold Jira/Git credentials; verify token; consume ledger; perform writes |
-| Agent process | agent UID | Propose plans into the shared inbox only |
+| Agent process | agent UID | Propose plans into the shared inbox only; must not reach `operator.sock` or Docker |
 
 ## macOS / Linux without permanent system users
 

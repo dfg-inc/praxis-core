@@ -79,8 +79,8 @@ const interactive = spawnSync("node", [broker, "approve-interactive", "--plan-id
 });
 check("piped_interactive_approve_refused", (interactive.status ?? 1) !== 0);
 check(
-  "piped_error_mentions_tty",
-  /TTY|tty|interactive/.test(`${interactive.stdout}${interactive.stderr}`),
+  "approve_interactive_disabled_for_pty_spoof",
+  /PTY|operator-console|disabled/i.test(`${interactive.stdout}${interactive.stderr}`),
 );
 
 const threat = contracts.assessDeploymentThreats({ dockerSockets: ["/no/such/docker.sock"] });

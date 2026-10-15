@@ -6,27 +6,31 @@
  * Commands:
  *   propose  --plan <file>     record a pending plan under the shared inbox
  *   show     --plan-id <id>    render the exact plan for the human operator
- *   approve  --plan-id <id> --approver <id>   machine sign under broker identity (not a human proof)
- *   approve-interactive --plan-id <id>        trusted TTY human channel (requires typed fingerprint)
+ *   approve  --plan-id <id> --approver <id>   machine sign (PRAXIS_BROKER_MACHINE_APPROVE=1 only)
+ *   approve-interactive                       REFUSED — TTY alone is not human authentication
+ *   serve-operator                            Unix socket in trusted dir for human console
  *   reject   --plan-id <id>
  *   health
+ *
+ * Humans must use praxis-operator-console.mjs against serve-operator.
  */
 import {
   accessSync,
+  chmodSync,
   constants,
+  existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
-  writeFileSync,
   readdirSync,
-  existsSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { createInterface } from "node:readline";
+import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { stdin as input, stdout as output } from "node:process";
 
 const require = createRequire(import.meta.url);
 
@@ -160,7 +164,7 @@ function cmdApprove() {
   assertBrokerIdentity();
   if (process.env.PRAXIS_BROKER_MACHINE_APPROVE !== "1") {
     throw new Error(
-      "machine approve requires PRAXIS_BROKER_MACHINE_APPROVE=1 under the broker identity; humans must use approve-interactive",
+      "machine approve requires PRAXIS_BROKER_MACHINE_APPROVE=1 under the broker identity; humans must use praxis-operator-console.mjs",
     );
   }
   const planId = arg("--plan-id");
@@ -170,35 +174,86 @@ function cmdApprove() {
   console.log(JSON.stringify(signApprovedPlan(plan, approver, "machine")));
 }
 
-async function cmdApproveInteractive() {
+function cmdApproveInteractive() {
+  throw new Error(
+    "approve-interactive is disabled: a PTY can spoof TTY input. Use praxis-operator-console.mjs against serve-operator on the broker operator socket",
+  );
+}
+
+function operatorSocketPath() {
+  return join(trustedRoot(), "operator.sock");
+}
+
+function handleOperatorMessage(message) {
   assertBrokerIdentity();
-  if (!input.isTTY || !output.isTTY) {
-    throw new Error("interactive approval requires a trusted broker TTY; piped/agent stdin is refused");
+  if (message.cmd === "show") {
+    const plan = ActionPlanSchema.parse(JSON.parse(readFileSync(pendingPath(message.planId), "utf8")));
+    return {
+      ok: true,
+      planId: plan.planId,
+      fingerprint: plan.fingerprint,
+      text: renderActionPlanForHuman(plan),
+    };
   }
-  const planId = arg("--plan-id");
-  const approver = arg("--approver") || process.env.USER || "operator";
-  if (!planId) throw new Error("--plan-id is required");
-  const plan = ActionPlanSchema.parse(JSON.parse(readFileSync(pendingPath(planId), "utf8")));
-  output.write(`${renderActionPlanForHuman(plan)}\n\n`);
-  output.write(`Type exactly: APPROVE ${plan.fingerprint}\n`);
-  output.write("Or type REJECT to refuse.\n");
-  const rl = createInterface({ input, output, terminal: true });
-  const answer = await new Promise((resolvePromise) => {
-    rl.question("> ", (line) => {
-      rl.close();
-      resolvePromise(String(line || "").trim());
+  if (message.cmd === "reject") {
+    const dest = pendingPath(message.planId);
+    if (existsSync(dest)) {
+      mkdirSync(join(sharedRoot(), "rejected"), { recursive: true });
+      renameSync(dest, join(sharedRoot(), "rejected", `${message.planId}.json`));
+    }
+    mkdirSync(join(trustedRoot(), "audit"), { recursive: true });
+    writeFileSync(
+      join(trustedRoot(), "audit", `${message.planId}.json`),
+      `${JSON.stringify({
+        planId: message.planId,
+        state: "rejected",
+        approver: message.approver || "operator",
+        channel: "operator-socket",
+        at: new Date().toISOString(),
+      }, null, 2)}\n`,
+    );
+    return { ok: true, planId: message.planId, state: "rejected", channel: "operator-socket" };
+  }
+  if (message.cmd === "approve") {
+    const plan = ActionPlanSchema.parse(JSON.parse(readFileSync(pendingPath(message.planId), "utf8")));
+    if (message.fingerprint !== plan.fingerprint) {
+      throw new Error("operator socket approval fingerprint mismatch");
+    }
+    return signApprovedPlan(plan, message.approver || "operator", "operator-socket");
+  }
+  throw new Error(`unsupported operator command ${message.cmd}`);
+}
+
+function cmdServeOperator() {
+  assertBrokerIdentity();
+  const socketPath = operatorSocketPath();
+  try {
+    unlinkSync(socketPath);
+  } catch {
+    /* absent */
+  }
+  const server = createServer((socket) => {
+    let buf = "";
+    socket.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      const nl = buf.indexOf("\n");
+      if (nl < 0) return;
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      let response;
+      try {
+        response = handleOperatorMessage(JSON.parse(line));
+      } catch (error) {
+        response = { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+      socket.write(`${JSON.stringify(response)}\n`);
+      socket.end();
     });
   });
-  if (answer === `REJECT` || answer === "reject") {
-    mkdirSync(join(sharedRoot(), "rejected"), { recursive: true });
-    renameSync(pendingPath(planId), join(sharedRoot(), "rejected", `${planId}.json`));
-    console.log(JSON.stringify({ ok: true, planId, state: "rejected", channel: "interactive-tty" }));
-    return;
-  }
-  if (answer !== `APPROVE ${plan.fingerprint}`) {
-    throw new Error("operator confirmation did not match the exact plan fingerprint");
-  }
-  console.log(JSON.stringify(signApprovedPlan(plan, approver, "interactive-tty")));
+  server.listen(socketPath, () => {
+    chmodSync(socketPath, 0o600);
+    console.log(JSON.stringify({ ok: true, listening: socketPath, channel: "operator-socket" }));
+  });
 }
 
 function cmdReject() {
@@ -241,11 +296,14 @@ async function main() {
   if (cmd === "propose") cmdPropose();
   else if (cmd === "show") cmdShow();
   else if (cmd === "approve") cmdApprove();
-  else if (cmd === "approve-interactive") await cmdApproveInteractive();
+  else if (cmd === "approve-interactive") cmdApproveInteractive();
+  else if (cmd === "serve-operator") cmdServeOperator();
   else if (cmd === "reject") cmdReject();
   else if (cmd === "health") cmdHealth();
   else {
-    console.error("usage: praxis-broker.mjs propose|show|approve|approve-interactive|reject|health");
+    console.error(
+      "usage: praxis-broker.mjs propose|show|approve|approve-interactive|serve-operator|reject|health",
+    );
     process.exit(2);
   }
 }
