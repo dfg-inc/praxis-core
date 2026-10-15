@@ -1,0 +1,5 @@
+{
+  "name": "praxis-approval",
+  "version": "0.1.0-alpha.47",
+  "description": "Host permission prompts for Praxis mutations. Does not grant approval by itself."
+}
