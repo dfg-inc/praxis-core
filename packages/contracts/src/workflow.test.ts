@@ -515,9 +515,9 @@ describe("capabilities, Jira failure, compatibility", () => {
       ],
       expectedResults: ["Users exist and the summary says completed"],
       serviceIds: ["api", "frontend"],
-      confirmedBehavior: true,
+      confirmedBehavior: false,
     }).state;
-    expect(state.stories[0]?.confirmedBehavior).toBe(true);
+    expect(state.stories[0]?.confirmedBehavior).toBe(false);
     state = applyWorkflowCommand(state, {
       action: "set-service",
       service: {

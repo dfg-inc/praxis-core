@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
+import { accessSync, constants } from "node:fs";
 import { z } from "zod";
 import {
   assertStoryNarrative,
@@ -75,6 +76,9 @@ export const WorkItemSourceSchema = z.enum([
   "jira",
 ]);
 
+export const WorkTrackingProviderSchema = z.enum(["local", "jira"]);
+export type WorkTrackingProvider = z.infer<typeof WorkTrackingProviderSchema>;
+
 const TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
   draft: ["clarification_required", "ready", "blocked"],
   clarification_required: ["draft", "ready", "blocked"],
@@ -103,6 +107,14 @@ export const WorkItemSchema = z.object({
   source: WorkItemSourceSchema,
   /** Optional external key. Never the work item's identity. */
   jiraIssueKey: z.string().min(1).optional(),
+  /** Tracker that owns the external record. Local work leaves this unset. */
+  provider: WorkTrackingProviderSchema.optional(),
+  /** External record id (Jira id). Not the Praxis id. */
+  externalId: z.string().min(1).optional(),
+  /** Human-facing external number (PROJ-1, STR0001234). */
+  externalNumber: z.string().min(1).optional(),
+  /** Instance base URL or tenant id. Distinguishes two trackers of the same kind. */
+  instanceId: z.string().min(1).optional(),
   status: WorkflowStageSchema,
   revision: z.number().int().nonnegative(),
 });
@@ -177,6 +189,19 @@ export const RoleHandoffSchema = z.object({
   openQuestions: z.array(z.string()),
   risks: z.array(z.string()),
   blockers: z.array(z.string()),
+  decisionRecords: z
+    .array(
+      z.object({
+        id: z.string(),
+        statement: z.string(),
+        confirmed: z.boolean(),
+        revision: z.number().int().positive(),
+        rationale: z.string().optional(),
+        notes: z.string().optional(),
+      }),
+    )
+    .default([]),
+  notes: z.string().optional(),
   nextActions: z.array(z.string()),
   readiness: z.enum(["ready", "partial", "blocked"]),
   evidenceRefs: z.array(z.string()),
@@ -252,8 +277,14 @@ export const WorkflowStateSchema = z.object({
       statement: z.string(),
       confirmed: z.boolean(),
       revision: z.number().int().positive(),
+      rationale: z.string().optional(),
+      notes: z.string().optional(),
     }),
   ),
+  openQuestions: z.array(z.string()).default([]),
+  risks: z.array(z.string()).default([]),
+  blockers: z.array(z.string()).default([]),
+  notes: z.string().optional(),
   assumptions: z.array(
     z.object({
       id: z.string(),
@@ -463,6 +494,108 @@ function fingerprintPayload(payload: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`;
 }
 
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) {
+      if (source[key] !== undefined) out[key] = canonicalValue(source[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function storyGrantDigest(input: { storyId: string; revision: number; contentFingerprint: string }): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalValue(input))).digest("hex")}`;
+}
+
+function verifyStoryGrant(token: string, expectedFingerprint: string, storyId: string): void {
+  if (process.env.PRAXIS_APPROVAL_PRIVATE_KEY?.trim()) {
+    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval signing key is visible to this process; secure mode refuses");
+  }
+  const keyPath = process.env.PRAXIS_APPROVAL_PRIVATE_KEY_PATH?.trim();
+  if (keyPath) {
+    try {
+      accessSync(keyPath, constants.R_OK);
+      throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval signing key is visible to this process; secure mode refuses");
+    } catch (error) {
+      if (error instanceof WorkflowError) throw error;
+    }
+  }
+  const publicKey = process.env.PRAXIS_APPROVAL_PUBLIC_KEY?.trim();
+  if (!publicKey) {
+    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "story confirmation requires the approval public key");
+  }
+  let parsed: { body?: Record<string, unknown>; signature?: string };
+  try {
+    parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+  } catch {
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
+  }
+  if (!parsed?.body || typeof parsed.signature !== "string") {
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
+  }
+  const ok = verify(null, Buffer.from(JSON.stringify(canonicalValue(parsed.body))), createPublicKey(publicKey), Buffer.from(parsed.signature, "base64"));
+  if (!ok) throw new WorkflowError("APPROVAL_REQUIRED", "authorization signature is not valid");
+  const body = parsed.body;
+  if (body.planFingerprint !== expectedFingerprint || !Array.isArray(body.workItemIds) || !body.workItemIds.includes(storyId) || body.action !== "confirm-story") {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "authorization is not for this story revision");
+  }
+}
+
+export function storyContentFingerprint(story: {
+  id: string;
+  revision: number;
+  narrative: string;
+  objective: string;
+  acceptanceCriteria: unknown;
+  expectedResults: unknown;
+  assumptionIds: unknown;
+}): string {
+  return fingerprintPayload({
+    id: story.id,
+    revision: story.revision,
+    narrative: story.narrative,
+    objective: story.objective,
+    acceptanceCriteria: story.acceptanceCriteria,
+    expectedResults: story.expectedResults,
+    assumptionIds: story.assumptionIds,
+  });
+}
+
+export function exportWorkflowSnapshot(state: WorkflowState) {
+  return {
+    contract: "praxis.workflow.snapshot" as const,
+    version: WORKFLOW_CONTRACT_VERSION,
+    workflowId: state.workflowId,
+    decisions: state.decisions.map((decision) => ({ ...decision })),
+    openQuestions: [...state.openQuestions],
+    risks: [...state.risks],
+    blockers: [...state.blockers],
+    notes: state.notes,
+    stories: state.stories.map((story) => ({
+      id: story.id,
+      revision: story.revision,
+      confirmedBehavior: story.confirmedBehavior,
+      status: story.status,
+    })),
+  };
+}
+
+export function renderWorkflowSnapshotHtml(state: WorkflowState): string {
+  const snapshot = exportWorkflowSnapshot(state);
+  const decisions = snapshot.decisions
+    .map(
+      (decision) =>
+        `<li>${decision.id}: ${decision.statement} rationale=${decision.rationale ?? ""} notes=${decision.notes ?? ""}</li>`,
+    )
+    .join("");
+  const questions = snapshot.openQuestions.map((item) => `<li>${item}</li>`).join("");
+  return `<section><h1>Decisions</h1><ul>${decisions}</ul><h1>Open questions</h1><ul>${questions}</ul><p>${snapshot.notes ?? ""}</p></section>`;
+}
+
 export function createHandoff(
   state: WorkflowState,
   input: Omit<
@@ -476,7 +609,9 @@ export function createHandoff(
     | "fingerprint"
     | "supersedes"
     | "storyIds"
-  > & { supersedes?: string; storyIds?: string[] },
+    | "decisionRecords"
+    | "notes"
+  > & { supersedes?: string; storyIds?: string[]; decisionRecords?: RoleHandoff["decisionRecords"]; notes?: string },
 ): { state: WorkflowState; handoff: RoleHandoff; duplicate: boolean } {
   const body = {
     workflowId: state.workflowId,
@@ -489,10 +624,12 @@ export function createHandoff(
     storyIds: input.storyIds ?? [],
     artifactRefs: input.artifactRefs,
     decisions: input.decisions,
+    decisionRecords: input.decisionRecords ?? [],
     assumptions: input.assumptions,
     openQuestions: input.openQuestions,
     risks: input.risks,
     blockers: input.blockers,
+    ...(input.notes !== undefined ? { notes: input.notes } : {}),
     nextActions: input.nextActions,
     readiness: input.readiness,
     evidenceRefs: input.evidenceRefs,
@@ -827,6 +964,8 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     openQuestions: z.array(z.string()).default([]),
     assumptions: z.array(z.string()).default([]),
     blockers: z.array(z.string()).default([]),
+    risks: z.array(z.string()).optional(),
+    notes: z.string().optional(),
     readiness: z.enum(["ready", "partial", "blocked"]),
   }),
   z.object({
@@ -859,6 +998,22 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     id: z.string().min(1),
     statement: z.string().min(1),
     confirmed: z.boolean(),
+    rationale: z.string().optional(),
+    notes: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("record-context"),
+    openQuestions: z.array(z.string()).optional(),
+    risks: z.array(z.string()).optional(),
+    blockers: z.array(z.string()).optional(),
+    notes: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("confirm-story"),
+    id: StoryIdSchema,
+    revision: z.number().int().positive(),
+    contentFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    authorization: z.string().min(1),
   }),
   z.object({
     action: z.literal("record-implementation"),
@@ -998,6 +1153,8 @@ export function applyWorkflowCommand(
         statement: command.statement,
         confirmed: command.confirmed,
         revision: state.workItem.revision,
+        ...(command.rationale !== undefined ? { rationale: command.rationale } : {}),
+        ...(command.notes !== undefined ? { notes: command.notes } : {}),
       },
     ];
     let next: WorkflowState = { ...state, decisions };
@@ -1039,13 +1196,20 @@ export function applyWorkflowCommand(
         err instanceof Error ? err.message : "story narrative is not in the required form",
       );
     }
+    if (command.confirmedBehavior) {
+      throw new WorkflowError(
+        "STORY_CONFIRMATION_REQUIRED",
+        "creating a story cannot confirm its behavior; confirm the exact revision after review",
+      );
+    }
     if (state.stories.some((story) => story.id === command.id && story.status !== "superseded")) {
       throw new WorkflowError("DUPLICATE_STORY", `story ${command.id} already exists`);
     }
     const story = UserStorySchema.parse({
       ...command,
       revision: 1,
-      status: command.confirmedBehavior ? "confirmed" : "proposed",
+      confirmedBehavior: false,
+      status: "proposed",
       stale: false,
     });
     return {
@@ -1053,6 +1217,46 @@ export function applyWorkflowCommand(
       duplicate: false,
       result: { storyId: story.id, confirmedBehavior: story.confirmedBehavior },
     };
+  }
+  if (command.action === "record-context") {
+    return {
+      state: {
+        ...state,
+        openQuestions: command.openQuestions ?? state.openQuestions,
+        risks: command.risks ?? state.risks,
+        blockers: command.blockers ?? state.blockers,
+        ...(command.notes !== undefined ? { notes: command.notes } : {}),
+      },
+      duplicate: false,
+      result: { notes: command.notes ?? state.notes },
+    };
+  }
+  if (command.action === "confirm-story") {
+    const story = state.stories.find((item) => item.id === command.id && item.status !== "superseded");
+    if (!story) throw new WorkflowError("STORY_NOT_FOUND", `story ${command.id} is not in this workflow`);
+    if (story.revision !== command.revision) {
+      throw new WorkflowError("STORY_REVISION", `story ${command.id} revision ${story.revision} is not ${command.revision}`);
+    }
+    if (story.acceptanceCriteria.length < 1) {
+      throw new WorkflowError("STORY_CONFIRMATION_REQUIRED", `story ${command.id} has no acceptance criteria`);
+    }
+    const contentFingerprint = storyContentFingerprint(story);
+    if (contentFingerprint !== command.contentFingerprint) {
+      throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the reviewed revision`);
+    }
+    verifyStoryGrant(
+      command.authorization,
+      storyGrantDigest({
+        storyId: story.id,
+        revision: story.revision,
+        contentFingerprint,
+      }),
+      story.id,
+    );
+    const stories = state.stories.map((item) =>
+      item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" as const } : item,
+    );
+    return { state: { ...state, stories }, duplicate: false, result: { storyId: story.id, confirmedBehavior: true } };
   }
   if (command.action === "verify-stories" || command.action === "prepare-fix") {
     throw new WorkflowError(
@@ -1197,11 +1401,15 @@ export function applyWorkflowCommand(
           ),
           role: command.sourceRole,
         })),
-      decisions: state.decisions.filter((d) => d.confirmed).map((d) => d.id),
+      decisions: state.decisions.map((d) => d.id),
+      decisionRecords: state.decisions.map((d) => ({ ...d })),
       assumptions: command.assumptions,
-      openQuestions: command.openQuestions,
-      risks: [],
-      blockers: command.blockers,
+      openQuestions: command.openQuestions.length > 0 ? command.openQuestions : state.openQuestions,
+      risks: command.risks ?? state.risks,
+      blockers: command.blockers.length > 0 ? command.blockers : state.blockers,
+      ...(command.notes !== undefined || state.notes !== undefined
+        ? { notes: command.notes ?? state.notes }
+        : {}),
       nextActions: command.nextActions,
       readiness: command.readiness,
       evidenceRefs: state.implementationUnits
