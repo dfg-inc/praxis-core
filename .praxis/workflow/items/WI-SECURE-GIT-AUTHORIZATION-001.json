@@ -331,6 +331,81 @@
       ],
       "revision": 3,
       "fingerprint": "sha256:881bd5107b9c9e05618d5c4df3c81c1d53891d6858486214a8a7270f805c5e4b"
+    },
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-SECURE-GIT-AUTHORIZATION-001",
+      "workItemId": "WI-SECURE-GIT-AUTHORIZATION-001",
+      "handoffId": "HO-4",
+      "sourceRole": "developer",
+      "targetRole": "quality",
+      "serviceIds": [
+        "git-authorization"
+      ],
+      "requirementIds": [
+        "REQ-GIT-001",
+        "REQ-GIT-002",
+        "REQ-GIT-003"
+      ],
+      "acceptanceCriterionIds": [
+        "REQ-GIT-001-AC-01",
+        "REQ-GIT-001-AC-02",
+        "REQ-GIT-001-AC-03",
+        "REQ-GIT-001-AC-04",
+        "REQ-GIT-002-AC-01",
+        "REQ-GIT-002-AC-02",
+        "REQ-GIT-002-AC-03",
+        "REQ-GIT-002-AC-04",
+        "REQ-GIT-002-AC-05",
+        "REQ-GIT-003-AC-01",
+        "REQ-GIT-003-AC-02",
+        "REQ-GIT-003-AC-03"
+      ],
+      "storyIds": [],
+      "artifactRefs": [
+        {
+          "id": "IMPL-GIT-001",
+          "path": "packages/contracts/src/git-authorization.ts",
+          "revision": 1,
+          "role": "developer"
+        }
+      ],
+      "decisions": [
+        "DEC-GIT-001"
+      ],
+      "assumptions": [],
+      "openQuestions": [
+        "Should the executor stay in the Runtime process or move to the broker identity (needs a separate OS user, not available here)?"
+      ],
+      "risks": [
+        "The Runtime process runs as the same OS user as the agent here, so it is also the executor: verification (signature, scope, ledger) is real, OS isolation is not.",
+        "A pending plan the agent can write to the inbox must never be mistaken for an approval: only a token signed by the trust-anchor key counts.",
+        "Jira writes keep the older gate (stored approval plus env token): they are not covered by the inbox mechanism and cannot succeed in secure mode without it.",
+        "Same-user host: OS isolation is not proven; a person's approval is not exercised against Git plans."
+      ],
+      "blockers": [],
+      "decisionRecords": [
+        {
+          "id": "DEC-GIT-001",
+          "statement": "Protected Git writes use broker-inbox authorization in core's guardWrite, for every host (CLI, Code, Chat). On apply the Runtime derives a deterministic planId from (operation, repository, work item, previewFingerprint), builds the exact ActionPlan from the live preview (target, instance, revision, content), proposes it into the broker's pending inbox and refuses. After the owner approves in the broker, the next identical apply finds the broker-signed token by planId, verifies signature, expiry, plan binding and ledger, re-checks the live state equals the approved content, and only then runs the Git operation once under the mutation lease. Local operations carry instance local; push and merge request carry the remote identity. Tokens are never placed in MCP responses or the environment. The Runtime process is the executor in this deployment; a privileged out-of-process executor is the production path and stays BLOCKED on a separate OS identity.",
+          "confirmed": false,
+          "revision": 2,
+          "rationale": "One mechanism already exists for human grants (inbox plus signed token per plan). Reusing it gives per-request tokens, removes the process-env token, and keeps the agent a requester only. Putting it in guardWrite fixes CLI, Code and Chat together. The stored host-approval file is agent-writable and is not an authority in secure mode. Deriving planId from the request makes replay idempotent and a changed request a new plan."
+        }
+      ],
+      "notes": "F-GIT-001 fixed in core fd42b46: a pending plan that differs from the Runtime's rebuilt plan is replaced, and an approved plan whose wording differs from the rebuilt one is refused before the approval is consumed. Two failing tests reproduce it on the previous commit; 22 contracts tests and accept:git-authorization pass. The question whether Jira writes should use the same inbox mechanism stays open: it is a product follow-up.",
+      "resolved": [],
+      "nextActions": [
+        "Re-verify REQ-GIT-001-AC-03",
+        "Re-run core and runtime verification"
+      ],
+      "readiness": "ready",
+      "evidenceRefs": [
+        "git-authorization:packages/contracts/src/git-authorization.ts"
+      ],
+      "revision": 4,
+      "fingerprint": "sha256:292bce6413c1edf1650e175d8ffa8eadde4a934515ff1b3697e5f6c603e369c7"
     }
   ],
   "findings": [
@@ -343,16 +418,30 @@
         "git-authorization"
       ],
       "owner": "developer",
-      "summary": "A look-alike plan written to pending/ by the agent is shown to the owner and can be executed.",
+      "summary": "A look-alike plan written to pending/ by the agent could be shown to the owner and executed.",
       "evidence": [
-        "same planId derivable from public fields; Runtime kept an existing live pending plan regardless of content",
-        "two unit tests fail on HEAD"
+        "fixed in fd42b46; two tests failing on the previous commit pass; accept:git-authorization passes"
+      ],
+      "status": "resolved"
+    },
+    {
+      "id": "F-GIT-002",
+      "requirementIds": [
+        "REQ-GIT-001"
+      ],
+      "serviceIds": [
+        "git-authorization"
+      ],
+      "owner": "architect",
+      "summary": "Jira protected writes still use the stored-approval-plus-env-token gate and cannot succeed in secure mode.",
+      "evidence": [
+        "only Git operations use the broker-inbox mechanism; guardWrite keeps the legacy path for the rest"
       ],
       "status": "open",
-      "severity": "high",
-      "expected": "The owner is shown exactly the plan the Runtime builds; an approved plan whose wording differs is refused",
-      "observed": "Existing pending plan kept; execution checked content but not the plan's own wording",
-      "suggestion": "Replace a pending plan that differs from the rebuilt one; refuse execution unless the stored plan equals the rebuilt plan"
+      "severity": "medium",
+      "expected": "A decision on moving tracker writes to per-request broker authorization",
+      "observed": "Not covered; documented as out of scope",
+      "suggestion": "Architect decision and a separate Work Item"
     }
   ],
   "verdicts": [
@@ -458,6 +547,107 @@
         "REQ-GIT-003"
       ],
       "stale": false
+    },
+    {
+      "id": "V-SERVICE-git-authorization-6",
+      "scope": "service",
+      "scopeId": "git-authorization",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "GIT-003-AC03-r2 PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-GIT-001",
+        "REQ-GIT-002",
+        "REQ-GIT-003"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-REQ-GIT-001-7",
+      "scope": "requirement",
+      "scopeId": "REQ-GIT-001",
+      "verdict": "PASS",
+      "evidenceRefs": [
+        "independentRerun:true",
+        "requirement:REQ-GIT-001@1",
+        "GIT-001-AC01-r2:PASS",
+        "GIT-001-AC02-r2:PASS",
+        "GIT-001-AC03-r2:PASS",
+        "GIT-001-AC04-r2:PASS"
+      ],
+      "requirementIds": [
+        "REQ-GIT-001"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-REQ-GIT-002-8",
+      "scope": "requirement",
+      "scopeId": "REQ-GIT-002",
+      "verdict": "PASS",
+      "evidenceRefs": [
+        "independentRerun:true",
+        "requirement:REQ-GIT-002@1",
+        "GIT-002-AC01-r2:PASS",
+        "GIT-002-AC02-r2:PASS",
+        "GIT-002-AC03-r2:PASS",
+        "GIT-002-AC04-r2:PASS",
+        "GIT-002-AC05-r2:PASS"
+      ],
+      "requirementIds": [
+        "REQ-GIT-002"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-REQ-GIT-003-9",
+      "scope": "requirement",
+      "scopeId": "REQ-GIT-003",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "independentRerun:true",
+        "GIT-003-AC03-r2 PASS_WITH_RISKS",
+        "ac-not-verified:REQ-GIT-003-AC-03",
+        "requirement:REQ-GIT-003@1",
+        "GIT-003-AC01-r2:PASS",
+        "GIT-003-AC02-r2:PASS",
+        "GIT-003-AC03-r2:PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-GIT-003"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-STORY-10",
+      "scope": "feature",
+      "scopeId": "WI-SECURE-GIT-AUTHORIZATION-001",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "testsGreen:true",
+        "green tests are not story evidence",
+        "independentRerun:true",
+        "GIT-003-AC03-r2 PASS_WITH_RISKS",
+        "GIT-001-AC01-r2:PASS",
+        "GIT-001-AC02-r2:PASS",
+        "GIT-001-AC03-r2:PASS",
+        "GIT-001-AC04-r2:PASS",
+        "GIT-002-AC01-r2:PASS",
+        "GIT-002-AC02-r2:PASS",
+        "GIT-002-AC03-r2:PASS",
+        "GIT-002-AC04-r2:PASS",
+        "GIT-002-AC05-r2:PASS",
+        "GIT-003-AC01-r2:PASS",
+        "GIT-003-AC02-r2:PASS",
+        "GIT-003-AC03-r2:PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-GIT-001",
+        "REQ-GIT-002",
+        "REQ-GIT-003"
+      ],
+      "stale": false
     }
   ],
   "decisions": [
@@ -492,15 +682,14 @@
     {
       "requirementId": "REQ-GIT-001",
       "acceptanceCriterionId": "REQ-GIT-001-AC-01",
-      "scenarioId": "GIT-001-AC01",
+      "scenarioId": "GIT-001-AC01-r2",
       "kind": "contract",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "accept:git-authorization step 1: unapproved publish -> APPROVAL_REQUIRED, exact plan in pending/, HEAD/refs/tree/remote unchanged",
-        "contracts test: proposes the exact plan, refuses, writes nothing"
+        "fresh run after the fix: accept:git-authorization step 1 (unapproved publish refused, exact plan proposed, nothing changed); contracts git-authorization tests 22/22"
       ],
       "status": "PASS",
       "critical": false
@@ -508,15 +697,14 @@
     {
       "requirementId": "REQ-GIT-001",
       "acceptanceCriterionId": "REQ-GIT-001-AC-02",
-      "scenarioId": "GIT-001-AC02",
+      "scenarioId": "GIT-001-AC02-r2",
       "kind": "contract",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "steps 4,5b,8: approved commit, push and merge request executed once through the packaged MCPB with the real broker program",
-        "no token or key material in any MCP response (noToken check)"
+        "steps 4,5b,8: approved commit, push and merge request executed once through the packaged MCPB with the real broker program; no token or key material in any response"
       ],
       "status": "PASS",
       "critical": false
@@ -524,32 +712,30 @@
     {
       "requirementId": "REQ-GIT-001",
       "acceptanceCriterionId": "REQ-GIT-001-AC-03",
-      "scenarioId": "GIT-001-AC03",
+      "scenarioId": "GIT-001-AC03-r2",
       "kind": "security",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "Quality attack: an agent writes a look-alike plan (same planId, same signed content, reassuring summary and description) into pending/ before the Runtime proposes; the Runtime kept it, so the owner is shown the agent's words, and an approved look-alike executes",
-        "reproduced by two unit tests that fail on commit HEAD: replaces a look-alike plan; refuses an approved look-alike plan"
+        "the two look-alike tests that failed on the previous commit now pass on fd42b46: a differing pending plan is replaced, an approved plan whose wording differs is refused before consumption",
+        "binding fields verified per request: repository, operation, action, work item, instance (local or remote identity), targets, revision, preview fingerprint, plan fingerprint"
       ],
-      "findingId": "F-GIT-001",
-      "status": "FAIL",
+      "status": "PASS",
       "critical": false
     },
     {
       "requirementId": "REQ-GIT-001",
       "acceptanceCriterionId": "REQ-GIT-001-AC-04",
-      "scenarioId": "GIT-001-AC04",
+      "scenarioId": "GIT-001-AC04-r2",
       "kind": "negative",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "step 12: no broker -> APPROVAL_ISOLATION_UNAVAILABLE, nothing changed",
-        "contracts test: missing trust anchor or unisolated host fails closed"
+        "step 12 no broker; contracts tests: missing trust anchor and unisolated host fail closed with no side effect"
       ],
       "status": "PASS",
       "critical": false
@@ -557,14 +743,14 @@
     {
       "requirementId": "REQ-GIT-002",
       "acceptanceCriterionId": "REQ-GIT-002-AC-01",
-      "scenarioId": "GIT-002-AC01",
+      "scenarioId": "GIT-002-AC01-r2",
       "kind": "negative",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "step 6: commit approval does not authorize push; commit token copied under the push plan refused; step 8: push approval does not authorize merge request"
+        "step 6: commit approval is not a push approval; copied token refused; step 8: push approval is not a merge request approval"
       ],
       "status": "PASS",
       "critical": false
@@ -572,14 +758,14 @@
     {
       "requirementId": "REQ-GIT-002",
       "acceptanceCriterionId": "REQ-GIT-002-AC-02",
-      "scenarioId": "GIT-002-AC02",
+      "scenarioId": "GIT-002-AC02-r2",
       "kind": "negative",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "steps 5a,7: changed files and changed remote identity refused, HEAD and remote unchanged, approval not burned (5b executes afterwards)"
+        "steps 5a,7: changed files and changed remote identity refused with HEAD and remote unchanged; approval not burned"
       ],
       "status": "PASS",
       "critical": false
@@ -587,14 +773,14 @@
     {
       "requirementId": "REQ-GIT-002",
       "acceptanceCriterionId": "REQ-GIT-002-AC-03",
-      "scenarioId": "GIT-002-AC03",
+      "scenarioId": "GIT-002-AC03-r2",
       "kind": "contract",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "step 4: replay returned the recorded result, one ledger entry, no change; contracts test: two simultaneous executions run once"
+        "step 4 replay; contracts test: two simultaneous executions of one approval run once"
       ],
       "status": "PASS",
       "critical": false
@@ -602,14 +788,14 @@
     {
       "requirementId": "REQ-GIT-002",
       "acceptanceCriterionId": "REQ-GIT-002-AC-04",
-      "scenarioId": "GIT-002-AC04",
+      "scenarioId": "GIT-002-AC04-r2",
       "kind": "negative",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "step 3 REJECT and step 10 expiry: refused, snapshots equal before and after"
+        "step 3 REJECT and step 10 expiry refused, snapshots equal"
       ],
       "status": "PASS",
       "critical": false
@@ -617,14 +803,14 @@
     {
       "requirementId": "REQ-GIT-002",
       "acceptanceCriterionId": "REQ-GIT-002-AC-05",
-      "scenarioId": "GIT-002-AC05",
+      "scenarioId": "GIT-002-AC05-r2",
       "kind": "contract",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "step 9: two repositories and two work packages in one session, each consumed once, replays changed nothing"
+        "step 9: two repositories and two work packages in one session, each consumed once"
       ],
       "status": "PASS",
       "critical": false
@@ -632,14 +818,14 @@
     {
       "requirementId": "REQ-GIT-003",
       "acceptanceCriterionId": "REQ-GIT-003-AC-01",
-      "scenarioId": "GIT-003-AC01",
+      "scenarioId": "GIT-003-AC01-r2",
       "kind": "security",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "steps 13-15: production MCPB ignores the override, repo .env cannot enable it, MCPB and role ZIPs carry no signer or keys; test-broker is imported by no product source"
+        "steps 13-15; production bundle also refuses machine-channel approvals; no product source imports test-broker; MCPB and role ZIPs scanned clean"
       ],
       "status": "PASS",
       "critical": false
@@ -647,14 +833,14 @@
     {
       "requirementId": "REQ-GIT-003",
       "acceptanceCriterionId": "REQ-GIT-003-AC-02",
-      "scenarioId": "GIT-003-AC02",
+      "scenarioId": "GIT-003-AC02-r2",
       "kind": "negative",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "every negative step compares head, branch, status, refs, remote refs, remote url and pull requests before and after"
+        "negative steps compare head, branch, status, refs, remote refs, remote url and pull requests before and after"
       ],
       "status": "PASS",
       "critical": false
@@ -662,15 +848,16 @@
     {
       "requirementId": "REQ-GIT-003",
       "acceptanceCriterionId": "REQ-GIT-003-AC-03",
-      "scenarioId": "GIT-003-AC03",
+      "scenarioId": "GIT-003-AC03-r2",
       "kind": "contract",
       "serviceId": "git-authorization",
       "repository": "praxis-core",
       "implementationPath": "",
       "testRef": "",
       "evidence": [
-        "tool-origins-report.mjs: six local origins offer the same 52 tools (one digest); doctor reports build.tools count and digest",
-        "risk: a live Chat vs Code comparison on the installed Desktop was not run from this session"
+        "report:tool-origins: six local origins offer the same 52 tools (digest d744e798...); doctor reports build.tools and build.kind",
+        "cause of the Chat/Code difference: tool registry snapshot taken at session start; Desktop has one Praxis server",
+        "risk: the installed Desktop (bundle 54b0a3ad) does not yet have the new build; a live comparison after installing it was not possible from this session"
       ],
       "status": "PASS_WITH_RISKS",
       "critical": false
