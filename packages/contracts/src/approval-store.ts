@@ -21,6 +21,7 @@ import {
   securityMode,
   verifyAuthorization,
 } from "./broker.js";
+import { decisionKindFor, type DecisionKind } from "./action-plan.js";
 import { WorkflowError } from "./workflow.js";
 
 export const APPROVAL_RECORD_CONTRACT = "praxis.approval.record";
@@ -59,6 +60,8 @@ export type MutationRequest = {
   resumeInFlight?: boolean;
   /** Broker artifact. Required in secure mode. Ignored in compatibility mode. */
   authorization?: string;
+  /** What kind of decision this write needs. Derived from operation and action when not given. */
+  decisionKind?: DecisionKind;
 };
 
 export type MutationInspection =
@@ -357,6 +360,7 @@ function runSecureMutation<T>(request: MutationRequest, write: () => T): T {
     planId: request.planId,
     targets: body.targets,
     contentDigest: body.contentDigest,
+    decisionKind: decisionKindFor(request.operation, request.action, request.decisionKind),
   });
   const requestFingerprint = executionRequestFingerprint({
     consumptionId: body.consumptionId,

@@ -140,6 +140,7 @@ function signApprovedPlan(plan, approver, channel) {
     repositories: plan.repositories,
     action: approvedAction.action,
     targets: approvedAction.targets,
+    decisionKind: plan.decisionKind,
     content,
     contentDigest: approvedContentDigest(content),
     approver,

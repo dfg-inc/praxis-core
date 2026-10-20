@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { relative, resolve } from "node:path";
 import { canonicalize } from "./approval.js";
+import { decisionKindFor, DecisionKindSchema } from "./action-plan.js";
 import { WorkflowError } from "./workflow.js";
 
 /**
@@ -48,6 +49,8 @@ export type AuthorizationBody = {
   content?: string;
   /** sha256 digest of approved content. */
   contentDigest?: string;
+  /** The kind of decision approved (requirement, architecture, story, development, quality, git, tracker). */
+  decisionKind?: string;
 };
 
 export type ExecutionRequest = {
@@ -278,7 +281,14 @@ export function authorizationMatches(body: AuthorizationBody, target: {
   planId?: string;
   targets?: string[];
   contentDigest?: string;
+  decisionKind?: string;
 }): void {
+  if (body.decisionKind !== undefined && body.decisionKind !== target.decisionKind) {
+    throw new WorkflowError(
+      "APPROVAL_SCOPE_SEPARATE",
+      `this approval is for ${body.decisionKind}, not ${target.decisionKind ?? "an unstated kind of decision"}; one kind of approval never authorizes another`,
+    );
+  }
   if (body.planFingerprint !== target.planFingerprint) {
     throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", "plan fingerprint is not the approved revision");
   }
@@ -319,7 +329,7 @@ export function assertExecutionPayload(payload: unknown, body: AuthorizationBody
   }
   const rec = payload as Record<string, unknown>;
   const extra = Object.keys(rec).filter(
-    (key) => !(EXECUTION_PAYLOAD_KEYS as readonly string[]).includes(key),
+    (key) => !(EXECUTION_PAYLOAD_KEYS as readonly string[]).includes(key) && key !== "decisionKind",
   );
   if (extra.length) {
     throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `unauthorized payload fields: ${extra.join(",")}`);
@@ -367,6 +377,11 @@ export function assertExecutionPayload(payload: unknown, body: AuthorizationBody
     repository: rec.repository,
     targets: rec.targets,
     contentDigest: rec.contentDigest,
+    decisionKind: decisionKindFor(
+      rec.operation,
+      rec.action,
+      rec.decisionKind === undefined ? undefined : DecisionKindSchema.parse(rec.decisionKind),
+    ),
   });
   if (body.content !== undefined && approvedContentDigest(body.content) !== body.contentDigest) {
     throw new WorkflowError("APPROVAL_REQUIRED", "authorization content digest does not match bound content");
