@@ -633,6 +633,7 @@ export {
   authorizeGitOperation,
   buildGitPlan,
   gitPlanId,
+  planTtlMs,
   gitRequestContent,
   type GitAuthorizeInput,
   type GitDescribed,

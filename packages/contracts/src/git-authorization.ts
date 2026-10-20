@@ -95,7 +95,13 @@ export function gitPlanId(key: GitRequestKey): string {
   return `git-${op}-${sha(canonical({ ...key, repository: resolve(key.repository) })).slice(0, 24)}`;
 }
 
-export function buildGitPlan(key: GitRequestKey, live: GitDescribed, now = new Date(), ttlMs = 3_600_000): ActionPlan {
+/** How long a proposed plan can be approved and used. Default one hour; PRAXIS_APPROVAL_PLAN_TTL_MS may only change it within 1 second to 24 hours. */
+export function planTtlMs(): number {
+  const requested = Number(process.env.PRAXIS_APPROVAL_PLAN_TTL_MS);
+  return Number.isFinite(requested) && requested > 0 ? Math.min(Math.max(requested, 1_000), 86_400_000) : 3_600_000;
+}
+
+export function buildGitPlan(key: GitRequestKey, live: GitDescribed, now = new Date(), ttlMs = planTtlMs()): ActionPlan {
   return buildActionPlan({
     planId: gitPlanId(key),
     role: "developer",

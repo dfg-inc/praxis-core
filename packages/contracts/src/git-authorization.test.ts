@@ -8,6 +8,7 @@ import {
   encodeAuthorization,
   generateApprovalKeyPair,
   gitPlanId,
+  planTtlMs,
   readInboxPlan,
   signAuthorization,
   type ActionPlan,
@@ -301,5 +302,17 @@ describe("git authorization through the broker inbox", () => {
     const unisolated = run();
     expect(await codeOf(unisolated.promise)).toBe("APPROVAL_ISOLATION_UNAVAILABLE");
     expect(unisolated.writes.count).toBe(0);
+  });
+
+  it("lets the plan lifetime be shortened but never beyond 24 hours", () => {
+    process.env.PRAXIS_APPROVAL_PLAN_TTL_MS = "2000";
+    expect(planTtlMs()).toBe(2000);
+    process.env.PRAXIS_APPROVAL_PLAN_TTL_MS = "1";
+    expect(planTtlMs()).toBe(1000);
+    process.env.PRAXIS_APPROVAL_PLAN_TTL_MS = String(10 * 86_400_000);
+    expect(planTtlMs()).toBe(86_400_000);
+    process.env.PRAXIS_APPROVAL_PLAN_TTL_MS = "garbage";
+    expect(planTtlMs()).toBe(3_600_000);
+    delete process.env.PRAXIS_APPROVAL_PLAN_TTL_MS;
   });
 });
