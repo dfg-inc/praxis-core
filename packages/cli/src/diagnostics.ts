@@ -25,8 +25,14 @@ export type SecurityReport = {
   deploymentTier: string;
   /** Why secure operation is or is not available. Names settings and reasons, never values. */
   deployment: Array<{ id: string; severity: "blocking" | "warning"; detail: string; remedy: string }>;
+  /** unsigned: agent-authored records need no approval. approval: every record write needs an approved mutation. */
+  records: "unsigned" | "approval";
+  /** Where confirmations and approvals are requested from the owner. */
+  humanApproval: { inbox: "configured" | "not-configured"; operatorUrl: string | null; waiting: number | null };
 };
 
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { assessApprovalDeployment } from "@praxis/contracts";
 
 const present = (value: string | undefined): boolean => Boolean(value && value.trim());
@@ -103,10 +109,25 @@ export function providerDiagnostics(
 export function securityDiagnostics(env: NodeJS.ProcessEnv, workspace?: string): SecurityReport {
   const raw = (env.PRAXIS_SECURITY_MODE ?? "").trim();
   const assessment = assessApprovalDeployment({ env, workspace });
+  const shared = (env.PRAXIS_BROKER_SHARED_DIR ?? "").trim();
+  let waiting: number | null = null;
+  if (shared) {
+    try {
+      waiting = readdirSync(join(shared, "pending")).filter((name) => name.endsWith(".json")).length;
+    } catch {
+      waiting = 0;
+    }
+  }
   const evidence = {
     secureOperation: assessment.secureOperation,
     deploymentTier: assessment.tier,
     deployment: assessment.findings,
+    records: (env.PRAXIS_WORKFLOW_RECORDS ?? "").trim() === "approval" ? ("approval" as const) : ("unsigned" as const),
+    humanApproval: {
+      inbox: shared ? ("configured" as const) : ("not-configured" as const),
+      operatorUrl: shared ? ((env.PRAXIS_OPERATOR_URL ?? "").trim() || "http://localhost:8780") : null,
+      waiting,
+    },
   };
   if (raw === "" || raw === "secure") {
     return {
@@ -175,6 +196,13 @@ export function doctorNextSteps(input: {
     if (report.state === "partial") {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
+  }
+  if (input.security.humanApproval.inbox === "not-configured") {
+    steps.push(
+      "Confirming a Story, confirming a decision and approving a service need the owner's approval, and no approval inbox is configured (PRAXIS_BROKER_SHARED_DIR). Agent-authored records still work; those three are refused until it is set.",
+    );
+  } else if ((input.security.humanApproval.waiting ?? 0) > 0) {
+    steps.push(`${input.security.humanApproval.waiting} plan(s) are waiting for the owner at ${input.security.humanApproval.operatorUrl}.`);
   }
   if (input.security.mode === "secure" && !input.security.secureOperation) {
     const blocking = input.security.deployment.filter((finding) => finding.severity === "blocking");

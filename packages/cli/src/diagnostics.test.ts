@@ -90,7 +90,12 @@ describe("doctorNextSteps", () => {
     project: "loaded" as const,
     quality: { status: "healthy" },
     providers: providerDiagnostics({}, ok),
-    security: { ...securityDiagnostics({}), secureOperation: true, deploymentTier: "isolated", deployment: [] },
+    security: {
+      ...securityDiagnostics({ PRAXIS_BROKER_SHARED_DIR: "/nonexistent-shared" }),
+      secureOperation: true,
+      deploymentTier: "isolated",
+      deployment: [],
+    },
   };
 
   it("has nothing to say when everything is in order (Jira is optional)", () => {
@@ -129,6 +134,23 @@ describe("doctorNextSteps", () => {
     }).join("\n");
     expect(steps).toMatch(/Compatibility mode is on/);
     expect(steps).toMatch(/PRAXIS_SECURITY_MODE.*ignored/);
+  });
+
+  it("tells the operator when the approval inbox is missing, and when plans are waiting", () => {
+    const none = doctorNextSteps({ ...base, security: { ...base.security, humanApproval: { inbox: "not-configured", operatorUrl: null, waiting: null } } }).join("\n");
+    expect(none).toMatch(/no approval inbox is configured \(PRAXIS_BROKER_SHARED_DIR\)/);
+    expect(none).toMatch(/Agent-authored records still work/);
+    const waiting = doctorNextSteps({ ...base, security: { ...base.security, humanApproval: { inbox: "configured", operatorUrl: "http://localhost:8780", waiting: 2 } } }).join("\n");
+    expect(waiting).toMatch(/2 plan\(s\) are waiting for the owner at http:\/\/localhost:8780/);
+  });
+
+  it("reports the record policy and the inbox from the environment, never a path", () => {
+    const report = securityDiagnostics({ PRAXIS_WORKFLOW_RECORDS: "approval", PRAXIS_BROKER_SHARED_DIR: "/secret/shared/path", PRAXIS_OPERATOR_URL: "http://localhost:9000" });
+    expect(report.records).toBe("approval");
+    expect(report.humanApproval).toMatchObject({ inbox: "configured", operatorUrl: "http://localhost:9000", waiting: 0 });
+    expect(JSON.stringify(report)).not.toContain("/secret/shared/path");
+    expect(securityDiagnostics({}).records).toBe("unsigned");
+    expect(securityDiagnostics({}).humanApproval).toEqual({ inbox: "not-configured", operatorUrl: null, waiting: null });
   });
 
   it("a missing repository short-circuits", () => {
