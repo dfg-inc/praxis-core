@@ -838,8 +838,11 @@ export function requirementEvidence(state: WorkflowState, requirementId: string)
   const current = new Map(
     state.stories.filter((story) => story.status !== "superseded").map((story) => [story.id, story]),
   );
+  const requirement = state.requirements.find((item) => item.id === requirementId && item.status !== "superseded");
   const executed = state.coverage.filter((entry) => {
     if (entry.requirementId !== requirementId) return false;
+    // Requirement-only evidence has no Story; it counts as long as the requirement itself is current.
+    if (entry.storyId === undefined) return requirement !== undefined;
     const story = current.get(entry.storyId);
     if (!story || entry.scenarioId === `${entry.storyId}-CONFIRMATION`) return false;
     // Entries written before storyRevision existed only count for an unrevised Story.
@@ -849,15 +852,24 @@ export function requirementEvidence(state: WorkflowState, requirementId: string)
   const rolled = rollupStoryVerdict(executed);
   let verdict: QualityVerdict = rolled.verdict;
   const reasons = [...rolled.reasons];
-  const verified = new Set(executed.map((entry) => entry.storyId));
+  const verified = new Set(executed.flatMap((entry) => (entry.storyId ? [entry.storyId] : [])));
   const linked = [...current.values()].filter((story) => story.requirementIds.includes(requirementId));
   for (const story of linked) {
     if (!verified.has(story.id)) reasons.push(`story-not-verified:${story.id}@${story.revision}`);
     else if (!story.confirmedBehavior) reasons.push(`story-unconfirmed:${story.id}@${story.revision}`);
   }
+  if (linked.length === 0 && requirement) {
+    // No Story states the behaviour, so the requirement's own acceptance criteria are the contract:
+    // each one needs a passing executed scenario, or the verdict cannot be PASS.
+    const passed = new Set(executed.filter((entry) => entry.status === "PASS").map((entry) => entry.acceptanceCriterionId));
+    for (const criterion of requirement.acceptanceCriteria) {
+      if (!passed.has(criterion.id)) reasons.push(`ac-not-verified:${criterion.id}`);
+    }
+  }
   if (verdict === "PASS" && reasons.length > 0) verdict = "PASS_WITH_RISKS";
   const provenance = [
     ...[...verified].map((id) => `story:${id}@${current.get(id)!.revision}`),
+    ...(verified.size === 0 ? [`requirement:${requirementId}@${requirement?.revision ?? 1}`] : []),
     ...executed.map((entry) => `${entry.scenarioId}:${entry.status}`),
   ];
   return { status: "executed", verdict, reasons, provenance };
@@ -1400,7 +1412,8 @@ export function applyWorkflowCommand(
   if (command.action === "record-verification") {
     const scenarios = command.scenarios.map((scenario) => {
       const storyRevision =
-        scenario.storyRevision ?? state.stories.find((story) => story.id === scenario.storyId)?.revision;
+        scenario.storyRevision ??
+        (scenario.storyId ? state.stories.find((story) => story.id === scenario.storyId)?.revision : undefined);
       const stamped = storyRevision === undefined ? scenario : { ...scenario, storyRevision };
       return stamped.critical || stamped.kind === "happy" ? { ...stamped, critical: true } : stamped;
     });

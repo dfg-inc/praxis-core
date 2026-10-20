@@ -53,7 +53,8 @@ export const UserStorySchema = z.object({
 export type UserStory = z.infer<typeof UserStorySchema>;
 
 export const CoverageEntrySchema = z.object({
-  storyId: StoryIdSchema,
+  /** Absent for requirement-only evidence: a work item verified without a Story. */
+  storyId: StoryIdSchema.optional(),
   /** Story revision this scenario verified. Older revisions are not evidence for the current one. */
   storyRevision: z.number().int().positive().optional(),
   requirementId: RequirementIdSchema,
