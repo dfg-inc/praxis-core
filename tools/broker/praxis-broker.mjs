@@ -9,6 +9,7 @@
  *   approve  --plan-id <id> --approver <id>   machine sign (PRAXIS_BROKER_MACHINE_APPROVE=1 only)
  *   approve-interactive                       REFUSED — TTY alone is not human authentication
  *   serve-operator                            Unix socket in trusted dir for human console
+ *   serve-operator-web [--port N] [--enroll]  browser approval with a WebAuthn gesture (127.0.0.1 only)
  *   reject   --plan-id <id>
  *   health
  *
@@ -28,6 +29,7 @@ import {
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
+import { createOperatorWeb, writeTokenOnce } from "./operator-web.mjs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -149,10 +151,12 @@ function signApprovedPlan(plan, approver, channel) {
     consumptionId: `c-${createHash("sha256").update(`${plan.planId}:${randomUUID()}`).digest("hex").slice(0, 24)}`,
   };
   const token = encodeAuthorization(signAuthorization(body, privateKeyPem()));
-  mkdirSync(join(sharedRoot(), "authorizations"), { recursive: true });
-  const tmp = `${authPath(plan.planId)}.tmp`;
-  writeFileSync(tmp, token);
-  renameSync(tmp, authPath(plan.planId));
+  // At most one authorization per plan, even under a race: a second approval would be a second execution.
+  writeTokenOnce(authPath(plan.planId), token);
+  if (existsSync(pendingPath(plan.planId))) {
+    mkdirSync(join(sharedRoot(), "approved"), { recursive: true });
+    renameSync(pendingPath(plan.planId), join(sharedRoot(), "approved", `${plan.planId}.json`));
+  }
   mkdirSync(join(trustedRoot(), "audit"), { recursive: true });
   writeFileSync(
     join(trustedRoot(), "audit", `${plan.planId}.json`),
@@ -264,6 +268,41 @@ function cmdServeOperator() {
   });
 }
 
+function rejectLoadedPlan(plan, approver, channel) {
+  const dest = pendingPath(plan.planId);
+  if (existsSync(dest)) {
+    mkdirSync(join(sharedRoot(), "rejected"), { recursive: true });
+    renameSync(dest, join(sharedRoot(), "rejected", `${plan.planId}.json`));
+  }
+  mkdirSync(join(trustedRoot(), "audit"), { recursive: true });
+  writeFileSync(
+    join(trustedRoot(), "audit", `${plan.planId}.json`),
+    `${JSON.stringify({ planId: plan.planId, fingerprint: plan.fingerprint, state: "rejected", approver, channel, at: new Date().toISOString() }, null, 2)}\n`,
+  );
+}
+
+function cmdServeOperatorWeb() {
+  assertBrokerIdentity();
+  const port = Number(arg("--port") ?? 8780);
+  const origin = arg("--origin") ?? `http://localhost:${port}`;
+  const enrollSecret = process.argv.includes("--enroll") ? randomUUID().replaceAll("-", "") : undefined;
+  const web = createOperatorWeb({
+    origin,
+    trustedDir: trustedRoot(),
+    sharedDir: sharedRoot(),
+    contracts: { ActionPlanSchema, renderActionPlanForHuman },
+    signApproved: signApprovedPlan,
+    rejectPlan: rejectLoadedPlan,
+    enrollSecret,
+    multiEnroll: process.argv.includes("--multi-enroll"),
+  });
+  web.server.listen(port, "127.0.0.1", () => {
+    console.log(JSON.stringify({ ok: true, listening: `127.0.0.1:${port}`, open: origin, channel: "webauthn", enrollment: Boolean(enrollSecret) }));
+    // The secret goes to this terminal only: never to a file, never to the page.
+    if (enrollSecret) console.log(`ENROLLMENT SECRET (type it into ${origin}/enroll): ${enrollSecret}`);
+  });
+}
+
 function cmdReject() {
   assertBrokerIdentity();
   const planId = arg("--plan-id");
@@ -306,11 +345,12 @@ async function main() {
   else if (cmd === "approve") cmdApprove();
   else if (cmd === "approve-interactive") cmdApproveInteractive();
   else if (cmd === "serve-operator") cmdServeOperator();
+  else if (cmd === "serve-operator-web") cmdServeOperatorWeb();
   else if (cmd === "reject") cmdReject();
   else if (cmd === "health") cmdHealth();
   else {
     console.error(
-      "usage: praxis-broker.mjs propose|show|approve|approve-interactive|serve-operator|reject|health",
+      "usage: praxis-broker.mjs propose|show|approve|approve-interactive|serve-operator|serve-operator-web|reject|health",
     );
     process.exit(2);
   }

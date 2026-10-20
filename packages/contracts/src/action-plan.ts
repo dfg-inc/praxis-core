@@ -114,6 +114,11 @@ export const ActionPlanSchema = ActionPlanBaseSchema.extend({
   fingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
 }).superRefine((plan, ctx) => {
   for (const problem of authorityProblems(plan)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem, path: ["operations"] });
+  // The signed token binds one action, its targets and its content. A second action would be shown to the
+  // human as part of the plan yet not be covered by the approval, so a plan has exactly one.
+  if (plan.actions.length !== 1) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "a plan authorizes exactly one action; split it into separate plans", path: ["actions"] });
+  }
   const { fingerprint, ...body } = plan;
   if (fingerprint !== actionPlanFingerprint(body)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "plan fingerprint does not match the plan's content", path: ["fingerprint"] });

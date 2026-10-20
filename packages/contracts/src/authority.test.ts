@@ -51,6 +51,11 @@ describe("one authority per plan", () => {
     expect(authorityProblems({ decisionKind: "architecture_decision", operations: ["repository_edit"] })).toEqual([]);
   });
 
+  it("a plan has exactly one action, so the approval covers everything the human was shown", () => {
+    const two = { ...base, decisionKind: "development_action" as const, operations: ["repository_edit" as const], actions: [...base.actions, { action: "b", description: "second", targets: ["u"] }] };
+    expect(() => buildActionPlan(two)).toThrow(/exactly one action/);
+  });
+
   it("a hand-written plan file that breaks the rules is rejected by the schema the broker parses with", () => {
     const good = buildActionPlan({ ...base, decisionKind: "development_action", operations: ["repository_edit"] });
     expect(ActionPlanSchema.safeParse(good).success).toBe(true);
