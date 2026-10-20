@@ -16,9 +16,16 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
+// The Quality service executable lives in praxis-runtime since the repository split. Tests that need to
+// start it are skipped (visibly, as "skipped") when this checkout does not contain it; praxis-runtime's
+// accept:quality-startup covers them end to end.
+const serviceEntry = join(root, "apps/quality-service/dist/main.js");
+const serviceBuildable = existsSync(join(root, "apps/quality-service/package.json"));
+const needsService = serviceBuildable || existsSync(serviceEntry);
+
 beforeAll(() => {
-  const entry = join(root, "apps/quality-service/dist/main.js");
-  if (!existsSync(entry)) {
+  const entry = serviceEntry;
+  if (needsService && !existsSync(entry)) {
     const built = spawnSync("npm run build -w @praxis/contracts -w @praxis/knowledge -w @praxis/quality-service", {
       cwd: root,
       shell: true,
@@ -112,7 +119,7 @@ describe("quality ensure", { timeout: 20_000 }, () => {
     expect(existsSync(join(repo, ".praxis-quality", "quality.sqlite"))).toBe(false);
   });
 
-  it("starts Quality, initializes sqlite, and reuses the same process", async () => {
+  it.skipIf(!needsService)("starts Quality, initializes sqlite, and reuses the same process", async () => {
     const repo = tmpRepo();
     repos.push(repo);
     const port = await freePort();
@@ -166,7 +173,7 @@ describe("quality ensure", { timeout: 20_000 }, () => {
     }
   });
 
-  it("returns QUALITY_PORT_UNAVAILABLE when the port is occupied", async () => {
+  it.skipIf(!needsService)("returns QUALITY_PORT_UNAVAILABLE when the port is occupied", async () => {
     const repo = tmpRepo();
     repos.push(repo);
     const port = await freePort();
@@ -230,7 +237,7 @@ describe("quality ensure", { timeout: 20_000 }, () => {
     expect(code).toBe(QUALITY_CODES.QUALITY_SQLITE_UNAVAILABLE);
   });
 
-  it("starts Quality with bundled sql.js when node:sqlite is forced off", async () => {
+  it.skipIf(!needsService)("starts Quality with bundled sql.js when node:sqlite is forced off", async () => {
     const repo = tmpRepo();
     repos.push(repo);
     const port = await freePort();
@@ -260,7 +267,7 @@ describe("quality ensure", { timeout: 20_000 }, () => {
     expect(runtime.parent.execPath).toBe(helper);
   });
 
-  it("starts Quality as a worker when the parent executable is an Electron helper", async () => {
+  it.skipIf(!needsService)("starts Quality as a worker when the parent executable is an Electron helper", async () => {
     const repo = tmpRepo();
     repos.push(repo);
     const port = await freePort();
@@ -280,7 +287,7 @@ describe("quality ensure", { timeout: 20_000 }, () => {
     expect(second.pid).toBe(first.pid);
   });
 
-  it("captures async spawn errors instead of missing pid", async () => {
+  it.skipIf(!needsService)("captures async spawn errors instead of missing pid", async () => {
     const repo = tmpRepo();
     repos.push(repo);
     process.env.PRAXIS_QUALITY_PORT = String(await freePort());

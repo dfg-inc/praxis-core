@@ -1,0 +1,33 @@
+{
+  "$comment": "Every exception to 'a green npm test means everything ran'. Entries need a reason and must still match something, or check:tests fails. See tools/scripts/check-test-completeness.mjs.",
+  "entries": [
+    {
+      "kind": "skip",
+      "path": "packages/cli/src/quality-ensure.test.ts",
+      "match": "needsService",
+      "reason": "Five tests start the real Quality service, whose executable lives in praxis-runtime since the repository split. They skip when apps/quality-service is absent from this checkout and are covered end to end by praxis-runtime accept:quality-startup. The other seven tests in the file run."
+    },
+    {
+      "kind": "skip",
+      "path": "plugins/vcs/test/delivery.test.ts",
+      "match": "process.getuid",
+      "reason": "The test needs a permission failure that root bypasses; it is skipped only when the suite runs as uid 0."
+    },
+    {
+      "kind": "exclude",
+      "path": "tools/e2e/vitest.config.ts",
+      "match": "node_modules",
+      "reason": "Excludes dependency and fixture directories from collection, not tests."
+    },
+    {
+      "kind": "unowned-test",
+      "path": "tools/e2e/src/pipeline.test.ts",
+      "reason": "Pre-split monorepo pipeline test. It reads plugins/ba and tools/smoke, which do not exist in this repository, and fails when run. @praxis/e2e is not a workspace. Not run until it is ported or removed."
+    },
+    {
+      "kind": "unowned-test",
+      "path": "tools/e2e/fixtures/pipeline/product/test/greeter.test.js",
+      "reason": "Fixture project used as input by the e2e pipeline; it is not a test of this repository."
+    }
+  ]
+}
