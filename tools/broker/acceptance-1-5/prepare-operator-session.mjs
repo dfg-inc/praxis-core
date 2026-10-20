@@ -63,8 +63,13 @@ writeFileSync(
 );
 
 const now = new Date();
+const stamp = Date.now();
+const rejectId = `m15-reject-${stamp}`;
+const approveId = `m15-approve-${stamp}`;
+const acceptedPath = join(out, "project", "accepted.txt");
+const fixtureContent = "accepted-by-operator\n";
 const rejectPlan = contracts.buildActionPlan({
-  planId: "m15-reject-1",
+  planId: rejectId,
   role: "developer",
   decisionKind: "development_action",
   summary: "REJECT THIS — intentional bad mutation for G1 step 3",
@@ -80,6 +85,7 @@ const rejectPlan = contracts.buildActionPlan({
       action: "praxis_workflow_apply",
       description: "would overwrite fixture-marker.json with BAD",
       targets: [join(out, "project", ".praxis", "fixture-marker.json")],
+      content: "BAD\n",
     },
   ],
   risks: ["intentional reject"],
@@ -88,7 +94,7 @@ const rejectPlan = contracts.buildActionPlan({
   expiresAt: new Date(now.getTime() + 3_600_000).toISOString(),
 });
 const approvePlan = contracts.buildActionPlan({
-  planId: "m15-approve-1",
+  planId: approveId,
   role: "developer",
   decisionKind: "development_action",
   summary: "Approve — single fixture mutation of accepted.txt",
@@ -103,7 +109,8 @@ const approvePlan = contracts.buildActionPlan({
     {
       action: "praxis_workflow_apply",
       description: "create accepted.txt once",
-      targets: [join(out, "project", "accepted.txt")],
+      targets: [acceptedPath],
+      content: fixtureContent,
     },
   ],
   risks: [],
@@ -114,14 +121,28 @@ const approvePlan = contracts.buildActionPlan({
 mkdirSync(join(out, "plans"), { recursive: true });
 writeFileSync(join(out, "plans", "reject.json"), `${JSON.stringify(rejectPlan, null, 2)}\n`);
 writeFileSync(join(out, "plans", "approve.json"), `${JSON.stringify(approvePlan, null, 2)}\n`);
+const execPayload = {
+  planId: approvePlan.planId,
+  planFingerprint: approvePlan.fingerprint,
+  provider: approvePlan.provider,
+  instanceId: approvePlan.instanceId,
+  operation: approvePlan.operations[0],
+  action: approvePlan.actions[0].action,
+  workItemId: approvePlan.workItemIds[0],
+  repository: approvePlan.repositories[0],
+  targets: approvePlan.actions[0].targets,
+  contentDigest: contracts.approvedContentDigest(fixtureContent),
+};
+writeFileSync(join(out, "plans", "exec-payload.json"), `${JSON.stringify(execPayload, null, 2)}\n`);
 
 const envFile = `export PRAXIS_BROKER_TRUSTED_DIR=${out}/trusted
 export PRAXIS_BROKER_SHARED_DIR=${out}/shared
 export PRAXIS_APPROVAL_PRIVATE_KEY_PATH=${out}/trusted/private.pem
 export PRAXIS_APPROVAL_PUBLIC_KEY_PATH=${out}/trusted/public.pem
-export PRAXIS_APPROVAL_LEDGER=${out}/trusted/ledger/ledger.jsonl
+export PRAXIS_APPROVAL_LEDGER=${out}/trusted/ledger
 export PRAXIS_CONTRACTS_ENTRY=${coreRoot}/packages/contracts/dist/index.js
 export PRAXIS_SECURITY_MODE=secure
+export PRAXIS_FIXTURE_EXECUTION=1
 # Host Cursor agents with Docker Desktop must NOT claim docker-uid PASS.
 # unset PRAXIS_DEPLOYMENT_MODEL unless the agent process lacks docker.sock.
 unset PRAXIS_BROKER_MACHINE_APPROVE
@@ -163,12 +184,12 @@ Third terminal (your TTY as operator):
 \`\`\`bash
 source ${out}/env.sh
 cd ${coreRoot}
-node tools/broker/praxis-operator-console.mjs --plan-id m15-reject-1 --approver "$USER"
+node tools/broker/praxis-operator-console.mjs --plan-id ${rejectId} --approver "$USER"
 \`\`\`
 
 Type exactly: \`REJECT\`
 
-Confirm: \`${out}/trusted/audit/m15-reject-1.json\` has \`"state":"rejected"\` (or channel operator-socket + no token under shared/authorizations).
+Confirm: \`${out}/trusted/audit/${rejectId}.json\` has \`"state":"rejected"\` and \`${acceptedPath}\` still does **not** exist.
 
 ## D. Propose approve plan
 
@@ -183,34 +204,41 @@ node tools/broker/praxis-broker.mjs propose --plan ${out}/plans/approve.json
 \`\`\`bash
 source ${out}/env.sh
 cd ${coreRoot}
-node tools/broker/praxis-operator-console.mjs --plan-id m15-approve-1 --approver "$USER"
+node tools/broker/praxis-operator-console.mjs --plan-id ${approveId} --approver "$USER"
 \`\`\`
 
 Type exactly: \`APPROVE <fingerprint shown>\`
 
+Expected fingerprint: \`${approvePlan.fingerprint}\`
+
 ## F. Executor once (broker identity; no private key in env)
+
+JSON success without \`${acceptedPath}\` is a **FAIL**.
 
 \`\`\`bash
 source ${out}/env.sh
 unset PRAXIS_APPROVAL_PRIVATE_KEY_PATH PRAXIS_APPROVAL_PRIVATE_KEY
 cd ${coreRoot}
-TOKEN=${out}/shared/authorizations/m15-approve-1.token
+test ! -f ${acceptedPath}
+TOKEN=${out}/shared/authorizations/${approveId}.token
 PAYLOAD=${out}/plans/exec-payload.json
-cat > "$PAYLOAD" <<EOF
-{"planFingerprint":"${approvePlan.fingerprint}","provider":"local","instanceId":"local","operation":"repository_edit","workItemId":"WP-OK","repository":"${out}/project"}
-EOF
 node tools/broker/praxis-executor.mjs execute \\
   --token "$TOKEN" \\
   --action praxis_workflow_apply \\
   --payload "$PAYLOAD" | tee ${out}/logs/exec-1.json
-# Second run must report replayed:true and must not perform a new write
+# Observable side effect required
+test -f ${acceptedPath}
+grep -x 'accepted-by-operator' ${acceptedPath}
+# Second run must report replayed:true and must not change the file
+cp ${acceptedPath} ${out}/logs/accepted.before-replay
 node tools/broker/praxis-executor.mjs execute \\
   --token "$TOKEN" \\
   --action praxis_workflow_apply \\
   --payload "$PAYLOAD" | tee ${out}/logs/exec-2.json
+cmp ${acceptedPath} ${out}/logs/accepted.before-replay
 \`\`\`
 
-Confirm \`exec-2.json\` contains \`"replayed":true\`.
+Confirm \`exec-1.json\` has \`"replayed":false\` and \`mutated\`, and \`exec-2.json\` has \`"replayed":true\`.
 
 ## G. Claude Code host (G3) — isolated config only
 
@@ -256,11 +284,12 @@ writeFileSync(
 
 - Operator name:
 - Date:
-- Reject plan id: m15-reject-1 — PASS/FAIL:
-- Approve plan id: m15-approve-1 — fingerprint:
+- Reject plan id: ${rejectId} — PASS/FAIL:
+- Approve plan id: ${approveId} — fingerprint: ${approvePlan.fingerprint}
 - Approve channel operator-socket — PASS/FAIL:
+- accepted.txt created with accepted-by-operator — PASS/FAIL:
 - Executor single mutation — PASS/FAIL:
-- Replay refused — PASS/FAIL:
+- Replay left file unchanged — PASS/FAIL:
 - Claude Code host tools used (list):
 - G1 verdict: PENDING
 - G3 verdict: PENDING

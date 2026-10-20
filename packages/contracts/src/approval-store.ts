@@ -14,10 +14,12 @@ import {
 import {
   assertSecureExecutor,
   authorizationMatches,
-  readLedgerEntry,
+  completeLedgerEntry,
+  executionRequestFingerprint,
+  failLedgerEntry,
+  reserveLedgerEntry,
   securityMode,
   verifyAuthorization,
-  writeLedgerEntry,
 } from "./broker.js";
 import { WorkflowError } from "./workflow.js";
 
@@ -338,26 +340,62 @@ function runSecureMutation<T>(request: MutationRequest, write: () => T): T {
     throw new WorkflowError("APPROVAL_REQUIRED", "secure mode requires a broker authorization for this plan");
   }
   const body = verifyAuthorization(authorization, publicKeyPem, request.now);
+  if (!request.planFingerprint) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "plan fingerprint is required for secure execution");
+  }
+  if (!request.instanceId) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "provider instance is required for secure execution");
+  }
   authorizationMatches(body, {
-    planFingerprint: request.planFingerprint ?? body.planFingerprint,
+    planFingerprint: request.planFingerprint,
     provider: request.provider,
     instanceId: request.instanceId,
     operation: request.operation,
     action: request.action,
     workItemId: request.workItemId,
     repository: request.repository,
+    planId: request.planId,
+    targets: body.targets,
+    contentDigest: body.contentDigest,
   });
-  const existing = readLedgerEntry(ledger, body.consumptionId);
-  if (existing?.status === "completed") return existing.result as T;
-  if (existing?.status === "started") {
-    throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", "authorization consumption is already in progress");
+  const requestFingerprint = executionRequestFingerprint({
+    consumptionId: body.consumptionId,
+    planId: body.planId ?? request.planId ?? "",
+    planFingerprint: request.planFingerprint,
+    provider: request.provider,
+    instanceId: request.instanceId,
+    operation: request.operation,
+    action: request.action,
+    workItemId: request.workItemId ?? "",
+    repository: request.repository ?? request.repo,
+    targets: body.targets ?? [],
+    contentDigest: body.contentDigest ?? "",
+  });
+  const reserved = reserveLedgerEntry(ledger, body.consumptionId, requestFingerprint);
+  if (!reserved.created) {
+    if (reserved.entry.requestFingerprint && reserved.entry.requestFingerprint !== requestFingerprint) {
+      throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "authorization replay is bound to a different execution request");
+    }
+    if (reserved.entry.status === "completed") return reserved.entry.result as T;
+    if (reserved.entry.status === "started") {
+      throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", "authorization consumption is already in progress");
+    }
+    throw new WorkflowError(
+      "APPROVAL_RECONCILIATION_REQUIRED",
+      `authorization consumption is ${reserved.entry.status}; refuse uncontrolled retry`,
+    );
   }
-  writeLedgerEntry(ledger, body.consumptionId, { status: "started" });
   const finish = (result: T): T => {
-    writeLedgerEntry(ledger, body.consumptionId, { status: "completed", result });
+    completeLedgerEntry(ledger, body.consumptionId, requestFingerprint, result);
     return result;
   };
   const fail = (error: unknown): never => {
+    failLedgerEntry(
+      ledger,
+      body.consumptionId,
+      requestFingerprint,
+      error instanceof Error ? error.message : String(error),
+    );
     throw error;
   };
   try {

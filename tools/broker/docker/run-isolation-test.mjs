@@ -20,6 +20,7 @@ const image = process.env.PRAXIS_ISOLATION_IMAGE || "node:20-bookworm-slim";
 const suffix = randomUUID().slice(0, 8);
 const trustedVol = `praxis-iso-trusted-${suffix}`;
 const sharedVol = `praxis-iso-shared-${suffix}`;
+const fixtureVol = `praxis-iso-fixture-${suffix}`;
 const seed = mkdtempSync(join(tmpdir(), "praxis-iso-seed-"));
 
 function run(cmd, args, opts = {}) {
@@ -35,7 +36,7 @@ function must(result, label) {
 }
 
 function cleanup() {
-  run("docker", ["volume", "rm", "-f", trustedVol, sharedVol]);
+  run("docker", ["volume", "rm", "-f", trustedVol, sharedVol, fixtureVol]);
   rmSync(seed, { recursive: true, force: true });
 }
 
@@ -52,47 +53,48 @@ const now = new Date();
 const plan = contracts.buildActionPlan({
   planId: "plan-demo",
   role: "developer",
-  decisionKind: "git_operation",
-  summary: "Connect origin remote for WP-1",
+  decisionKind: "development_action",
+  summary: "Create accepted.txt in isolated fixture volume",
   provider: "local",
   instanceId: "local",
   operations: ["repository_edit"],
   workItemIds: ["WP-1"],
   storyIds: [],
   decisionIds: [],
-  repositories: ["/workspace"],
-  actions: [{ action: "praxis_developer_git_connect_apply", description: "add origin", targets: ["origin"] }],
-  risks: ["remote mutation"],
-  sideEffects: ["git remote add"],
+  repositories: ["/fixture"],
+  actions: [
+    {
+      action: "praxis_workflow_apply",
+      description: "create accepted.txt",
+      targets: ["/fixture/accepted.txt"],
+      content: "accepted-by-operator\n",
+    },
+  ],
+  risks: ["fixture mutation"],
+  sideEffects: ["writes accepted.txt"],
   createdAt: now.toISOString(),
   expiresAt: new Date(now.getTime() + 3_600_000).toISOString(),
 });
 writeFileSync(join(seed, "plan-demo.json"), `${JSON.stringify(plan, null, 2)}\n`);
-writeFileSync(
-  join(seed, "payload.json"),
-  `${JSON.stringify({
-    planFingerprint: plan.fingerprint,
-    provider: plan.provider,
-    instanceId: plan.instanceId,
-    operation: plan.operations[0],
-    workItemId: plan.workItemIds[0],
-    repository: plan.repositories[0],
-  })}\n`,
-);
-writeFileSync(
-  join(seed, "payload-bad.json"),
-  `${JSON.stringify({
-    planFingerprint: plan.fingerprint,
-    provider: "jira",
-    instanceId: plan.instanceId,
-    operation: plan.operations[0],
-    workItemId: plan.workItemIds[0],
-    repository: plan.repositories[0],
-  })}\n`,
-);
+const payload = {
+  planId: plan.planId,
+  planFingerprint: plan.fingerprint,
+  provider: plan.provider,
+  instanceId: plan.instanceId,
+  operation: plan.operations[0],
+  action: plan.actions[0].action,
+  workItemId: plan.workItemIds[0],
+  repository: plan.repositories[0],
+  targets: plan.actions[0].targets,
+  contentDigest: contracts.approvedContentDigest(plan.actions[0].content),
+};
+writeFileSync(join(seed, "payload.json"), `${JSON.stringify(payload)}\n`);
+writeFileSync(join(seed, "payload-bad.json"), `${JSON.stringify({ ...payload, provider: "jira" })}\n`);
+writeFileSync(join(seed, "payload-target.json"), `${JSON.stringify({ ...payload, targets: ["/fixture/other.txt"] })}\n`);
 
 must(run("docker", ["volume", "create", trustedVol]), "create trusted volume");
 must(run("docker", ["volume", "create", sharedVol]), "create shared volume");
+must(run("docker", ["volume", "create", fixtureVol]), "create fixture volume");
 
 must(
   run("docker", [
@@ -104,20 +106,22 @@ must(
     `${trustedVol}:/trusted`,
     "-v",
     `${sharedVol}:/shared`,
+    "-v",
+    `${fixtureVol}:/fixture`,
     image,
     "bash",
     "-lc",
     [
-      "mkdir -p /trusted/ledger /trusted/audit /shared/pending /shared/authorizations",
+      "mkdir -p /trusted/ledger /trusted/audit /shared/pending /shared/authorizations /fixture",
       "cp /seed/private.pem /seed/public.pem /seed/credentials.json /seed/.broker-identity /trusted/",
       "cp /seed/plan-demo.json /shared/pending/",
-      "cp /seed/payload.json /seed/payload-bad.json /shared/",
-      "chown -R 1001:1001 /trusted",
+      "cp /seed/payload.json /seed/payload-bad.json /seed/payload-target.json /shared/",
+      "chown -R 1001:1001 /trusted /fixture",
       "chmod 700 /trusted",
       "chmod 600 /trusted/private.pem /trusted/credentials.json",
       "chown -R 1001:1001 /shared",
-      "chmod 755 /shared /shared/pending /shared/authorizations",
-      "chmod 644 /shared/pending/plan-demo.json /shared/payload.json /shared/payload-bad.json",
+      "chmod 755 /shared /shared/pending /shared/authorizations /fixture",
+      "chmod 644 /shared/pending/plan-demo.json /shared/payload.json /shared/payload-bad.json /shared/payload-target.json",
     ].join(" && "),
   ]),
   "seed volumes",
@@ -135,6 +139,8 @@ function docker(user, env, command) {
     `${sharedVol}:/shared`,
     "-v",
     `${trustedVol}:/trusted`,
+    "-v",
+    `${fixtureVol}:/fixture`,
     "-e",
     "PRAXIS_BROKER_SHARED_DIR=/shared",
     "-e",
@@ -160,6 +166,7 @@ const brokerEnv = [
 const executorEnv = [
   "PRAXIS_APPROVAL_PUBLIC_KEY_PATH=/trusted/public.pem",
   "PRAXIS_APPROVAL_LEDGER=/trusted/ledger",
+  "PRAXIS_FIXTURE_EXECUTION=1",
 ];
 
 const results = [];
@@ -177,7 +184,7 @@ check(
 );
 
 const shown = docker("1001:1001", brokerEnv, `${broker} show --plan-id plan-demo`);
-check("broker_shows_exact_plan", (shown.status ?? 1) === 0 && shown.stdout.includes("Connect origin remote"));
+check("broker_shows_exact_plan", (shown.status ?? 1) === 0 && shown.stdout.includes("accepted.txt"));
 
 const approved = docker("1001:1001", brokerEnv, `${broker} approve --plan-id plan-demo --approver operator`);
 check("broker_signs_authorization", (approved.status ?? 1) === 0 && approved.stdout.includes('"ok":true'));
@@ -192,39 +199,49 @@ must(
     image,
     "bash",
     "-lc",
-    "echo forged > /shared/authorizations/forged.token && chown -R 1001:1001 /shared && chmod 755 /shared/authorizations && chmod 644 /shared/authorizations/* /shared/payload.json /shared/payload-bad.json /shared/pending/plan-demo.json",
+    "echo forged > /shared/authorizations/forged.token && chown -R 1001:1001 /shared && chmod 755 /shared/authorizations && chmod 644 /shared/authorizations/* /shared/payload.json /shared/payload-bad.json /shared/payload-target.json /shared/pending/plan-demo.json",
   ]),
   "forge token",
 );
 
 check(
   "forged_token_rejected",
-  (docker("1001:1001", executorEnv, `${executor} execute --token /shared/authorizations/forged.token --action praxis_developer_git_connect_apply`).status ?? 1) !== 0,
+  (docker("1001:1001", executorEnv, `${executor} execute --token /shared/authorizations/forged.token --action praxis_workflow_apply --payload /shared/payload.json`).status ?? 1) !== 0,
 );
 
 const first = docker(
   "1001:1001",
   executorEnv,
-  `${executor} execute --token /shared/authorizations/plan-demo.token --action praxis_developer_git_connect_apply --payload /shared/payload.json`,
+  `${executor} execute --token /shared/authorizations/plan-demo.token --action praxis_workflow_apply --payload /shared/payload.json`,
 );
-check("approved_operation_once", (first.status ?? 1) === 0 && first.stdout.includes('"replayed":false'));
+const written = docker("1001:1001", [], "cat /fixture/accepted.txt");
+check(
+  "approved_operation_once",
+  (first.status ?? 1) === 0 &&
+    first.stdout.includes('"replayed":false') &&
+    written.stdout.includes("accepted-by-operator"),
+);
 
 const second = docker(
   "1001:1001",
   executorEnv,
-  `${executor} execute --token /shared/authorizations/plan-demo.token --action praxis_developer_git_connect_apply --payload /shared/payload.json`,
+  `${executor} execute --token /shared/authorizations/plan-demo.token --action praxis_workflow_apply --payload /shared/payload.json`,
 );
 check("duplicate_replay", (second.status ?? 1) === 0 && second.stdout.includes('"replayed":true'));
 
 check(
   "changed_provider_rejected",
-  (docker("1001:1001", executorEnv, `${executor} execute --token /shared/authorizations/plan-demo.token --action praxis_developer_git_connect_apply --payload /shared/payload-bad.json`).status ?? 1) !== 0,
+  (docker("1001:1001", executorEnv, `${executor} execute --token /shared/authorizations/plan-demo.token --action praxis_workflow_apply --payload /shared/payload-bad.json`).status ?? 1) !== 0,
+);
+check(
+  "changed_target_rejected",
+  (docker("1001:1001", executorEnv, `${executor} execute --token /shared/authorizations/plan-demo.token --action praxis_workflow_apply --payload /shared/payload-target.json`).status ?? 1) !== 0,
 );
 
 check("agent_cannot_run_executor", (docker("1000:1000", executorEnv, `${executor} health`).status ?? 1) !== 0);
 
 const failed = results.filter((item) => !item.ok);
-console.log(`volumes ${trustedVol} ${sharedVol}`);
+console.log(`volumes ${trustedVol} ${sharedVol} ${fixtureVol}`);
 cleanup();
 console.log(failed.length ? "ISOLATION_TEST FAIL" : "ISOLATION_TEST PASS");
 process.exit(failed.length ? 1 : 0);

@@ -4,11 +4,15 @@
  * The agent never receives PRAXIS_JIRA_TOKEN / git push credentials in secure mode.
  *
  * execute --token <file> --action <name> --payload <json-file>
+ *
+ * Fixture writes require PRAXIS_FIXTURE_EXECUTION=1 and a token bound to exact
+ * targets and content. Unsupported production adapters fail closed.
  */
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { resolveContainedTarget, writeApprovedFixtureFile } from "./fixture-execute.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -29,9 +33,12 @@ function loadContracts() {
 
 const {
   verifyAuthorization,
-  authorizationMatches,
-  readLedgerEntry,
-  writeLedgerEntry,
+  assertExecutionPayload,
+  executionRequestFingerprint,
+  reserveLedgerEntry,
+  completeLedgerEntry,
+  failLedgerEntry,
+  approvedContentDigest,
 } = loadContracts();
 
 function arg(name) {
@@ -57,6 +64,49 @@ function loadCredentials() {
   return JSON.parse(readFileSync(join(resolve(mustEnv("PRAXIS_BROKER_TRUSTED_DIR")), "credentials.json"), "utf8"));
 }
 
+function executeFixture(body, request) {
+  if (process.env.PRAXIS_FIXTURE_EXECUTION !== "1") {
+    throw new Error("fixture execution is disabled; set PRAXIS_FIXTURE_EXECUTION=1 only in an isolated acceptance environment");
+  }
+  if (body.provider !== "local" || request.provider !== "local") {
+    throw new Error("fixture execution requires provider=local");
+  }
+  if (request.action !== "praxis_workflow_apply" || body.action !== "praxis_workflow_apply") {
+    throw new Error(`unsupported action ${request.action}; production adapters fail closed`);
+  }
+  if (request.operation !== "repository_edit") {
+    throw new Error(`unsupported operation ${request.operation}; production adapters fail closed`);
+  }
+  if (body.content === undefined) {
+    throw new Error("authorization does not bind exact content; refuse execution");
+  }
+  if (approvedContentDigest(body.content) !== request.contentDigest) {
+    throw new Error("approved content does not match the bound digest");
+  }
+  const mutated = [];
+  for (const target of request.targets) {
+    const absolute = resolveContainedTarget(request.repository, target);
+    const written = writeApprovedFixtureFile(absolute, body.content);
+    mutated.push({
+      path: written.path,
+      bytes: written.bytes,
+      contentDigest: request.contentDigest,
+    });
+  }
+  if (!mutated.length) {
+    throw new Error("approved fixture mutation listed no targets");
+  }
+  return {
+    executed: request.action,
+    provider: "local",
+    instanceId: request.instanceId,
+    workItemIds: body.workItemIds,
+    credentialOwner: "executor",
+    fixture: true,
+    mutated,
+  };
+}
+
 function cmdExecute() {
   assertExecutorIdentity();
   if (process.env.PRAXIS_APPROVAL_PRIVATE_KEY || process.env.PRAXIS_APPROVAL_PRIVATE_KEY_PATH) {
@@ -65,44 +115,46 @@ function cmdExecute() {
   const tokenFile = arg("--token");
   const action = arg("--action");
   const payloadFile = arg("--payload");
-  if (!tokenFile || !action) throw new Error("--token and --action are required");
+  if (!tokenFile || !action || !payloadFile) {
+    throw new Error("--token, --action, and --payload are required");
+  }
   const token = readFileSync(tokenFile, "utf8").trim();
   const publicKey = readFileSync(mustEnv("PRAXIS_APPROVAL_PUBLIC_KEY_PATH"), "utf8");
   const ledger = resolve(mustEnv("PRAXIS_APPROVAL_LEDGER"));
   const body = verifyAuthorization(token, publicKey);
-  const payload = payloadFile ? JSON.parse(readFileSync(payloadFile, "utf8")) : {};
-  authorizationMatches(body, {
-    planFingerprint: payload.planFingerprint ?? body.planFingerprint,
-    provider: payload.provider ?? body.provider,
-    instanceId: payload.instanceId ?? body.instanceId,
-    operation: payload.operation ?? body.operations[0],
-    action,
-    workItemId: payload.workItemId,
-    repository: payload.repository,
-  });
-  const existing = readLedgerEntry(ledger, body.consumptionId);
-  if (existing?.status === "completed") {
-    console.log(JSON.stringify({ ok: true, replayed: true, result: existing.result }));
-    return;
+  const payload = JSON.parse(readFileSync(payloadFile, "utf8"));
+  const request = assertExecutionPayload(payload, body, action);
+  const requestFingerprint = executionRequestFingerprint(request);
+
+  const reserved = reserveLedgerEntry(ledger, body.consumptionId, requestFingerprint);
+  if (!reserved.created) {
+    if (reserved.entry.requestFingerprint && reserved.entry.requestFingerprint !== requestFingerprint) {
+      throw new Error("same token is bound to a different execution request; refuse");
+    }
+    if (reserved.entry.status === "completed") {
+      console.log(JSON.stringify({ ok: true, replayed: true, result: reserved.entry.result }));
+      return;
+    }
+    if (reserved.entry.status === "started") {
+      throw new Error("authorization consumption is already in progress; reconcile before retry");
+    }
+    throw new Error(`authorization consumption is ${reserved.entry.status}; refuse uncontrolled retry`);
   }
-  if (existing?.status === "started") {
-    throw new Error("authorization consumption is already in progress; reconcile before retry");
+
+  try {
+    loadCredentials();
+    const result = executeFixture(body, request);
+    completeLedgerEntry(ledger, body.consumptionId, requestFingerprint, result);
+    console.log(JSON.stringify({ ok: true, replayed: false, result }));
+  } catch (error) {
+    failLedgerEntry(
+      ledger,
+      body.consumptionId,
+      requestFingerprint,
+      error instanceof Error ? error.message : String(error),
+    );
+    throw error;
   }
-  writeLedgerEntry(ledger, body.consumptionId, { status: "started" });
-  const credentials = loadCredentials();
-  if (action.startsWith("praxis_") && !credentials.jiraToken && payload.provider === "jira") {
-    throw new Error("executor credentials missing for Jira write");
-  }
-  const result = {
-    executed: action,
-    provider: body.provider,
-    workItemIds: body.workItemIds,
-    credentialOwner: "executor",
-    usedJiraToken: Boolean(credentials.jiraToken) && body.provider === "jira",
-    note: "fixture execution — no production write",
-  };
-  writeLedgerEntry(ledger, body.consumptionId, { status: "completed", result });
-  console.log(JSON.stringify({ ok: true, replayed: false, result }));
 }
 
 function cmdHealth() {
@@ -114,6 +166,7 @@ function cmdHealth() {
       hasJiraToken: Boolean(credentials.jiraToken),
       hasGitToken: Boolean(credentials.gitToken),
       ledger: process.env.PRAXIS_APPROVAL_LEDGER,
+      fixtureExecution: process.env.PRAXIS_FIXTURE_EXECUTION === "1",
     }),
   );
 }

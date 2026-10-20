@@ -470,6 +470,12 @@ export {
   decodeAuthorization,
   verifyAuthorization,
   authorizationMatches,
+  assertExecutionPayload,
+  approvedContentDigest,
+  executionRequestFingerprint,
+  reserveLedgerEntry,
+  completeLedgerEntry,
+  failLedgerEntry,
   assertSecureExecutor,
   assertSigningKeyHidden,
   signingKeyVisibleToThisProcess,
@@ -480,7 +486,15 @@ export {
   assessDeploymentThreats,
   assertSecureDeployment,
 } from "./broker.js";
-export type { SecurityMode, AuthorizationBody, SignedAuthorization, DeploymentThreatAssessment } from "./broker.js";
+export type {
+  SecurityMode,
+  AuthorizationBody,
+  SignedAuthorization,
+  DeploymentThreatAssessment,
+  ExecutionRequest,
+  LedgerEntry,
+  LedgerStatus,
+} from "./broker.js";
 export {
   ACTION_PLAN_CONTRACT,
   ACTION_PLAN_VERSION,

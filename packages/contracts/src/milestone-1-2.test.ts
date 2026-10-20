@@ -268,6 +268,8 @@ describe("secure mutation mode", () => {
     const request = {
       repo,
       authorization: token,
+      planFingerprint: body.planFingerprint,
+      instanceId: "local" as const,
       operation: "repository_edit" as const,
       provider: "local" as const,
       action: "praxis_developer_git_connect_apply",

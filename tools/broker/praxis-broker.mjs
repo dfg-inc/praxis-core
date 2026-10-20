@@ -57,6 +57,7 @@ const {
   ActionPlanSchema,
   AUTHORIZATION_CONTRACT,
   AUTHORIZATION_VERSION,
+  approvedContentDigest,
 } = loadContracts();
 
 function arg(name) {
@@ -125,16 +126,22 @@ function cmdShow() {
 
 function signApprovedPlan(plan, approver, channel) {
   const now = new Date();
+  const approvedAction = plan.actions[0];
+  const content = approvedAction.content ?? "";
   const body = {
     contract: AUTHORIZATION_CONTRACT,
     version: AUTHORIZATION_VERSION,
+    planId: plan.planId,
     planFingerprint: plan.fingerprint,
     provider: plan.provider,
     instanceId: plan.instanceId,
     operations: plan.operations,
     workItemIds: plan.workItemIds,
     repositories: plan.repositories,
-    action: plan.actions[0].action,
+    action: approvedAction.action,
+    targets: approvedAction.targets,
+    content,
+    contentDigest: approvedContentDigest(content),
     approver,
     issuedAt: now.toISOString(),
     expiresAt: plan.expiresAt,

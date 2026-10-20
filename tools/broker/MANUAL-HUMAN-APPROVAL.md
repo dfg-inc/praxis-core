@@ -38,7 +38,7 @@ node tools/broker/praxis-operator-console.mjs --plan-id <id> --approver <you>
 
 4. Confirm the audit record under `$PRAXIS_BROKER_TRUSTED_DIR/audit/<id>.json` has `"channel":"operator-socket"`.
 
-5. Run the executor with the issued token (reject path must leave no usable token).
+5. Run the executor with the issued token and `PRAXIS_FIXTURE_EXECUTION=1`. The approved target file must actually appear with the approved contents. A JSON `"ok":true` without that file is a FAIL. Reject path must leave no usable token and must not create the file.
 
 6. Negative checks:
    - `approve-interactive` → must fail (disabled; PTY spoofable).

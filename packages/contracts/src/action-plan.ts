@@ -44,6 +44,8 @@ export const ActionPlanSchema = z.object({
       action: z.string().min(1),
       description: z.string().min(1),
       targets: z.array(z.string()).default([]),
+      /** Exact approved change for fixture writes. Bound into the plan fingerprint. */
+      content: z.string().optional(),
     }),
   ).min(1),
   risks: z.array(z.string()).default([]),
@@ -89,7 +91,13 @@ export function renderActionPlanForHuman(plan: ActionPlan): string {
     plan.branch ? `Branch: ${plan.branch}` : "",
     plan.remote ? `Remote: ${plan.remote}` : "",
     "Actions:",
-    ...plan.actions.map((action) => `  - ${action.action}: ${action.description}`),
+    ...plan.actions.flatMap((action) => [
+      `  - ${action.action}: ${action.description}`,
+      action.targets.length ? `    targets: ${action.targets.join(", ")}` : "",
+      action.content !== undefined
+        ? `    contentDigest: sha256:${createHash("sha256").update(action.content, "utf8").digest("hex")}`
+        : "",
+    ]),
     "Risks:",
     ...plan.risks.map((risk) => `  - ${risk}`),
     "Side effects:",

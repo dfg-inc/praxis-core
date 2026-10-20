@@ -1,5 +1,15 @@
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
-import { accessSync, constants, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  closeSync,
+  constants,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { relative, resolve } from "node:path";
 import { canonicalize } from "./approval.js";
 import { WorkflowError } from "./workflow.js";
@@ -30,7 +40,50 @@ export type AuthorizationBody = {
   issuedAt: string;
   expiresAt: string;
   consumptionId: string;
+  /** Bound plan identity. Required for executor fixture writes. */
+  planId?: string;
+  /** Exact approved targets. Required for executor fixture writes. */
+  targets?: string[];
+  /** Exact approved file contents for fixture writes. */
+  content?: string;
+  /** sha256 digest of approved content. */
+  contentDigest?: string;
 };
+
+export type ExecutionRequest = {
+  consumptionId: string;
+  planId: string;
+  planFingerprint: string;
+  provider: string;
+  instanceId: string;
+  operation: string;
+  action: string;
+  workItemId: string;
+  repository: string;
+  targets: string[];
+  contentDigest: string;
+};
+
+export const EXECUTION_PAYLOAD_KEYS = [
+  "planId",
+  "planFingerprint",
+  "provider",
+  "instanceId",
+  "operation",
+  "action",
+  "workItemId",
+  "repository",
+  "targets",
+  "contentDigest",
+] as const;
+
+export function approvedContentDigest(content: string): string {
+  return `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}`;
+}
+
+export function executionRequestFingerprint(request: ExecutionRequest): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalize(request))).digest("hex")}`;
+}
 
 export type SignedAuthorization = {
   body: AuthorizationBody;
@@ -222,6 +275,9 @@ export function authorizationMatches(body: AuthorizationBody, target: {
   action: string;
   workItemId?: string;
   repository?: string;
+  planId?: string;
+  targets?: string[];
+  contentDigest?: string;
 }): void {
   if (body.planFingerprint !== target.planFingerprint) {
     throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", "plan fingerprint is not the approved revision");
@@ -244,9 +300,100 @@ export function authorizationMatches(body: AuthorizationBody, target: {
   if (target.repository !== undefined && !body.repositories.includes(target.repository)) {
     throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "repository is outside the approved scope");
   }
+  if (body.planId !== undefined && target.planId !== undefined && body.planId !== target.planId) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "plan id is not the approved plan");
+  }
+  if (body.targets !== undefined && target.targets !== undefined) {
+    if (JSON.stringify(body.targets) !== JSON.stringify(target.targets)) {
+      throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "targets are not the approved resources");
+    }
+  }
+  if (body.contentDigest !== undefined && target.contentDigest !== undefined && body.contentDigest !== target.contentDigest) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "content is not the approved change");
+  }
 }
 
-type LedgerEntry = { status: "completed" | "started"; result?: unknown };
+export function assertExecutionPayload(payload: unknown, body: AuthorizationBody, action: string): ExecutionRequest {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "execution payload is required");
+  }
+  const rec = payload as Record<string, unknown>;
+  const extra = Object.keys(rec).filter(
+    (key) => !(EXECUTION_PAYLOAD_KEYS as readonly string[]).includes(key),
+  );
+  if (extra.length) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `unauthorized payload fields: ${extra.join(",")}`);
+  }
+  for (const key of EXECUTION_PAYLOAD_KEYS) {
+    if (rec[key] === undefined) {
+      throw new WorkflowError("APPROVAL_REQUIRED", `missing mandatory execution field ${key}`);
+    }
+  }
+  if (typeof rec.planId !== "string" || typeof rec.planFingerprint !== "string") {
+    throw new WorkflowError("APPROVAL_REQUIRED", "plan identity fields are required");
+  }
+  if (typeof rec.provider !== "string" || typeof rec.instanceId !== "string") {
+    throw new WorkflowError("APPROVAL_REQUIRED", "provider fields are required");
+  }
+  if (typeof rec.operation !== "string" || typeof rec.action !== "string") {
+    throw new WorkflowError("APPROVAL_REQUIRED", "operation fields are required");
+  }
+  if (typeof rec.workItemId !== "string" || typeof rec.repository !== "string") {
+    throw new WorkflowError("APPROVAL_REQUIRED", "work item and repository are required");
+  }
+  if (!Array.isArray(rec.targets) || rec.targets.some((item) => typeof item !== "string")) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "targets must be a string array");
+  }
+  if (typeof rec.contentDigest !== "string") {
+    throw new WorkflowError("APPROVAL_REQUIRED", "contentDigest is required");
+  }
+  if (rec.action !== action) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "payload action does not match execute --action");
+  }
+  if (!body.planId || !body.targets || body.contentDigest === undefined) {
+    throw new WorkflowError(
+      "APPROVAL_REQUIRED",
+      "authorization is not bound to plan id, targets, and content; refuse execution",
+    );
+  }
+  authorizationMatches(body, {
+    planId: rec.planId,
+    planFingerprint: rec.planFingerprint,
+    provider: rec.provider,
+    instanceId: rec.instanceId,
+    operation: rec.operation,
+    action: rec.action,
+    workItemId: rec.workItemId,
+    repository: rec.repository,
+    targets: rec.targets,
+    contentDigest: rec.contentDigest,
+  });
+  if (body.content !== undefined && approvedContentDigest(body.content) !== body.contentDigest) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization content digest does not match bound content");
+  }
+  return {
+    consumptionId: body.consumptionId,
+    planId: rec.planId,
+    planFingerprint: rec.planFingerprint,
+    provider: rec.provider,
+    instanceId: rec.instanceId,
+    operation: rec.operation,
+    action: rec.action,
+    workItemId: rec.workItemId,
+    repository: rec.repository,
+    targets: rec.targets,
+    contentDigest: rec.contentDigest,
+  };
+}
+
+export type LedgerStatus = "started" | "completed" | "failed" | "requires_reconciliation";
+
+export type LedgerEntry = {
+  status: LedgerStatus;
+  requestFingerprint: string;
+  result?: unknown;
+  error?: string;
+};
 
 function ledgerFile(ledger: string, consumptionId: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(consumptionId)) {
@@ -265,7 +412,58 @@ export function readLedgerEntry(ledger: string, consumptionId: string): LedgerEn
 
 export function writeLedgerEntry(ledger: string, consumptionId: string, entry: LedgerEntry): void {
   mkdirSync(ledger, { recursive: true });
-  writeFileSync(ledgerFile(ledger, consumptionId), `${JSON.stringify(entry)}\n`);
+  const dest = ledgerFile(ledger, consumptionId);
+  const tmp = `${dest}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(entry)}\n`);
+  renameSync(tmp, dest);
+}
+
+/** Atomically create a started ledger row. Concurrent callers lose the reservation. */
+export function reserveLedgerEntry(
+  ledger: string,
+  consumptionId: string,
+  requestFingerprint: string,
+): { created: boolean; entry: LedgerEntry } {
+  mkdirSync(ledger, { recursive: true });
+  const dest = ledgerFile(ledger, consumptionId);
+  const entry: LedgerEntry = { status: "started", requestFingerprint };
+  try {
+    const fd = openSync(dest, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    try {
+      writeSync(fd, `${JSON.stringify(entry)}\n`);
+    } finally {
+      closeSync(fd);
+    }
+    return { created: true, entry };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      const existing = readLedgerEntry(ledger, consumptionId);
+      if (!existing) {
+        throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", "ledger reservation conflict");
+      }
+      return { created: false, entry: existing };
+    }
+    throw error;
+  }
+}
+
+export function completeLedgerEntry(
+  ledger: string,
+  consumptionId: string,
+  requestFingerprint: string,
+  result: unknown,
+): void {
+  writeLedgerEntry(ledger, consumptionId, { status: "completed", requestFingerprint, result });
+}
+
+export function failLedgerEntry(
+  ledger: string,
+  consumptionId: string,
+  requestFingerprint: string,
+  error: string,
+  status: Extract<LedgerStatus, "failed" | "requires_reconciliation"> = "failed",
+): void {
+  writeLedgerEntry(ledger, consumptionId, { status, requestFingerprint, error });
 }
 
 export function storyConfirmationDigest(input: {
