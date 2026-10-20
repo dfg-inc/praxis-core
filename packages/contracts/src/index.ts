@@ -439,6 +439,8 @@ export {
   commandFingerprint,
   applyWorkflowCommand,
   storyContentFingerprint,
+  decisionContentFingerprint,
+  serviceGrantSubject,
   exportWorkflowSnapshot,
   renderWorkflowSnapshotHtml,
   BULK_IMPORT_REQUIREMENTS,
@@ -515,6 +517,8 @@ export {
   renderActionPlanForHuman,
 } from "./action-plan.js";
 export type { ActionPlan, DecisionKind } from "./action-plan.js";
+export { HUMAN_GRANT_KIND, humanGrantContent, verifyHumanGrant } from "./grants.js";
+export type { HumanGrantAction } from "./grants.js";
 export { assessApprovalDeployment, assertSecureDeploymentAssessment } from "./deployment.js";
 export type { DeploymentAssessment, DeploymentFinding, DeploymentProbe, DeploymentTier } from "./deployment.js";
 export {

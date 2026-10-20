@@ -67,7 +67,6 @@ function workflowWithStories() {
       action: "record-decision",
       id: `DEC-${String(index).padStart(3, "0")}`,
       statement: `Decision ${index}`,
-      confirmed: true,
       rationale: `rationale-${(index % 5) + 1}`,
       notes: index === 1 ? "decision note" : undefined,
     }).state;
@@ -76,9 +75,11 @@ function workflowWithStories() {
 }
 
 describe("story confirmation", () => {
-  it("does not confirm unseen stories when DEC-001 through DEC-011 are approved", () => {
+  it("does not confirm unseen stories when DEC-001 through DEC-011 are recorded", () => {
     const state = workflowWithStories();
-    expect(state.decisions.filter((decision) => decision.confirmed)).toHaveLength(11);
+    // Recording a decision never confirms it, and recording decisions never confirms a story.
+    expect(state.decisions).toHaveLength(11);
+    expect(state.decisions.filter((decision) => decision.confirmed)).toHaveLength(0);
     expect(state.stories).toHaveLength(4);
     expect(state.stories.every((item) => item.confirmedBehavior === false)).toBe(true);
     expect(state.stories.every((item) => item.status === "proposed")).toBe(true);

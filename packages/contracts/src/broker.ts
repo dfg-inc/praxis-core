@@ -13,7 +13,7 @@ import {
 import { relative, resolve } from "node:path";
 import { canonicalize } from "./approval.js";
 import { assertSecureDeploymentAssessment, assessApprovalDeployment } from "./deployment.js";
-import { decisionKindFor, DecisionKindSchema } from "./action-plan.js";
+import { decisionKindFor, DecisionKindSchema } from "./authority.js";
 import { WorkflowError } from "./workflow.js";
 
 /**

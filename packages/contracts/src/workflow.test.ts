@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { rollupStoryVerdict } from "./story.js";
+import { decisionGrant, useEphemeralBroker } from "./grant-test-helpers.js";
 import {
   applyWorkflowCommand,
   BULK_IMPORT_REQUIREMENTS,
@@ -460,8 +461,16 @@ describe("capabilities, Jira failure, compatibility", () => {
       action: "record-decision",
       id: "ADR-ROLES",
       statement: "The role column accepts organization admin and member.",
-      confirmed: true,
     }).state;
+    // Recorded, not confirmed: the stage does not advance on an agent's say-so.
+    expect(state.stage).not.toBe("ready");
+    const broker = useEphemeralBroker();
+    try {
+      state = applyWorkflowCommand(state, { action: "confirm-decision", id: "ADR-ROLES", ...decisionGrant(state, "ADR-ROLES", broker.keys.privateKeyPem) }).state;
+    } finally {
+      broker.restore();
+    }
+    expect(state.decisions.find((item) => item.id === "ADR-ROLES")?.confirmed).toBe(true);
     expect(state.stage).toBe("ready");
     state = applyWorkflowCommand(state, {
       action: "record-implementation",

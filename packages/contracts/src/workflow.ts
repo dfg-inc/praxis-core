@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import { z } from "zod";
+import { humanGrantContent, verifyHumanGrant } from "./grants.js";
 import {
   assertStoryNarrative,
   ChangeRecordSchema,
@@ -513,7 +514,7 @@ function fingerprintPayload(payload: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`;
 }
 
-function canonicalValue(value: unknown): unknown {
+export function canonicalValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalValue);
   if (value && typeof value === "object") {
     const source = value as Record<string, unknown>;
@@ -530,38 +531,38 @@ function storyGrantDigest(input: { storyId: string; revision: number; contentFin
   return `sha256:${createHash("sha256").update(JSON.stringify(canonicalValue(input))).digest("hex")}`;
 }
 
-function verifyStoryGrant(token: string, expectedFingerprint: string, storyId: string): void {
-  if (process.env.PRAXIS_APPROVAL_PRIVATE_KEY?.trim()) {
-    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval signing key is visible to this process; secure mode refuses");
-  }
-  const keyPath = process.env.PRAXIS_APPROVAL_PRIVATE_KEY_PATH?.trim();
-  if (keyPath) {
-    try {
-      accessSync(keyPath, constants.R_OK);
-      throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval signing key is visible to this process; secure mode refuses");
-    } catch (error) {
-      if (error instanceof WorkflowError) throw error;
-    }
-  }
-  const publicKey = process.env.PRAXIS_APPROVAL_PUBLIC_KEY?.trim();
-  if (!publicKey) {
-    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "story confirmation requires the approval public key");
-  }
-  let parsed: { body?: Record<string, unknown>; signature?: string };
-  try {
-    parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
-  } catch {
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
-  }
-  if (!parsed?.body || typeof parsed.signature !== "string") {
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
-  }
-  const ok = verify(null, Buffer.from(JSON.stringify(canonicalValue(parsed.body))), createPublicKey(publicKey), Buffer.from(parsed.signature, "base64"));
-  if (!ok) throw new WorkflowError("APPROVAL_REQUIRED", "authorization signature is not valid");
-  const body = parsed.body;
-  if (body.planFingerprint !== expectedFingerprint || !Array.isArray(body.workItemIds) || !body.workItemIds.includes(storyId) || body.action !== "confirm-story") {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "authorization is not for this story revision");
-  }
+export function decisionContentFingerprint(decision: {
+  id: string;
+  statement: string;
+  rationale?: string;
+  notes?: string;
+  revision: number;
+}): string {
+  return fingerprintPayload({
+    id: decision.id,
+    revision: decision.revision,
+    statement: decision.statement,
+    rationale: decision.rationale ?? null,
+    notes: decision.notes ?? null,
+  });
+}
+
+/** What approving a service binds: the service as recorded and the implementation it rests on. */
+export function serviceGrantSubject(
+  state: Pick<WorkflowState, "workItem" | "implementationUnits">,
+  service: Service,
+): Record<string, unknown> {
+  const { status: _status, ...rest } = service;
+  return {
+    workItemId: state.workItem.id,
+    serviceId: service.id,
+    status: service.status,
+    serviceDigest: fingerprintPayload(rest),
+    implementation: state.implementationUnits
+      .filter((unit) => unit.serviceId === service.id && !unit.stale)
+      .map((unit) => ({ id: unit.id, path: unit.path, summary: unit.summary }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  };
 }
 
 export function storyContentFingerprint(story: {
@@ -1094,6 +1095,8 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("set-service"),
     service: ServiceSchema,
+    /** Broker-signed grant. Required to move a service to approved or completed. */
+    authorization: z.string().min(1).optional(),
   }),
   z.object({
     action: z.literal("clarify"),
@@ -1115,9 +1118,17 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     action: z.literal("record-decision"),
     id: z.string().min(1),
     statement: z.string().min(1),
-    confirmed: z.boolean(),
+    /** Recording a decision never confirms it; confirmation is a human grant (confirm-decision). */
+    confirmed: z.boolean().default(false),
     rationale: z.string().optional(),
     notes: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("confirm-decision"),
+    id: z.string().min(1),
+    revision: z.number().int().positive(),
+    contentFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    authorization: z.string().min(1),
   }),
   z.object({
     action: z.literal("record-context"),
@@ -1251,6 +1262,25 @@ export function applyWorkflowCommand(
     return { state: next, duplicate: false, result: { requirementId: command.id } };
   }
   if (command.action === "set-service") {
+    const previous = state.services.find((service) => service.id === command.service.id);
+    const approving = command.service.status === "approved" || command.service.status === "completed";
+    const unchanged = previous !== undefined && fingerprintPayload(previous) === fingerprintPayload(command.service);
+    if (approving && !unchanged) {
+      // Marking a service approved is an act of authority, not a progress note: it needs a human grant bound
+      // to this service as recorded and the implementation under it.
+      if (!command.authorization) {
+        throw new WorkflowError(
+          "SERVICE_APPROVAL_REQUIRED",
+          `service ${command.service.id} cannot be marked ${command.service.status} by an agent; a human grant (approve-service) is required`,
+        );
+      }
+      verifyHumanGrant({
+        token: command.authorization,
+        action: "approve-service",
+        targetId: command.service.id,
+        content: humanGrantContent("approve-service", serviceGrantSubject(state, command.service)),
+      });
+    }
     const services = [
       ...state.services.filter((service) => service.id !== command.service.id),
       command.service,
@@ -1280,7 +1310,36 @@ export function applyWorkflowCommand(
       result: { questions: asked, continued: state.requirements.map((item) => item.id) },
     };
   }
+  if (command.action === "confirm-decision") {
+    const decision = state.decisions.find((item) => item.id === command.id);
+    if (!decision) throw new WorkflowError("DECISION_NOT_FOUND", `decision ${command.id} is not in this workflow`);
+    if (decision.revision !== command.revision) {
+      throw new WorkflowError("DECISION_REVISION", `decision ${command.id} revision ${decision.revision} is not ${command.revision}`);
+    }
+    const contentFingerprint = decisionContentFingerprint(decision);
+    if (contentFingerprint !== command.contentFingerprint) {
+      throw new WorkflowError("DECISION_FINGERPRINT", `decision ${command.id} content is not the reviewed revision`);
+    }
+    verifyHumanGrant({
+      token: command.authorization,
+      action: "confirm-decision",
+      targetId: decision.id,
+      content: humanGrantContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint }),
+    });
+    const decisions = state.decisions.map((item) => (item.id === decision.id ? { ...item, confirmed: true } : item));
+    let confirmed: WorkflowState = { ...state, decisions };
+    if (confirmed.stage === "clarification_required" && TRANSITIONS[confirmed.stage].includes("ready")) {
+      confirmed = { ...transition(confirmed, "ready", `decision ${command.id} confirmed`), decisions };
+    }
+    return { state: confirmed, duplicate: false, result: { decisionId: command.id, confirmed: true } };
+  }
   if (command.action === "record-decision") {
+    if (command.confirmed) {
+      throw new WorkflowError(
+        "DECISION_CONFIRMATION_REQUIRED",
+        "recording a decision cannot confirm it; record it, then confirm the exact revision with a human grant (confirm-decision)",
+      );
+    }
     const decisions = [
       ...state.decisions.filter((item) => item.id !== command.id),
       {
@@ -1379,15 +1438,13 @@ export function applyWorkflowCommand(
     if (contentFingerprint !== command.contentFingerprint) {
       throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the reviewed revision`);
     }
-    verifyStoryGrant(
-      command.authorization,
-      storyGrantDigest({
-        storyId: story.id,
-        revision: story.revision,
-        contentFingerprint,
-      }),
-      story.id,
-    );
+    verifyHumanGrant({
+      token: command.authorization,
+      action: "confirm-story",
+      targetId: story.id,
+      content: humanGrantContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint }),
+      legacyPlanFingerprint: storyGrantDigest({ storyId: story.id, revision: story.revision, contentFingerprint }),
+    });
     const stories = state.stories.map((item) =>
       item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" as const } : item,
     );

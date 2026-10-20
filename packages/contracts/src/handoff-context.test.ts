@@ -109,7 +109,6 @@ describe("handoff context carry-forward", () => {
       action: "record-decision",
       id: "DEC-HOF-901",
       statement: "Carry forward",
-      confirmed: true,
       rationale: "history",
       notes: "decision note",
     }).state;

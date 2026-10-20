@@ -21,7 +21,7 @@ import {
   securityMode,
   verifyAuthorization,
 } from "./broker.js";
-import { decisionKindFor, type DecisionKind } from "./action-plan.js";
+import { decisionKindFor, type DecisionKind } from "./authority.js";
 import { WorkflowError } from "./workflow.js";
 
 export const APPROVAL_RECORD_CONTRACT = "praxis.approval.record";
