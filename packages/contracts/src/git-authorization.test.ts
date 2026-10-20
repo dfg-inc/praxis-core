@@ -9,6 +9,8 @@ import {
   generateApprovalKeyPair,
   gitPlanId,
   planTtlMs,
+  assertApprovalChannelAcceptable,
+  isHumanApprovalChannel,
   readInboxPlan,
   signAuthorization,
   type ActionPlan,
@@ -314,5 +316,24 @@ describe("git authorization through the broker inbox", () => {
     process.env.PRAXIS_APPROVAL_PLAN_TTL_MS = "garbage";
     expect(planTtlMs()).toBe(3_600_000);
     delete process.env.PRAXIS_APPROVAL_PLAN_TTL_MS;
+  });
+
+  it("a production build accepts only an approval a person gave; a machine channel or an unrecorded one is refused", () => {
+    expect(isHumanApprovalChannel("webauthn:abcdef123456")).toBe(true);
+    expect(isHumanApprovalChannel("operator-socket")).toBe(true);
+    expect(isHumanApprovalChannel("machine")).toBe(false);
+    expect(isHumanApprovalChannel(undefined)).toBe(false);
+    const saved = process.env.PRAXIS_BUNDLE_KIND;
+    process.env.PRAXIS_BUNDLE_KIND = "production";
+    try {
+      expect(() => assertApprovalChannelAcceptable({ channel: "machine" })).toThrow(/not accepted by a production build/);
+      expect(() => assertApprovalChannelAcceptable({})).toThrow(/unrecorded/);
+      expect(() => assertApprovalChannelAcceptable({ channel: "webauthn:abcdef123456" })).not.toThrow();
+    } finally {
+      if (saved === undefined) delete process.env.PRAXIS_BUNDLE_KIND;
+      else process.env.PRAXIS_BUNDLE_KIND = saved;
+    }
+    // a source or test build does not care, so the fixtures keep working
+    expect(() => assertApprovalChannelAcceptable({ channel: "machine" })).not.toThrow();
   });
 });

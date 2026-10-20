@@ -1,6 +1,6 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { accessSync, constants, readFileSync } from "node:fs";
-import { assertSecureDeploymentAssessment, assessApprovalDeployment, testIdentityOverrideActive } from "./deployment.js";
+import { assertApprovalChannelAcceptable, assertSecureDeploymentAssessment, assessApprovalDeployment, testIdentityOverrideActive } from "./deployment.js";
 import { canonicalValue, WorkflowError } from "./workflow.js";
 
 // Deliberately independent of broker.ts and approval.ts: those evaluate workflow schemas when loaded, and the
@@ -19,6 +19,7 @@ type GrantBody = {
   planFingerprint?: string;
   issuedAt?: string;
   expiresAt?: string;
+  channel?: string;
 };
 
 function verifyToken(token: string, publicKeyPem: string, now: Date): GrantBody {
@@ -137,6 +138,7 @@ export function verifyHumanGrant(input: {
     assertSecureDeploymentAssessment(assessApprovalDeployment());
   }
   const body = verifyToken(input.token, publicKey(), input.now ?? new Date());
+  assertApprovalChannelAcceptable(body);
   const kind = HUMAN_GRANT_KIND[input.action];
   if (body.action !== input.action) {
     throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `this approval is for ${body.action}, not ${input.action}`);

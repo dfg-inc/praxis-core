@@ -8,6 +8,7 @@ import {
   readLedgerEntry,
   verifyAuthorization,
 } from "./broker.js";
+import { assertApprovalChannelAcceptable } from "./deployment.js";
 import { inboxStatus, operatorPageUrl, proposeInboxPlan, readInboxPlan, readInboxToken } from "./broker-inbox.js";
 import { runAuthorizedMutation, type MutationRequest } from "./approval-store.js";
 import { WorkflowError } from "./workflow.js";
@@ -182,6 +183,7 @@ export async function authorizeGitOperation<T>(input: GitAuthorizeInput<T>): Pro
   if (!stored) throw new WorkflowError("APPROVAL_REQUIRED", `a token exists for ${planId} but its plan is not in the inbox; refusing`);
   const plan = stored.plan;
   const body = verifyAuthorization(token, publicKeyPem, now);
+  assertApprovalChannelAcceptable(body);
 
   const action = plan.actions[0]!;
   const content = action.content ?? "";

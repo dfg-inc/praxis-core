@@ -270,3 +270,17 @@ export function assertSecureDeploymentAssessment(assessment: DeploymentAssessmen
     `${assessment.tier} deployment (${reasons.join(", ") || "no secure configuration"}): approval isolation is not available, so protected mutations are refused`,
   );
 }
+
+export function isHumanApprovalChannel(channel: string | undefined): boolean {
+  return typeof channel === "string" && (channel.startsWith("webauthn:") || channel === "operator-socket");
+}
+
+/** In a production build an approval must carry a human channel. Source and test builds accept any. */
+export function assertApprovalChannelAcceptable(body: { channel?: string }): void {
+  if (productionBuild() && !isHumanApprovalChannel(body.channel)) {
+    throw new WorkflowError(
+      "APPROVAL_SELF_GRANT_FORBIDDEN",
+      `an approval issued through the "${body.channel ?? "unrecorded"}" channel is not accepted by a production build; the owner must decide at the operator page`,
+    );
+  }
+}

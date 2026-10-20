@@ -642,3 +642,5 @@ export {
 } from "./git-authorization.js";
 
 export { productionBuild, testIdentityOverrideActive } from "./deployment.js";
+
+export { isHumanApprovalChannel, assertApprovalChannelAcceptable } from "./deployment.js";

@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { relative, resolve } from "node:path";
 import { canonicalize } from "./approval.js";
-import { assertSecureDeploymentAssessment, assessApprovalDeployment, testIdentityOverrideActive } from "./deployment.js";
+import { assertApprovalChannelAcceptable, assertSecureDeploymentAssessment, assessApprovalDeployment, productionBuild, testIdentityOverrideActive } from "./deployment.js";
 import { decisionKindFor, DecisionKindSchema } from "./authority.js";
 import { WorkflowError } from "./workflow.js";
 
@@ -52,7 +52,14 @@ export type AuthorizationBody = {
   contentDigest?: string;
   /** The kind of decision approved (requirement, architecture, story, development, quality, git, tracker). */
   decisionKind?: string;
+  /**
+   * How the owner decided, signed into the token by the broker: "webauthn:<credential>" (operator page with an
+   * authenticator), "operator-socket" (operator console), or "machine" (automation/test). A production build
+   * accepts only the first two, so a machine-issued token cannot pass for a person's approval.
+   */
+  channel?: string;
 };
+
 
 export type ExecutionRequest = {
   consumptionId: string;
