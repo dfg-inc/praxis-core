@@ -35,6 +35,7 @@ import {
   type QualityLifecycleSnapshot,
   type QualityCommentReadback,
 } from "@praxis/jira/workflow";
+import { doctorNextSteps, providerDiagnostics, securityDiagnostics } from "./diagnostics.js";
 import { VcsError, githubTokenFlags, gitlabTokenFlags, type GitDeliveryJournal, type GitWriteFields } from "@praxis/vcs";
 import {
   inspectMutation,
@@ -239,6 +240,30 @@ export function scrubUnexpandedPlaceholders(env: NodeJS.ProcessEnv = process.env
 
 let hostPlaceholdersIgnored: string[] = [];
 
+/**
+ * Keys that decide who may approve a mutation. Repository files are writable by the agent, so
+ * they must never supply these: only the operator's real environment can.
+ */
+const DOTENV_FORBIDDEN_PREFIXES = [
+  "PRAXIS_SECURITY_",
+  "PRAXIS_APPROVAL_",
+  "PRAXIS_BROKER_",
+  "PRAXIS_DEPLOYMENT_",
+  "PRAXIS_ALLOW_",
+  "PRAXIS_FIXTURE_",
+];
+
+let dotenvRejected: string[] = [];
+
+/** Names (never values) of trust-configuration keys a repository file tried to set. */
+export function dotenvRejectedKeys(): string[] {
+  return dotenvRejected;
+}
+
+function dotenvKeyForbidden(key: string): boolean {
+  return DOTENV_FORBIDDEN_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
 export function loadPraxisDotenv(repo: string): void {
   const removed = scrubUnexpandedPlaceholders();
   if (removed.length) {
@@ -252,7 +277,12 @@ export function loadPraxisDotenv(repo: string): void {
     if (!existsSync(p)) continue;
     for (const line of readFileSync(p, "utf8").split("\n")) {
       const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-      if (!m || process.env[m[1]!]) continue;
+      if (!m) continue;
+      if (dotenvKeyForbidden(m[1]!)) {
+        if (!dotenvRejected.includes(m[1]!)) dotenvRejected = [...dotenvRejected, m[1]!].sort();
+        continue;
+      }
+      if (process.env[m[1]!]) continue;
       process.env[m[1]!] = m[2]!.replace(/^["']|["']$/g, "");
     }
   }
@@ -586,6 +616,12 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
   };
   const github = githubTokenFlags();
   const gitlab = gitlabTokenFlags();
+  const providers = providerDiagnostics(process.env, {
+    configured: github.apiUrlConfigured,
+    valid: github.apiUrlValid !== false,
+    issue: github.apiUrlIssue,
+  });
+  const security = securityDiagnostics(process.env);
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? (git ? "ok" : "no-git") : "unavailable",
@@ -607,6 +643,18 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     quality,
     capabilities,
     hostPlaceholdersIgnored,
+    dotenvRejected,
+    providers,
+    security,
+    nextSteps: doctorNextSteps({
+      repoExists,
+      gitRoot: Boolean(git),
+      project: project.status,
+      quality: { status: qualityProbe.status, logPath: (qualityProbe as { logPath?: string }).logPath },
+      providers,
+      security,
+      dotenvRejected,
+    }),
     codes: {
       repository:
         capabilities.repository === "unavailable" ? OP_CODES.REPOSITORY_UNAVAILABLE : undefined,
