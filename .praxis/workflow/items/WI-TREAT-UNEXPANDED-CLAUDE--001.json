@@ -1,0 +1,473 @@
+{
+  "contract": "praxis.workflow.state",
+  "version": "1.0.0",
+  "workflowId": "WF-WI-TREAT-UNEXPANDED-CLAUDE--001",
+  "projectId": "praxis-core",
+  "workItem": {
+    "id": "WI-TREAT-UNEXPANDED-CLAUDE--001",
+    "projectId": "praxis-core",
+    "title": "Treat unexpanded Claude Desktop ${user_config.*} placeholders as unset configuration",
+    "source": "repository",
+    "status": "in_progress",
+    "revision": 2
+  },
+  "requirements": [
+    {
+      "id": "REQ-CFG-001",
+      "statement": "A PRAXIS_* environment value that is exactly an unexpanded host template placeholder (whole value of the form ${...}, e.g. ${user_config.gitlab_token}) must be treated as unset by every Runtime configuration consumer.",
+      "revision": 1,
+      "status": "proposed",
+      "acceptanceCriteria": [
+        {
+          "id": "REQ-CFG-001-AC-01",
+          "requirementId": "REQ-CFG-001",
+          "statement": "Given PRAXIS_GITLAB_TOKEN='${user_config.gitlab_token}' and PRAXIS_GITLAB_BASE_URL='${user_config.gitlab_base_url}', praxis_doctor reports gitlab.tokenConfigured=false and baseUrlConfigured=false.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-CFG-001-AC-02",
+          "requirementId": "REQ-CFG-001",
+          "statement": "Given PRAXIS_GITHUB_API_URL='${user_config.github_api_url}', praxis_doctor reports github.apiUrlConfigured=false, apiUrlValid=true and no GITHUB_API_URL_INVALID code.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-CFG-001-AC-03",
+          "requirementId": "REQ-CFG-001",
+          "statement": "Given a placeholder in process env and a real value for the same key in the repository .env.praxis/.env, the repository value is used.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-CFG-001-AC-04",
+          "requirementId": "REQ-CFG-001",
+          "statement": "Real values, including values that merely contain '${' inside a longer string, are not altered.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-CFG-001-AC-05",
+          "requirementId": "REQ-CFG-001",
+          "statement": "Non-PRAXIS_ environment variables are never modified.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-CFG-001-AC-06",
+          "requirementId": "REQ-CFG-001",
+          "statement": "No secret value is logged or returned; only key names may be reported.",
+          "revision": 1
+        }
+      ],
+      "serviceIds": [
+        "praxis-core-cli"
+      ],
+      "assumptionIds": []
+    }
+  ],
+  "services": [
+    {
+      "id": "praxis-core-cli",
+      "name": "Praxis Core CLI operations",
+      "kind": "module",
+      "repository": "praxis-core",
+      "localPath": "packages/cli",
+      "branch": "feature/tracker-runtime",
+      "responsibilities": [
+        "loadPraxisDotenv env normalization",
+        "doctorOp diagnostics"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "dependsOn": [],
+      "status": "in_progress"
+    },
+    {
+      "id": "praxis-runtime-mcp",
+      "name": "Praxis Runtime MCP server (vendors Core)",
+      "kind": "application",
+      "repository": "praxis-runtime",
+      "localPath": "../praxis-runtime",
+      "branch": "feature/approval-enforcement",
+      "responsibilities": [
+        "Consume rebuilt Core vendor",
+        "Call loadPraxisDotenv per tool call (tools.ts)"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "dependsOn": [
+        "praxis-core-cli"
+      ],
+      "status": "ready"
+    }
+  ],
+  "handoffs": [
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-TREAT-UNEXPANDED-CLAUDE--001",
+      "workItemId": "WI-TREAT-UNEXPANDED-CLAUDE--001",
+      "handoffId": "HO-1",
+      "sourceRole": "ba",
+      "targetRole": "architect",
+      "serviceIds": [
+        "praxis-core-cli"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "acceptanceCriterionIds": [
+        "REQ-CFG-001-AC-01",
+        "REQ-CFG-001-AC-02",
+        "REQ-CFG-001-AC-03",
+        "REQ-CFG-001-AC-04",
+        "REQ-CFG-001-AC-05",
+        "REQ-CFG-001-AC-06"
+      ],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [],
+      "assumptions": [
+        "A whole-value ${...} string is never a legitimate PRAXIS_* value (tokens/URLs never take that form).",
+        "Claude Code plugin .mcp.json uses ${VAR:-default} which the host expands; only Desktop MCPB leaves optional user_config unexpanded."
+      ],
+      "openQuestions": [],
+      "risks": [],
+      "blockers": [],
+      "decisionRecords": [],
+      "resolved": [],
+      "nextActions": [
+        "Choose the single env-normalization boundary",
+        "Decide whether doctor reports scrubbed key names"
+      ],
+      "readiness": "ready",
+      "evidenceRefs": [],
+      "revision": 1,
+      "fingerprint": "sha256:8bdf7a8863bf5afd8dde4a21e36b21faf06eb177a3fe0585433acc07b952af47"
+    },
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-TREAT-UNEXPANDED-CLAUDE--001",
+      "workItemId": "WI-TREAT-UNEXPANDED-CLAUDE--001",
+      "handoffId": "HO-2",
+      "sourceRole": "architect",
+      "targetRole": "developer",
+      "serviceIds": [
+        "praxis-core-cli",
+        "praxis-runtime-mcp"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "acceptanceCriterionIds": [
+        "REQ-CFG-001-AC-01",
+        "REQ-CFG-001-AC-02",
+        "REQ-CFG-001-AC-03",
+        "REQ-CFG-001-AC-04",
+        "REQ-CFG-001-AC-05",
+        "REQ-CFG-001-AC-06"
+      ],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [
+        "DEC-CFG-001"
+      ],
+      "assumptions": [],
+      "openQuestions": [],
+      "risks": [],
+      "blockers": [],
+      "decisionRecords": [],
+      "resolved": [],
+      "nextActions": [
+        "Implement scrubUnexpandedPlaceholders + call in loadPraxisDotenv",
+        "Add doctor hostPlaceholdersIgnored",
+        "Unit tests for AC-01..AC-06",
+        "Rebuild core, repack Core vendor into praxis-runtime, run runtime tests"
+      ],
+      "readiness": "ready",
+      "evidenceRefs": [],
+      "revision": 2,
+      "fingerprint": "sha256:e4243202463ab622d8c0abbdd87d9677a2e284e7b84106727729e033b3cc3484"
+    }
+  ],
+  "findings": [],
+  "verdicts": [
+    {
+      "id": "V-SERVICE-praxis-core-cli-1",
+      "scope": "service",
+      "scopeId": "praxis-core-cli",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "US-CFG-001-CONFIRMATION PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-STORY-2",
+      "scope": "feature",
+      "scopeId": "WI-TREAT-UNEXPANDED-CLAUDE--001",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "independentRerun:true",
+        "US-CFG-001-CONFIRMATION PASS_WITH_RISKS",
+        "US-CFG-001-S1-placeholders-removed:PASS",
+        "US-CFG-001-S2-real-values-kept:PASS",
+        "US-CFG-001-CONFIRMATION:PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-SERVICE-praxis-core-cli-3",
+      "scope": "service",
+      "scopeId": "praxis-core-cli",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "US-CFG-001-CONFIRMATION PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-REQ-CFG-001-4",
+      "scope": "requirement",
+      "scopeId": "REQ-CFG-001",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "independentRerun:true",
+        "story-unconfirmed:US-CFG-001@1",
+        "story:US-CFG-001@1",
+        "US-CFG-001-S1-placeholders-removed:PASS",
+        "US-CFG-001-S2-real-values-kept:PASS"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-STORY-5",
+      "scope": "feature",
+      "scopeId": "WI-TREAT-UNEXPANDED-CLAUDE--001",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "independentRerun:true",
+        "US-CFG-001-CONFIRMATION PASS_WITH_RISKS",
+        "US-CFG-001-S1-placeholders-removed:PASS",
+        "US-CFG-001-S2-real-values-kept:PASS",
+        "US-CFG-001-CONFIRMATION:PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-REQ-CFG-001-6",
+      "scope": "requirement",
+      "scopeId": "REQ-CFG-001",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "story-unconfirmed:US-CFG-001@1",
+        "story:US-CFG-001@1",
+        "US-CFG-001-S1-placeholders-removed:PASS",
+        "US-CFG-001-S2-real-values-kept:PASS",
+        "implementation:sha256:096a0800a4fdc31c76ec57705dcc7eef10d41af76226db3a580b23dda9bb2e18"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-FEATURE-7",
+      "scope": "feature",
+      "scopeId": "WI-TREAT-UNEXPANDED-CLAUDE--001",
+      "verdict": "FAIL",
+      "evidenceRefs": [
+        "REQ-CFG-001 is PASS_WITH_RISKS",
+        "dependency not done: praxis-runtime-mcp",
+        "services are not approved"
+      ],
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "stale": false
+    }
+  ],
+  "decisions": [
+    {
+      "id": "DEC-CFG-001",
+      "statement": "Normalize at loadPraxisDotenv in praxis-core/packages/cli/src/operations.ts: before reading dotenv files (and even when PRAXIS_SKIP_DOTENV=1), delete process.env keys matching ^PRAXIS_ whose trimmed value fully matches ^\\$\\{[^}]*\\}$. Export the helper scrubUnexpandedPlaceholders(env) returning removed key names only. doctorOp adds hostPlaceholdersIgnored: string[] (key names, no values). No provider-level changes; providers keep reading process.env. Runtime picks it up via Core vendor rebuild; no manifest change in this item.",
+      "confirmed": true,
+      "revision": 2
+    }
+  ],
+  "openQuestions": [],
+  "risks": [],
+  "blockers": [],
+  "assumptions": [],
+  "implementationUnits": [
+    {
+      "id": "IMPL-CFG-001",
+      "serviceId": "praxis-core-cli",
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "path": "packages/cli/src/operations.ts",
+      "summary": "scrubUnexpandedPlaceholders() removes whole-value ${...} PRAXIS_* env values (returns key names only); loadPraxisDotenv calls it before dotenv and before the PRAXIS_SKIP_DOTENV early return; doctorOp exposes hostPlaceholdersIgnored. Tests: packages/cli/src/host-placeholders.test.ts (4 tests; verified failing without the fix).",
+      "contractRef": "DEC-CFG-001",
+      "stale": false
+    },
+    {
+      "id": "IMPL-CFG-002",
+      "serviceId": "praxis-runtime-mcp",
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "path": "plugins/runtime/server/praxis-mcp.cjs",
+      "summary": "praxis-runtime 7f34c37: Core vendor repacked from praxis-core 9c3e021 via pack-core-vendor.mjs, lock integrity updated, bundle regenerated. Stdio MCP praxis_doctor with ${user_config.*} env: gitlab unset, github apiUrlValid=true, hostPlaceholdersIgnored lists 3 keys. 0d7e568 fixes the pre-existing tsc failure.",
+      "contractRef": "DEC-CFG-001",
+      "stale": false
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-CFG-001",
+      "requirementIds": [
+        "REQ-CFG-001"
+      ],
+      "actor": "Claude Desktop operator",
+      "narrative": "As a Claude Desktop operator, I want optional Praxis Runtime settings I left blank to be reported as not configured, so that diagnostics and providers never act on placeholder text.",
+      "objective": "Blank optional extension settings are unset",
+      "userValue": "Accurate praxis_doctor output and no provider calls with placeholder credentials",
+      "preconditions": [
+        "Praxis Runtime installed as a Desktop extension with optional GitHub/GitLab settings blank"
+      ],
+      "happyPath": [
+        "Desktop starts the Runtime with PRAXIS_GITLAB_TOKEN='${user_config.gitlab_token}'",
+        "Operator calls praxis_doctor",
+        "Doctor reports gitlab.tokenConfigured=false and lists the key in hostPlaceholdersIgnored"
+      ],
+      "alternatives": [
+        "A repository .env.praxis supplies a real value for the key; that value is used"
+      ],
+      "negative": [
+        "A value containing '${' inside a longer string is kept unchanged",
+        "A non-PRAXIS_ variable holding a placeholder is not modified"
+      ],
+      "edgeCases": [
+        "Placeholder surrounded by whitespace is still treated as unset",
+        "PRAXIS_SKIP_DOTENV=1 still scrubs placeholders"
+      ],
+      "businessRules": [
+        "Only whole-value ${...} placeholders on PRAXIS_* keys are removed",
+        "Only key names are reported, never values"
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "US-CFG-001-AC-01",
+          "given": "PRAXIS_GITLAB_TOKEN and PRAXIS_GITHUB_API_URL hold ${user_config.*} placeholders",
+          "when": "placeholders are scrubbed",
+          "then": "both keys are removed and only their names are returned"
+        },
+        {
+          "id": "US-CFG-001-AC-02",
+          "given": "PRAXIS_NOTE='prefix-${x}' and UNRELATED='${x}'",
+          "when": "placeholders are scrubbed",
+          "then": "both values are unchanged and nothing is returned"
+        }
+      ],
+      "expectedResults": [
+        "praxis_doctor no longer reports blank optional settings as configured or invalid"
+      ],
+      "dependencies": [],
+      "assumptionIds": [],
+      "unresolvedDecisionIds": [],
+      "serviceIds": [
+        "praxis-core-cli"
+      ],
+      "revision": 1,
+      "status": "proposed",
+      "confirmedBehavior": false,
+      "stale": false
+    }
+  ],
+  "coverage": [
+    {
+      "storyId": "US-CFG-001",
+      "storyRevision": 1,
+      "requirementId": "REQ-CFG-001",
+      "acceptanceCriterionId": "US-CFG-001-AC-01",
+      "scenarioId": "US-CFG-001-S1-placeholders-removed",
+      "kind": "happy",
+      "serviceId": "praxis-core-cli",
+      "repository": "praxis-core",
+      "implementationPath": "dist/operations.js",
+      "testRef": "dist/operations.js",
+      "evidence": [
+        "level:unit",
+        "expected:[\"PRAXIS_GITLAB_TOKEN\",\"PRAXIS_GITHUB_API_URL\"]",
+        "observed:[\"PRAXIS_GITLAB_TOKEN\",\"PRAXIS_GITHUB_API_URL\"]"
+      ],
+      "status": "PASS",
+      "critical": true
+    },
+    {
+      "storyId": "US-CFG-001",
+      "storyRevision": 1,
+      "requirementId": "REQ-CFG-001",
+      "acceptanceCriterionId": "US-CFG-001-AC-02",
+      "scenarioId": "US-CFG-001-S2-real-values-kept",
+      "kind": "negative",
+      "serviceId": "praxis-core-cli",
+      "repository": "praxis-core",
+      "implementationPath": "dist/operations.js",
+      "testRef": "dist/operations.js",
+      "evidence": [
+        "level:unit",
+        "expected:[]",
+        "observed:[]"
+      ],
+      "status": "PASS",
+      "critical": false
+    },
+    {
+      "storyId": "US-CFG-001",
+      "storyRevision": 1,
+      "requirementId": "REQ-CFG-001",
+      "acceptanceCriterionId": "US-CFG-001-AC-01",
+      "scenarioId": "US-CFG-001-CONFIRMATION",
+      "kind": "happy",
+      "serviceId": "praxis-core-cli",
+      "repository": "",
+      "implementationPath": "",
+      "testRef": "",
+      "evidence": [
+        "story behavior is an assumption until BA confirms it"
+      ],
+      "status": "PASS_WITH_RISKS",
+      "critical": false
+    }
+  ],
+  "changes": [],
+  "stage": "in_progress",
+  "history": [
+    {
+      "revision": 1,
+      "stage": "draft",
+      "note": "Claude Desktop passes optional extension settings left blank (github_api_url, gitlab_token, gitlab_base_url) to the Runtime as literal '${user_config.<field>}' strings. Praxis treats them as configured: praxis_doctor reports gitlab.tokenConfigured=true, baseUrlConfigured=true and github apiUrlConfigured=true/apiUrlValid=false (GITHUB_API_URL_INVALID) although the operator configured nothing. The GitLab provider would use the placeholder as token/base URL, and loadPraxisDotenv skips keys already "
+    },
+    {
+      "revision": 2,
+      "stage": "in_progress",
+      "note": "ba → architect"
+    }
+  ]
+}

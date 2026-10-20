@@ -1,0 +1,34 @@
+{
+  "checks": [
+    {
+      "scenarioId": "US-CFG-001-S1-placeholders-removed",
+      "storyId": "US-CFG-001",
+      "requirementId": "REQ-CFG-001",
+      "acceptanceCriterionId": "US-CFG-001-AC-01",
+      "kind": "happy",
+      "serviceId": "praxis-core-cli",
+      "level": "unit",
+      "module": "dist/operations.js",
+      "call": {
+        "function": "scrubUnexpandedPlaceholders",
+        "args": [{ "PRAXIS_GITLAB_TOKEN": "${user_config.gitlab_token}", "PRAXIS_GITHUB_API_URL": "  ${user_config.github_api_url} ", "PRAXIS_JIRA_BASE_URL": "https://example.atlassian.net" }]
+      },
+      "expect": ["PRAXIS_GITLAB_TOKEN", "PRAXIS_GITHUB_API_URL"]
+    },
+    {
+      "scenarioId": "US-CFG-001-S2-real-values-kept",
+      "storyId": "US-CFG-001",
+      "requirementId": "REQ-CFG-001",
+      "acceptanceCriterionId": "US-CFG-001-AC-02",
+      "kind": "negative",
+      "serviceId": "praxis-core-cli",
+      "level": "unit",
+      "module": "dist/operations.js",
+      "call": {
+        "function": "scrubUnexpandedPlaceholders",
+        "args": [{ "PRAXIS_NOTE": "prefix-${x}", "PRAXIS_TRAILING": "${a}b", "UNRELATED": "${x}" }]
+      },
+      "expect": []
+    }
+  ]
+}
