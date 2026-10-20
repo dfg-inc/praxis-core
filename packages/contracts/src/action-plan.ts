@@ -74,7 +74,7 @@ export function decisionKindFor(operation: string, action: string, explicit?: De
   return "development_action";
 }
 
-export const ActionPlanSchema = z.object({
+const ActionPlanBaseSchema = z.object({
   contract: z.literal(ACTION_PLAN_CONTRACT),
   version: z.literal(ACTION_PLAN_VERSION),
   planId: z.string().min(1),
@@ -103,9 +103,21 @@ export const ActionPlanSchema = z.object({
   sideEffects: z.array(z.string()).default([]),
   createdAt: z.string().datetime(),
   expiresAt: z.string().datetime(),
+});
+
+/**
+ * A plan is its content. The fingerprint is not a label the writer chooses: it is recomputed from the plan
+ * as parsed (defaults applied), so a plan whose fingerprint does not match what it says is rejected by every
+ * reader, including the broker that shows it to a human.
+ */
+export const ActionPlanSchema = ActionPlanBaseSchema.extend({
   fingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
 }).superRefine((plan, ctx) => {
   for (const problem of authorityProblems(plan)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem, path: ["operations"] });
+  const { fingerprint, ...body } = plan;
+  if (fingerprint !== actionPlanFingerprint(body)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "plan fingerprint does not match the plan's content", path: ["fingerprint"] });
+  }
 });
 export type ActionPlan = z.infer<typeof ActionPlanSchema>;
 
@@ -117,15 +129,13 @@ export function actionPlanFingerprint(body: Omit<ActionPlan, "fingerprint">): st
 export function buildActionPlan(
   input: Omit<ActionPlan, "contract" | "version" | "fingerprint">,
 ): ActionPlan {
-  const draft = {
+  // Hash the plan as it will be stored (defaults applied) so the fingerprint can be recomputed by any reader.
+  const body = ActionPlanBaseSchema.parse({
     contract: "praxis.action.plan" as const,
     version: 1 as const,
     ...input,
-  };
-  return ActionPlanSchema.parse({
-    ...draft,
-    fingerprint: actionPlanFingerprint(draft),
   });
+  return ActionPlanSchema.parse({ ...body, fingerprint: actionPlanFingerprint(body) });
 }
 
 export function renderActionPlanForHuman(plan: ActionPlan): string {

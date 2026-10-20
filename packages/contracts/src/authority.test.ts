@@ -161,3 +161,31 @@ describe("the executor enforces the approved kind of decision", () => {
     ).toThrow(/development_action/);
   });
 });
+
+describe("a plan's fingerprint is its content, not a label", () => {
+  const plan = buildActionPlan({ ...base, decisionKind: "development_action", operations: ["repository_edit"] });
+
+  it("regression: a stored plan's fingerprint can be recomputed from the stored plan", () => {
+    // Original defect: the hash was taken before schema defaults were applied, so readers could not verify it.
+    const stored = JSON.parse(JSON.stringify(plan));
+    expect(ActionPlanSchema.safeParse(stored).success).toBe(true);
+  });
+
+  it("changing any field, or swapping in another plan's fingerprint, is rejected", () => {
+    const other = buildActionPlan({ ...base, planId: "plan-2", decisionKind: "development_action", operations: ["repository_edit"] });
+    const edits: Array<(p: Record<string, unknown>) => void> = [
+      (p) => (p.summary = "something else"),
+      (p) => ((p.actions as Array<{ targets: string[] }>)[0]!.targets = ["/etc/passwd"]),
+      (p) => (p.instanceId = "elsewhere"),
+      (p) => (p.expiresAt = "2030-01-01T00:00:00.000Z"),
+      (p) => (p.fingerprint = other.fingerprint),
+    ];
+    for (const edit of edits) {
+      const forged = JSON.parse(JSON.stringify(plan));
+      edit(forged);
+      const result = ActionPlanSchema.safeParse(forged);
+      expect(result.success).toBe(false);
+      expect(JSON.stringify((result as { error: unknown }).error)).toMatch(/fingerprint does not match/);
+    }
+  });
+});
