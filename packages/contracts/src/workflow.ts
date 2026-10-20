@@ -100,6 +100,16 @@ export class WorkflowError extends Error {
   }
 }
 
+export const WorkItemRelationSchema = z.enum(["depends-on", "blocks", "relates-to", "derived-from"]);
+
+/** Reference to a work item that lives in another repository (or this one). */
+export const WorkItemLinkSchema = z.object({
+  repository: z.string().min(1),
+  workItemId: z.string().min(1),
+  relation: WorkItemRelationSchema,
+});
+export type WorkItemLink = z.infer<typeof WorkItemLinkSchema>;
+
 export const WorkItemSchema = z.object({
   id: z.string().min(1),
   projectId: z.string().min(1),
@@ -117,6 +127,7 @@ export const WorkItemSchema = z.object({
   instanceId: z.string().min(1).optional(),
   status: WorkflowStageSchema,
   revision: z.number().int().nonnegative(),
+  links: z.array(WorkItemLinkSchema).optional(),
 });
 export type WorkItem = z.infer<typeof WorkItemSchema>;
 
@@ -370,19 +381,25 @@ export function transition(
   };
 }
 
+export function workItemIdFor(title: string, sequence = 1): string {
+  const slug = title
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 24);
+  return `WI-${slug || "WORK"}-${String(sequence).padStart(3, "0")}`;
+}
+
 export function openLocalWorkflow(input: {
   projectId: string;
   title: string;
   source?: WorkItem["source"];
   jiraIssueKey?: string;
   request: string;
+  /** Sequence within the title slug. The store picks the next free one when ids collide. */
+  sequence?: number;
 }): WorkflowState {
-  const slug = input.title
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 24);
-  const workItemId = `WI-${slug || "WORK"}-001`;
+  const workItemId = workItemIdFor(input.title, input.sequence ?? 1);
   const workflowId = `WF-${workItemId}`;
   return WorkflowStateSchema.parse({
     contract: "praxis.workflow.state",
@@ -1023,6 +1040,12 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     request: z.string().min(1),
     source: WorkItemSourceSchema.optional(),
     jiraIssueKey: z.string().min(1).optional(),
+    sequence: z.number().int().positive().optional(),
+  }),
+  z.object({
+    action: z.literal("link-work-item"),
+    target: WorkItemLinkSchema,
+    remove: z.boolean().optional(),
   }),
   z.object({
     action: z.literal("add-requirement"),
@@ -1185,6 +1208,20 @@ export function applyWorkflowCommand(
     return { state: opened, duplicate: false, result: { workflowId: opened.workflowId, workItemId: opened.workItem.id } };
   }
   if (!state) throw new WorkflowError("WORKFLOW_MISSING", "open a workflow before applying commands");
+  if (command.action === "link-work-item") {
+    const same = (link: WorkItemLink) =>
+      link.repository === command.target.repository &&
+      link.workItemId === command.target.workItemId &&
+      link.relation === command.target.relation;
+    const current = state.workItem.links ?? [];
+    const links = command.remove ? current.filter((link) => !same(link)) : current.some(same) ? current : [...current, command.target];
+    const changed = links.length !== current.length;
+    return {
+      state: changed ? { ...state, workItem: { ...state.workItem, links, revision: state.workItem.revision + 1 } } : state,
+      duplicate: !changed,
+      result: { workItemId: state.workItem.id, links },
+    };
+  }
   if (command.action === "add-requirement") {
     const next = addRequirement(state, command);
     return { state: next, duplicate: false, result: { requirementId: command.id } };
