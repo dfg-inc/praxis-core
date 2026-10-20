@@ -125,6 +125,12 @@ export function buildGitPlan(key: GitRequestKey, live: GitDescribed, now = new D
   });
 }
 
+/** The plan the Runtime would write for this request, with another plan's timestamps (so only content can differ). */
+function rebuildWithTimes(key: GitRequestKey, live: GitDescribed, like: ActionPlan): ActionPlan {
+  const created = new Date(like.createdAt);
+  return buildGitPlan(key, live, created, Date.parse(like.expiresAt) - created.getTime());
+}
+
 export class GitApprovalRequired extends WorkflowError {
   readonly details: Record<string, unknown>;
   constructor(code: "APPROVAL_REQUIRED" | "APPROVAL_REJECTED" | "APPROVAL_ISOLATION_UNAVAILABLE", message: string, details: Record<string, unknown>) {
@@ -169,7 +175,7 @@ export async function authorizeGitOperation<T>(input: GitAuthorizeInput<T>): Pro
     }
     const live = await input.describe();
     const plan = buildGitPlan(key, live, now);
-    proposeInboxPlan(plan, now);
+    proposeInboxPlan(plan, now, { replace: (existing) => existing.fingerprint !== rebuildWithTimes(key, live, existing).fingerprint });
     throw new GitApprovalRequired(
       "APPROVAL_REQUIRED",
       `${live.summary} is waiting for the owner. Plan ${planId} is in the approval inbox; the owner reviews it and decides at ${operatorPageUrl(planId)}. Then apply this same request again. Nothing was changed.`,
@@ -245,6 +251,11 @@ export async function authorizeGitOperation<T>(input: GitAuthorizeInput<T>): Pro
   const live = await input.describe();
   if (live.previewFingerprint !== key.previewFingerprint || gitRequestContent(key, live) !== content) {
     throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the repository is no longer in the state the owner approved; ask for a new approval");
+  }
+  // The owner saw the plan's own words (summary, description, risks), not only the content. Those must be exactly
+  // what the Runtime would have written, otherwise someone put a look-alike in the inbox and the owner approved it.
+  if (rebuildWithTimes(key, live, plan).fingerprint !== plan.fingerprint) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the plan the owner approved is not the plan this request produces (its wording differs); ask for a new approval");
   }
   return runAuthorizedMutation(request, input.write);
 }

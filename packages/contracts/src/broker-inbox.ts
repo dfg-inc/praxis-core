@@ -66,11 +66,15 @@ export function readInboxPlan(planId: string): { plan: ActionPlan; where: "appro
  * view) unless it has expired, in which case it is replaced by the fresh one. Never touches approved/ or
  * authorizations/.
  */
-export function proposeInboxPlan(plan: ActionPlan, now = new Date()): { written: boolean; path: string } {
+export function proposeInboxPlan(plan: ActionPlan, now = new Date(), opts: { replace?: (existing: ActionPlan) => boolean } = {}): { written: boolean; path: string } {
   const pending = inboxPath("pending", plan.planId);
   if (!pending) throw new Error("no broker shared directory is configured");
   const existing = readInboxPlan(plan.planId);
-  if (existing?.where === "pending" && Date.parse(existing.plan.expiresAt) > now.getTime()) return { written: false, path: pending };
+  // Keep a live pending plan unless the caller says it is not the plan it would propose: anyone can write to
+  // pending/, so the owner must be shown the Runtime's plan, not a look-alike with the same id.
+  if (existing?.where === "pending" && Date.parse(existing.plan.expiresAt) > now.getTime() && !opts.replace?.(existing.plan)) {
+    return { written: false, path: pending };
+  }
   mkdirSync(join(brokerSharedDir() as string, "pending"), { recursive: true });
   const tmp = `${pending}.${process.pid}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(plan, null, 2)}\n`);

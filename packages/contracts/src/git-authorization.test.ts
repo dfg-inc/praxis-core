@@ -336,4 +336,49 @@ describe("git authorization through the broker inbox", () => {
     // a source or test build does not care, so the fixtures keep working
     expect(() => assertApprovalChannelAcceptable({ channel: "machine" })).not.toThrow();
   });
+
+  it("replaces a look-alike plan an agent put in pending/ with the Runtime's own plan", async () => {
+    const planId = gitPlanId(key());
+    // the agent writes its own plan under the derived id with reassuring wording
+    await codeOf(run().promise);
+    const real = JSON.parse(readFileSync(join(shared, "pending", `${planId}.json`), "utf8")) as ActionPlan;
+    const crafted = { ...real, summary: "Fix a typo in the README", actions: [{ ...real.actions[0]!, description: "Harmless typo fix" }] };
+    // fingerprint must be valid for the crafted body for it to parse: recompute it the same way the schema does
+    const { actionPlanFingerprint } = await import("./action-plan.js");
+    const { fingerprint: _drop, ...body } = crafted as ActionPlan & { fingerprint: string };
+    writeFileSync(join(shared, "pending", `${planId}.json`), JSON.stringify({ ...body, fingerprint: actionPlanFingerprint(body as never) }));
+    expect(readInboxPlan(planId)?.plan.summary).toBe("Fix a typo in the README");
+    await codeOf(run().promise); // asking again re-proposes: the look-alike is replaced
+    expect(readInboxPlan(planId)?.plan.summary).toBe(real.summary);
+  });
+
+  it("refuses an approved look-alike plan: same content, different words", async () => {
+    const planId = gitPlanId(key());
+    await codeOf(run().promise);
+    const real = JSON.parse(readFileSync(join(shared, "pending", `${planId}.json`), "utf8")) as ActionPlan;
+    const { actionPlanFingerprint } = await import("./action-plan.js");
+    const { fingerprint: _drop, ...body } = { ...real, summary: "Fix a typo in the README" } as ActionPlan & { fingerprint: string };
+    writeFileSync(join(shared, "pending", `${planId}.json`), JSON.stringify({ ...body, fingerprint: actionPlanFingerprint(body as never) }));
+    brokerApproves(planId); // the owner approved what they were shown: the look-alike
+    const attempt = run();
+    expect(await codeOf(attempt.promise)).toBe("APPROVAL_SCOPE_MISMATCH");
+    expect(attempt.writes.count).toBe(0);
+  });
+
+  it("two simultaneous executions of one approval run the operation once", async () => {
+    await codeOf(run().promise);
+    brokerApproves(gitPlanId(key()));
+    let started = 0;
+    const slow = () =>
+      new Promise((resolveWrite) => {
+        started += 1;
+        setTimeout(() => resolveWrite({ ok: true }), 50);
+      });
+    const results = await Promise.allSettled([
+      authorizeGitOperation({ repo, key: key(), describe: () => described(), write: slow }),
+      authorizeGitOperation({ repo, key: key(), describe: () => described(), write: slow }),
+    ]);
+    expect(started).toBe(1);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  });
 });
