@@ -192,14 +192,14 @@ export function resolveCanonicalQualityState(input: {
     push("qualityState", "localManifest", null, expectedApproved, "missing", "QUALITY_STATE_LOCAL_MISSING");
   }
 
-  push(
-    "qualityState",
-    "praxis.workPackageManifest",
-    staleManifestQs ?? (typeof input.workPackageManifest?.status === "string" ? input.workPackageManifest.status : null),
-    qualityState,
-    "ignored",
-    "STALE_WORK_PACKAGE_MANIFEST_NOT_CANONICAL",
-  );
+  // Only say a manifest was ignored when there is a manifest value to ignore. Reporting "ignored" for a Work
+  // Package that has no manifest (a local Work Package, or none yet) told the operator about a stale record
+  // that does not exist.
+  const manifestQs =
+    staleManifestQs ?? (typeof input.workPackageManifest?.status === "string" ? input.workPackageManifest.status : null);
+  if (manifestQs !== null) {
+    push("qualityState", "praxis.workPackageManifest", manifestQs, qualityState, "ignored", "STALE_WORK_PACKAGE_MANIFEST_NOT_CANONICAL");
+  }
 
   if (applyPartial) {
     push(

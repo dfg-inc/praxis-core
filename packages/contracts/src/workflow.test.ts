@@ -190,6 +190,24 @@ describe("quality independence", () => {
     expect(readiness.ready).toBe(false);
     expect(readiness.missingIntegration).toContain("worker");
   });
+
+  it("never reports ready while an integration is missing (ready and missingIntegration agree)", () => {
+    const done = (id: string, dependsOn: string[]) => ({
+      id, name: id, kind: "module" as const, responsibilities: ["x"], requirementIds: [], dependsOn, status: "approved" as const,
+    });
+    const state = { ...bulkState(), services: [done("api", []), done("worker", ["queue"])] };
+    const readiness = featureReadiness(state);
+    // Every listed service is approved, but worker depends on "queue", which no service provides.
+    expect(readiness.missingIntegration).toEqual(["worker"]);
+    expect(readiness.unknownDependencies).toEqual(["queue"]);
+    expect(readiness.ready).toBe(false);
+    const gaps = evaluateFeature(state).gaps;
+    expect(gaps).toContain("unknown dependency: queue");
+    expect(gaps).not.toContain("services are not approved");
+    // And the clean case still reports ready with nothing missing.
+    const clean = featureReadiness({ ...bulkState(), services: [done("api", []), done("worker", ["api"])] });
+    expect(clean).toMatchObject({ ready: true, missingIntegration: [], unknownDependencies: [] });
+  });
 });
 
 describe("backward handoff and impact", () => {

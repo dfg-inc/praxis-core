@@ -813,11 +813,19 @@ export function resumeWorkflow(state: WorkflowState): {
 export function featureReadiness(state: WorkflowState): {
   ready: boolean;
   serviceStatus: Record<string, WorkflowStage>;
+  /** Services that depend on something not done, or on something that is not a service of this work item. */
   missingIntegration: string[];
+  /** Dependencies named by a service that no service of this work item provides. */
+  unknownDependencies: string[];
 } {
   const serviceStatus: Record<string, WorkflowStage> = {};
   for (const service of state.services) serviceStatus[service.id] = service.status;
   const done = (status: WorkflowStage) => status === "approved" || status === "completed";
+  const unknownDependencies = [
+    ...new Set(
+      state.services.flatMap((service) => service.dependsOn.filter((dep) => !state.services.some((item) => item.id === dep))),
+    ),
+  ];
   const missingIntegration = state.services
     .filter((service) =>
       service.dependsOn.some((dep) => {
@@ -826,8 +834,11 @@ export function featureReadiness(state: WorkflowState): {
       }),
     )
     .map((service) => service.id);
-  const ready = state.services.length > 0 && state.services.every((service) => done(service.status));
-  return { ready, serviceStatus, missingIntegration };
+  // Ready means every service is done AND nothing is waiting on an integration. The two answers cannot disagree:
+  // a service that depends on a dependency nobody provides is not ready, even if every listed service is done.
+  const ready =
+    state.services.length > 0 && state.services.every((service) => done(service.status)) && missingIntegration.length === 0;
+  return { ready, serviceStatus, missingIntegration, unknownDependencies };
 }
 
 const PARTIAL_SUCCESS =
@@ -1850,8 +1861,11 @@ export function evaluateFeature(state: WorkflowState): { verdict: QualityVerdict
   const readiness = featureReadiness(state);
   if (!readiness.ready) {
     for (const id of readiness.missingIntegration) gaps.push(`dependency not done: ${id}`);
+    for (const dep of readiness.unknownDependencies) gaps.push(`unknown dependency: ${dep}`);
     if (state.services.length === 0) gaps.push("no services");
-    else gaps.push("services are not approved");
+    else if (!state.services.every((service) => service.status === "approved" || service.status === "completed")) {
+      gaps.push("services are not approved");
+    }
   }
   return { verdict: gaps.length === 0 ? "PASS" : "FAIL", gaps };
 }

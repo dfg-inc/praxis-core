@@ -135,3 +135,20 @@ describe("canonical qualityState", () => {
     expect(snap.applyPartial).toBe(true);
   });
 });
+
+describe("stale work package manifest diagnostic", () => {
+  it("is not reported when there is no manifest to ignore", () => {
+    const snapshot = resolveCanonicalQualityState({ workPackageId: "WP-20260914-002" });
+    expect(snapshot.consistency.map((item) => item.diagnosticCode)).not.toContain("STALE_WORK_PACKAGE_MANIFEST_NOT_CANONICAL");
+    expect(snapshot.consistency.some((item) => item.source === "praxis.workPackageManifest")).toBe(false);
+  });
+
+  it("is still reported, as ignored, when a stale manifest carries a quality state", () => {
+    const snapshot = resolveCanonicalQualityState({
+      workPackageId: "WP-20260914-002",
+      workPackageManifest: { qualityState: "pending" },
+    });
+    const stale = snapshot.consistency.find((item) => item.source === "praxis.workPackageManifest");
+    expect(stale).toMatchObject({ consistency: "ignored", diagnosticCode: "STALE_WORK_PACKAGE_MANIFEST_NOT_CANONICAL", actualValue: "pending" });
+  });
+});
