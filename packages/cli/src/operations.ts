@@ -35,6 +35,7 @@ import {
   type QualityLifecycleSnapshot,
   type QualityCommentReadback,
 } from "@praxis/jira/workflow";
+import { resolveWorkPackageRef, type ResolvedIdentifier } from "./identity.js";
 import { doctorNextSteps, providerDiagnostics, securityDiagnostics } from "./diagnostics.js";
 import { VcsError, githubTokenFlags, gitlabTokenFlags, type GitDeliveryJournal, type GitWriteFields } from "@praxis/vcs";
 import {
@@ -922,6 +923,30 @@ export async function architectApplyOp(ctx: OpContext) {
   }));
 }
 
+/**
+ * A work-package argument must be a local Work Package id or a Jira issue key. A Work Item id is a different
+ * identity and is refused with a pointer to the right parameter; a value that is neither is refused rather than
+ * passed on as if it were a Jira key.
+ */
+function requireWorkPackageIdentity(repo: string, value: string): ResolvedIdentifier {
+  const resolved = resolveWorkPackageRef(repo, value);
+  if (resolved.kind === "work-item-id") {
+    throw new PraxisOpError(
+      OP_CODES.INVALID_INPUT,
+      `${value} is a Work Item id, not a Work Package or Jira key. Use workItemId for Work Items (praxis_workflow_status, praxis_developer_status workItemId).`,
+      { details: { identifierKind: "work-item-id", input: value } },
+    );
+  }
+  if (resolved.kind === "unknown") {
+    throw new PraxisOpError(
+      OP_CODES.INVALID_INPUT,
+      `${value} is not a local Work Package id (WP-YYYYMMDD-NNN) or a Jira issue key (PROJ-123).`,
+      { details: { identifierKind: "unknown", input: value } },
+    );
+  }
+  return resolved;
+}
+
 export async function workPackageListOp(ctx: OpContext) {
   const repo = requireRepo(ctx.repo);
   const list = discoverLocalWorkPackages(repo).map((w) => ({
@@ -936,19 +961,22 @@ export async function workPackageListOp(ctx: OpContext) {
 
 export async function workPackageShowOp(ctx: OpContext): Promise<{
   local: unknown;
-  jiraIssueKey: unknown;
+  identity: ResolvedIdentifier;
+  jiraIssueKey: string | null;
 }> {
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "work-package show requires workPackage");
   }
   const repo = requireRepo(ctx.repo);
+  const identity = requireWorkPackageIdentity(repo, ctx.wp);
   const local = resolveLocalWorkPackage(repo, ctx.wp);
   if (!local) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, `work package not found: ${ctx.wp}`);
   }
   return {
     local,
-    jiraIssueKey: resolveRemoteWpKey(repo, ctx.wp),
+    identity,
+    jiraIssueKey: identity.jiraIssueKey,
   };
 }
 
@@ -958,13 +986,16 @@ export async function developerStatusOp(ctx: OpContext): Promise<Record<string, 
   }
   const wp = ctx.wp;
   const repo = requireRepo(ctx.repo);
+  const identity = requireWorkPackageIdentity(repo, wp);
   const local = resolveLocalWorkPackage(repo, wp);
-  const jiraIssueKey = resolveRemoteWpKey(repo, wp);
+  // Only a key the Work Package records, or a value that is itself a Jira key. Never the input echoed back.
+  const jiraIssueKey = identity.jiraIssueKey;
   const wpId = local?.id ?? wp;
   const inspection = inspectDeveloperCompletion(repo, wpId);
   const qualityInputs = discoverQualityInputs(repo, wpId);
   const base = {
     wp,
+    identity,
     local: local?.id,
     jiraIssueKey,
     implementationState: inspection.implementationState ?? null,
@@ -980,7 +1011,7 @@ export async function developerStatusOp(ctx: OpContext): Promise<Record<string, 
       provider,
       repo,
       workPackageId: wpId,
-      jiraIssueKey,
+      jiraIssueKey: jiraIssueKey ?? undefined,
     });
     return {
       ...base,
@@ -998,7 +1029,7 @@ export async function developerStatusOp(ctx: OpContext): Promise<Record<string, 
   if (!ctx.provider && !jiraConfigured()) {
     return attachLifecycle();
   }
-  if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(jiraIssueKey)) {
+  if (!jiraIssueKey) {
     return attachLifecycle();
   }
   return withProvider({ ...ctx, repo }, async (p) => {

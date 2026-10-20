@@ -421,6 +421,7 @@ export {
   createHandoff,
   resumeWorkflow,
   featureReadiness,
+  evaluateFeature,
   evaluateRequirementBehavior,
   recordVerdict,
   requirementEvidence,
