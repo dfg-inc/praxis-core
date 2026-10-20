@@ -1025,7 +1025,7 @@ export async function applyPublish(
   const pushDelegate = gitExecutorDelegate();
   let pushed: { force: boolean };
   if (pushDelegate) {
-    if (pub.mode !== "branch" || pub.sourceBranch !== pub.targetRemoteBranch) {
+    if (pub.sourceBranch !== pub.targetRemoteBranch) {
       throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "the approval service pushes a branch to the remote branch of the same name only");
     }
     await pushDelegate.push({ repo, workItemId: opts.workPackageId, remoteName: remote.name, branch: pub.sourceBranch });
