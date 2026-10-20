@@ -1043,6 +1043,11 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     sequence: z.number().int().positive().optional(),
   }),
   z.object({
+    // Resolved by the workflow store, which owns the index of work items.
+    action: z.literal("select-work-item"),
+    workItemId: z.string().min(1),
+  }),
+  z.object({
     action: z.literal("link-work-item"),
     target: WorkItemLinkSchema,
     remove: z.boolean().optional(),
@@ -1206,6 +1211,9 @@ export function applyWorkflowCommand(
     if (state) return { state, duplicate: true, result: { workflowId: state.workflowId } };
     const opened = openLocalWorkflow(command);
     return { state: opened, duplicate: false, result: { workflowId: opened.workflowId, workItemId: opened.workItem.id } };
+  }
+  if (command.action === "select-work-item") {
+    throw new WorkflowError("EXECUTION_REQUIRED", "select-work-item is resolved by the workflow store");
   }
   if (!state) throw new WorkflowError("WORKFLOW_MISSING", "open a workflow before applying commands");
   if (command.action === "link-work-item") {
