@@ -202,6 +202,8 @@ export const RoleHandoffSchema = z.object({
     )
     .default([]),
   notes: z.string().optional(),
+  /** Carried-forward items this handoff declares resolved (exact text). Audit only. */
+  resolved: z.array(z.string()).default([]),
   nextActions: z.array(z.string()),
   readiness: z.enum(["ready", "partial", "blocked"]),
   evidenceRefs: z.array(z.string()),
@@ -611,7 +613,14 @@ export function createHandoff(
     | "storyIds"
     | "decisionRecords"
     | "notes"
-  > & { supersedes?: string; storyIds?: string[]; decisionRecords?: RoleHandoff["decisionRecords"]; notes?: string },
+    | "resolved"
+  > & {
+    supersedes?: string;
+    storyIds?: string[];
+    decisionRecords?: RoleHandoff["decisionRecords"];
+    notes?: string;
+    resolved?: string[];
+  },
 ): { state: WorkflowState; handoff: RoleHandoff; duplicate: boolean } {
   const body = {
     workflowId: state.workflowId,
@@ -630,6 +639,8 @@ export function createHandoff(
     risks: input.risks,
     blockers: input.blockers,
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    // Only hashed when present so handoffs persisted before `resolved` keep their fingerprints.
+    ...(input.resolved && input.resolved.length > 0 ? { resolved: input.resolved } : {}),
     nextActions: input.nextActions,
     readiness: input.readiness,
     evidenceRefs: input.evidenceRefs,
@@ -767,6 +778,34 @@ export function evaluateRequirementBehavior(input: {
     };
   }
   return { verdict: "PASS" };
+}
+
+/**
+ * Context a role hands on must not vanish at the next hop. The new handoff starts from the
+ * latest handoff addressed to its source role, minus items it explicitly resolves, plus its own.
+ */
+function carryForwardContext(
+  state: WorkflowState,
+  command: Extract<WorkflowCommand, { action: "handoff" }>,
+): { assumptions: string[]; openQuestions: string[]; risks: string[]; blockers: string[]; notes?: string } {
+  const incoming = [...state.handoffs].reverse().find((h) => h.targetRole === command.sourceRole);
+  const resolved = new Set(command.resolved);
+  const merge = (carriedItems: string[], own: string[]) => [
+    ...new Set([...carriedItems.filter((item) => !resolved.has(item)), ...own]),
+  ];
+  const own = {
+    openQuestions: command.openQuestions.length > 0 ? command.openQuestions : state.openQuestions,
+    risks: command.risks ?? state.risks,
+    blockers: command.blockers.length > 0 ? command.blockers : state.blockers,
+  };
+  const notes = command.notes ?? incoming?.notes ?? state.notes;
+  return {
+    assumptions: merge(incoming?.assumptions ?? [], command.assumptions),
+    openQuestions: merge(incoming?.openQuestions ?? [], own.openQuestions),
+    risks: merge(incoming?.risks ?? [], own.risks),
+    blockers: merge(incoming?.blockers ?? [], own.blockers),
+    ...(notes !== undefined ? { notes } : {}),
+  };
 }
 
 export type RequirementEvidence =
@@ -1004,6 +1043,7 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     blockers: z.array(z.string()).default([]),
     risks: z.array(z.string()).optional(),
     notes: z.string().optional(),
+    resolved: z.array(z.string()).default([]),
     readiness: z.enum(["ready", "partial", "blocked"]),
   }),
   z.object({
@@ -1432,6 +1472,7 @@ export function applyWorkflowCommand(
     return { state: next, duplicate: false, result: feature };
   }
   if (command.action === "handoff") {
+    const carried = carryForwardContext(state, command);
     const created = createHandoff(state, {
       sourceRole: command.sourceRole,
       targetRole: command.targetRole,
@@ -1461,13 +1502,12 @@ export function applyWorkflowCommand(
         })),
       decisions: state.decisions.map((d) => d.id),
       decisionRecords: state.decisions.map((d) => ({ ...d })),
-      assumptions: command.assumptions,
-      openQuestions: command.openQuestions.length > 0 ? command.openQuestions : state.openQuestions,
-      risks: command.risks ?? state.risks,
-      blockers: command.blockers.length > 0 ? command.blockers : state.blockers,
-      ...(command.notes !== undefined || state.notes !== undefined
-        ? { notes: command.notes ?? state.notes }
-        : {}),
+      assumptions: carried.assumptions,
+      openQuestions: carried.openQuestions,
+      risks: carried.risks,
+      blockers: carried.blockers,
+      ...(carried.notes !== undefined ? { notes: carried.notes } : {}),
+      resolved: command.resolved,
       nextActions: command.nextActions,
       readiness: command.readiness,
       evidenceRefs: state.implementationUnits
