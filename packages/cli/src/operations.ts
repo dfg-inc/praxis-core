@@ -217,7 +217,33 @@ export type OpContext = {
   approvalConsumed?: boolean;
 };
 
+const HOST_PLACEHOLDER_RE = /^\$\{[^}]*\}$/;
+
+/**
+ * Claude Desktop passes optional extension settings left blank as the literal
+ * `${user_config.<field>}` template. Such a value is unset, not configured.
+ * Removes whole-value placeholders from PRAXIS_* keys and returns key names only.
+ */
+export function scrubUnexpandedPlaceholders(env: NodeJS.ProcessEnv = process.env): string[] {
+  const removed: string[] = [];
+  for (const key of Object.keys(env)) {
+    if (!key.startsWith("PRAXIS_")) continue;
+    const value = env[key];
+    if (value !== undefined && HOST_PLACEHOLDER_RE.test(value.trim())) {
+      delete env[key];
+      removed.push(key);
+    }
+  }
+  return removed;
+}
+
+let hostPlaceholdersIgnored: string[] = [];
+
 export function loadPraxisDotenv(repo: string): void {
+  const removed = scrubUnexpandedPlaceholders();
+  if (removed.length) {
+    hostPlaceholdersIgnored = [...new Set([...hostPlaceholdersIgnored, ...removed])].sort();
+  }
   if (process.env.PRAXIS_SKIP_DOTENV === "1") return;
   const resolved = resolve(repo);
   if (!existsSync(resolved)) return;
@@ -580,6 +606,7 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     gitlab,
     quality,
     capabilities,
+    hostPlaceholdersIgnored,
     codes: {
       repository:
         capabilities.repository === "unavailable" ? OP_CODES.REPOSITORY_UNAVAILABLE : undefined,
