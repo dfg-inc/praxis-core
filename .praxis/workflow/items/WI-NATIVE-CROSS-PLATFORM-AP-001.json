@@ -1,0 +1,315 @@
+{
+  "contract": "praxis.workflow.state",
+  "version": "1.0.0",
+  "workflowId": "WF-WI-NATIVE-CROSS-PLATFORM-AP-001",
+  "projectId": "praxis-core",
+  "workItem": {
+    "id": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+    "projectId": "praxis-core",
+    "title": "Native cross-platform Approval Service",
+    "source": "local",
+    "status": "in_progress",
+    "revision": 2
+  },
+  "requirements": [
+    {
+      "id": "REQ-NAS-001",
+      "statement": "The Approval Service holds approval authority under an OS principal independent of the AI agent. The agent-side client can only submit a request and read its status; it cannot approve, modify the trusted plan, sign, read keys or the ledger, or reach privileged operations, and without verified isolation the service and client fail closed.",
+      "revision": 1,
+      "status": "proposed",
+      "acceptanceCriteria": [
+        {
+          "id": "REQ-NAS-001-AC-01",
+          "requirementId": "REQ-NAS-001",
+          "statement": "The IPC protocol has no approve or sign message; approval happens only through the operator channel.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-001-AC-02",
+          "requirementId": "REQ-NAS-001",
+          "statement": "The service refuses to start in production when its protected storage, configuration or executable are writable by any non-service principal, and reports isolation honestly in health.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-001-AC-03",
+          "requirementId": "REQ-NAS-001",
+          "statement": "The client treats the service as isolated only when the endpoint owner differs from its own identity and the service attests verified isolation in a production build; otherwise it reports unisolated and refuses protected writes.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-001-AC-04",
+          "requirementId": "REQ-NAS-001",
+          "statement": "Keys, ledger, configuration and audit live outside any user repository; logs never contain tokens or credentials.",
+          "revision": 1
+        }
+      ],
+      "serviceIds": [],
+      "assumptionIds": []
+    },
+    {
+      "id": "REQ-NAS-002",
+      "statement": "A human approves or rejects the exact operation through WebAuthn (Touch ID, Windows Hello, FIDO2) on a page rendered from the service's own canonical plan, never from agent-supplied text; the challenge binds the exact plan, any material change invalidates the approval, and production accepts no machine approval.",
+      "revision": 1,
+      "status": "proposed",
+      "acceptanceCriteria": [
+        {
+          "id": "REQ-NAS-002-AC-01",
+          "requirementId": "REQ-NAS-002",
+          "statement": "The page shows work item, repository, provider and instance, action type, exact target, branch and revision, files or commit summary, remote destination, plan fingerprint, expiry, material risks and reversibility, all derived by the service from the repository.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-002-AC-02",
+          "requirementId": "REQ-NAS-002",
+          "statement": "Signature, origin, RP ID, credential, challenge and user verification are verified; the challenge is the hash of the exact decision and is single use.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-002-AC-03",
+          "requirementId": "REQ-NAS-002",
+          "statement": "A plan changed after it was shown is not approved; an approval is never reused for another action, repository, revision or request.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-002-AC-04",
+          "requirementId": "REQ-NAS-002",
+          "statement": "A production build refuses the machine channel; a development build labels it as test-only.",
+          "revision": 1
+        }
+      ],
+      "serviceIds": [],
+      "assumptionIds": []
+    },
+    {
+      "id": "REQ-NAS-003",
+      "statement": "A trusted Executor inside the service performs the approved git_commit, git_push and git_merge_request itself, after independently re-deriving and validating the scope, with TOCTOU protection, replay idempotency and honest reporting of what the boundary can and cannot guarantee (credential separation for push, unrestricted agent write access for local commits). Provider execution for Jira uses the same protocol through strict provider interfaces.",
+      "revision": 1,
+      "status": "proposed",
+      "acceptanceCriteria": [
+        {
+          "id": "REQ-NAS-003-AC-01",
+          "requirementId": "REQ-NAS-003",
+          "statement": "Exact repository, remote, branch, refs, revision and file hashes are bound; a mismatch at execution is refused before the approval is consumed; commit uses plumbing with a compare-and-swap ref update and never runs repository hooks.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-003-AC-02",
+          "requirementId": "REQ-NAS-003",
+          "statement": "Git is run with argument arrays only, a sanitized environment, service-owned configuration and credentials, and refuses repositories whose local configuration can execute code or redirect credentials.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-003-AC-03",
+          "requirementId": "REQ-NAS-003",
+          "statement": "Replay returns the recorded result; failures report whether anything changed and how to roll back; no credential or token is returned to the agent.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-003-AC-04",
+          "requirementId": "REQ-NAS-003",
+          "statement": "The executor and plan documents state which guarantees hold (push with credentials the agent does not hold) and which cannot (agent can still commit locally); merge and release stay separate capabilities.",
+          "revision": 1
+        }
+      ],
+      "serviceIds": [],
+      "assumptionIds": []
+    },
+    {
+      "id": "REQ-NAS-004",
+      "statement": "The service is cross-platform: a platform-independent core (protocol, plans, WebAuthn, executor, ledger, audit) and thin adapters for macOS (launchd daemon, pkg), Windows (service) and Linux (systemd), distributed with Praxis with minimal setup. A platform is claimed secure only after its trust boundary has been tested on that OS; each platform's status is reported separately and honestly.",
+      "revision": 1,
+      "status": "proposed",
+      "acceptanceCriteria": [
+        {
+          "id": "REQ-NAS-004-AC-01",
+          "requirementId": "REQ-NAS-004",
+          "statement": "The core has no dependency on launchd, Keychain or other platform APIs; adapters supply paths, endpoint, isolation probe and install/uninstall plans.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-004-AC-02",
+          "requirementId": "REQ-NAS-004",
+          "statement": "macOS: a built installer package, an unprivileged dry-run of the install plan, uninstall, upgrade and migration procedures; the privileged installation is presented to the owner and not executed by the agent.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-004-AC-03",
+          "requirementId": "REQ-NAS-004",
+          "statement": "Windows and Linux: adapters and installer artifacts are generated and statically tested, and are labelled untested until built and run on those operating systems.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-NAS-004-AC-04",
+          "requirementId": "REQ-NAS-004",
+          "statement": "The Runtime client and praxis_doctor report service health, version, compatibility and isolation; installing the .mcpb alone never claims OS-level isolation; no approval material is ever written to a user repository.",
+          "revision": 1
+        }
+      ],
+      "serviceIds": [],
+      "assumptionIds": []
+    }
+  ],
+  "services": [],
+  "handoffs": [
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "workItemId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "handoffId": "HO-1",
+      "sourceRole": "ba",
+      "targetRole": "architect",
+      "serviceIds": [],
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-002",
+        "REQ-NAS-003",
+        "REQ-NAS-004"
+      ],
+      "acceptanceCriterionIds": [
+        "REQ-NAS-001-AC-01",
+        "REQ-NAS-001-AC-02",
+        "REQ-NAS-001-AC-03",
+        "REQ-NAS-001-AC-04",
+        "REQ-NAS-002-AC-01",
+        "REQ-NAS-002-AC-02",
+        "REQ-NAS-002-AC-03",
+        "REQ-NAS-002-AC-04",
+        "REQ-NAS-003-AC-01",
+        "REQ-NAS-003-AC-02",
+        "REQ-NAS-003-AC-03",
+        "REQ-NAS-003-AC-04",
+        "REQ-NAS-004-AC-01",
+        "REQ-NAS-004-AC-02",
+        "REQ-NAS-004-AC-03",
+        "REQ-NAS-004-AC-04"
+      ],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [],
+      "assumptions": [],
+      "openQuestions": [
+        "How does the Runtime reach the service when several users share a machine?",
+        "Which Windows mechanism gives a named-pipe ACL that excludes the agent while still admitting the client?"
+      ],
+      "risks": [
+        "No OS account may be created and no privileged service installed in this session, so independent-identity tests cannot run here.",
+        "A local commit cannot be broker-exclusive while the agent keeps write access to the repository; push can be, only if the agent holds no Git credentials.",
+        "Windows and Linux cannot be built or run on this macOS host."
+      ],
+      "blockers": [],
+      "decisionRecords": [],
+      "notes": "Existing hardened parts to reuse: Ed25519 authorization, WebAuthn operator page, authorizeGitOperation (plan derivation, ledger, replay), deployment assessor, production-build gates.",
+      "resolved": [],
+      "nextActions": [],
+      "readiness": "ready",
+      "evidenceRefs": [],
+      "revision": 1,
+      "fingerprint": "sha256:42b08b7b770d5911f2db3afdc23f246b24d6879e1b26540574bf0d2a0fdb4946"
+    },
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "workItemId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "handoffId": "HO-2",
+      "sourceRole": "architect",
+      "targetRole": "developer",
+      "serviceIds": [],
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-002",
+        "REQ-NAS-003",
+        "REQ-NAS-004"
+      ],
+      "acceptanceCriterionIds": [
+        "REQ-NAS-001-AC-01",
+        "REQ-NAS-001-AC-02",
+        "REQ-NAS-001-AC-03",
+        "REQ-NAS-001-AC-04",
+        "REQ-NAS-002-AC-01",
+        "REQ-NAS-002-AC-02",
+        "REQ-NAS-002-AC-03",
+        "REQ-NAS-002-AC-04",
+        "REQ-NAS-003-AC-01",
+        "REQ-NAS-003-AC-02",
+        "REQ-NAS-003-AC-03",
+        "REQ-NAS-003-AC-04",
+        "REQ-NAS-004-AC-01",
+        "REQ-NAS-004-AC-02",
+        "REQ-NAS-004-AC-03",
+        "REQ-NAS-004-AC-04"
+      ],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [
+        "DEC-NAS-001"
+      ],
+      "assumptions": [],
+      "openQuestions": [
+        "How does the Runtime reach the service when several users share a machine?",
+        "Which Windows mechanism gives a named-pipe ACL that excludes the agent while still admitting the client?"
+      ],
+      "risks": [
+        "No OS account may be created and no privileged service installed in this session, so independent-identity tests cannot run here.",
+        "A local commit cannot be broker-exclusive while the agent keeps write access to the repository; push can be, only if the agent holds no Git credentials.",
+        "Windows and Linux cannot be built or run on this macOS host."
+      ],
+      "blockers": [],
+      "decisionRecords": [
+        {
+          "id": "DEC-NAS-001",
+          "statement": "One cross-platform Approval Service (Node, bundled, own runtime copy) owns broker and executor under a dedicated OS principal. Components: Runtime Client (in the Runtime, no secrets, IPC only), Service core (request state machine, canonical plan derivation from the repository, WebAuthn operator page reused from tools/broker, Ed25519-signed approval records, replay ledger, hash-chained audit), Trusted Executor (git commit via plumbing with compare-and-swap ref update and no hooks; push with service-owned credentials; merge request through the provider interface), and Platform adapters (paths, endpoint, isolation probe, install/uninstall plans) for macOS launchd, Windows service and Linux systemd. IPC is newline-delimited JSON over a local socket/pipe with no approve or sign message. Approval exists only through the operator channel (WebAuthn user-verified assertion over a challenge hashing the exact decision). A repository must be allow-listed in root-owned service configuration. The service fails closed in production when isolation checks fail; a development mode exists only in non-production builds and is reported as unisolated.",
+          "confirmed": false,
+          "revision": 2,
+          "rationale": "Reuses the hardened broker pieces (authorizeGitOperation, operator-web, WebAuthn, authorization signing, assessor) instead of rewriting them, and moves execution out of the agent's process so push can use credentials the agent never holds. Threat model: assets are signing key, ledger, credentials, repository integrity, operator authenticators; attackers are the AI agent and any process running as the user. In scope: forging or replaying approvals, plan look-alikes, TOCTOU file/ref swaps, hook and config execution through the repository, credential redirection, path/symlink substitution, socket impersonation, log leakage. Out of scope and stated: a compromised administrator or kernel, an agent that already has the user's Git credentials, an agent that commits locally without the service (commit cannot be exclusive), enrollment abuse by someone with admin rights, malicious virtual authenticators if enrollment is not admin-gated (enrollment code is root-only)."
+        }
+      ],
+      "notes": "DEC-NAS-001 is recorded and UNCONFIRMED by the owner. The open questions above stay open: they are not answered by this handoff.",
+      "resolved": [],
+      "nextActions": [
+        "packages/approval-service: protocol, service core, request store, audit, git executor, provider interface, platform adapters, installer generators, CLI",
+        "contracts: trusted-executor context so the service reuses authorizeGitOperation",
+        "Runtime/core client and doctor integration; guardWrite delegates to the service when present",
+        "macOS installer package built unprivileged plus dry-run; Windows and Linux artifacts statically tested",
+        "adversarial tests: forged, replay, expired, changed, cross-repo, cross-operation, concurrency, restart, hook/config/symlink/TOCTOU attacks"
+      ],
+      "readiness": "ready",
+      "evidenceRefs": [],
+      "revision": 2,
+      "fingerprint": "sha256:26697301addb006bd971a4d4b17a97e0693bfefa5ed15f0393a329911a8e24eb"
+    }
+  ],
+  "findings": [],
+  "verdicts": [],
+  "decisions": [
+    {
+      "id": "DEC-NAS-001",
+      "statement": "One cross-platform Approval Service (Node, bundled, own runtime copy) owns broker and executor under a dedicated OS principal. Components: Runtime Client (in the Runtime, no secrets, IPC only), Service core (request state machine, canonical plan derivation from the repository, WebAuthn operator page reused from tools/broker, Ed25519-signed approval records, replay ledger, hash-chained audit), Trusted Executor (git commit via plumbing with compare-and-swap ref update and no hooks; push with service-owned credentials; merge request through the provider interface), and Platform adapters (paths, endpoint, isolation probe, install/uninstall plans) for macOS launchd, Windows service and Linux systemd. IPC is newline-delimited JSON over a local socket/pipe with no approve or sign message. Approval exists only through the operator channel (WebAuthn user-verified assertion over a challenge hashing the exact decision). A repository must be allow-listed in root-owned service configuration. The service fails closed in production when isolation checks fail; a development mode exists only in non-production builds and is reported as unisolated.",
+      "confirmed": false,
+      "revision": 2,
+      "rationale": "Reuses the hardened broker pieces (authorizeGitOperation, operator-web, WebAuthn, authorization signing, assessor) instead of rewriting them, and moves execution out of the agent's process so push can use credentials the agent never holds. Threat model: assets are signing key, ledger, credentials, repository integrity, operator authenticators; attackers are the AI agent and any process running as the user. In scope: forging or replaying approvals, plan look-alikes, TOCTOU file/ref swaps, hook and config execution through the repository, credential redirection, path/symlink substitution, socket impersonation, log leakage. Out of scope and stated: a compromised administrator or kernel, an agent that already has the user's Git credentials, an agent that commits locally without the service (commit cannot be exclusive), enrollment abuse by someone with admin rights, malicious virtual authenticators if enrollment is not admin-gated (enrollment code is root-only)."
+    }
+  ],
+  "openQuestions": [],
+  "risks": [],
+  "blockers": [],
+  "assumptions": [],
+  "implementationUnits": [],
+  "stories": [],
+  "coverage": [],
+  "changes": [],
+  "stage": "in_progress",
+  "history": [
+    {
+      "revision": 1,
+      "stage": "draft",
+      "note": "Praxis must ship an Approval Service that runs under an isolated OS identity on macOS, Windows and Linux, presents the exact operation to a human who approves with WebAuthn (Touch ID, Windows Hello, FIDO2), and executes approved Git operations (commit, push, merge request) itself, so the AI agent can only request and read status. Platform adapters isolate the OS-specific parts; macOS is implemented and tested first, Windows and Linux are reported separately and honestly."
+    },
+    {
+      "revision": 2,
+      "stage": "in_progress",
+      "note": "ba → architect"
+    }
+  ]
+}

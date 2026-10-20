@@ -39,12 +39,19 @@ import { resolveWorkPackageRef, type ResolvedIdentifier } from "./identity.js";
 import { doctorNextSteps, providerDiagnostics, securityDiagnostics } from "./diagnostics.js";
 import { VcsError, githubTokenFlags, gitlabTokenFlags, type GitDeliveryJournal, type GitWriteFields } from "@praxis/vcs";
 import {
+  APPROVAL_SERVICE_PROTOCOL,
+  SERVICE_OPERATIONS,
+  approvalServiceDelegate,
+  assessApprovalService,
   authorizeGitOperation,
   GitApprovalRequired,
   hasMutationLease,
   inspectMutation,
   runAuthorizedMutation,
+  runWorkflowRecordWrite,
   securityMode,
+  serviceDelegationActive,
+  withGitExecutorDelegate,
   WorkflowError,
   type ApprovalOperation,
   type GitDescribed,
@@ -531,6 +538,20 @@ function asApprovalError(err: unknown): never {
 async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => Promise<T> | T): Promise<T> {
   if (spec.requireYes) requireConfirm(ctx.confirmation, spec.what);
   const repo = resolve(spec.repository);
+  if (spec.git && securityMode() === "secure" && !hasMutationLease() && (SERVICE_OPERATIONS as readonly string[]).includes(spec.operation) && serviceDelegationActive()) {
+    // The Approval Service is the authority and the executor: it derives the plan from the repository, shows it to the
+    // owner, and runs the commit / push / merge request itself under its own OS identity. This process only prepares,
+    // verifies and keeps its delivery journal; the journal write below runs under the workflow-record lease because
+    // it records what the service did, it does not authorize anything.
+    try {
+      return await runWorkflowRecordWrite(() => withGitExecutorDelegate(approvalServiceDelegate(), write));
+    } catch (err) {
+      if (err instanceof GitApprovalRequired) {
+        throw new PraxisOpError(err.code as OpCode, err.message, { details: err.details });
+      }
+      asApprovalError(err);
+    }
+  }
   if (spec.git && securityMode() === "secure" && !hasMutationLease()) {
     // Secure mode: no stored approval file, no environment token. One broker authorization per request.
     try {
@@ -622,6 +643,31 @@ async function tracedFingerprint(
   return fp;
 }
 
+/**
+ * What the agent side can honestly say about the Approval Service. "isolated" needs agreement of file-ownership
+ * evidence and the service's own production attestation; installing the Desktop extension alone never produces it.
+ */
+async function approvalServiceDiagnostics(): Promise<Record<string, unknown>> {
+  const assessment = await assessApprovalService({ timeoutMs: 3000 });
+  const health = assessment.health;
+  const compatible = health ? health.protocol === APPROVAL_SERVICE_PROTOCOL : undefined;
+  return {
+    endpoint: assessment.endpoint,
+    reachable: assessment.reachable,
+    isolated: assessment.isolated && compatible === true,
+    delegating: serviceDelegationActive(),
+    reasons: assessment.reasons,
+    ...(health
+      ? { version: health.version, protocol: health.protocol, protocolCompatible: compatible, mode: health.mode, platform: health.platform, operatorChannel: health.operatorChannel, pending: health.pending, auditChain: health.auditChain, selfReportedIsolation: health.isolation }
+      : {}),
+    note: assessment.reachable
+      ? assessment.isolated
+        ? "The service answers, runs in production mode, and its endpoint belongs to another principal."
+        : "The service answers but OS-level isolation is NOT established; see reasons."
+      : "No approval service is reachable. Installing the Desktop extension alone does not provide OS-level isolation; install the native Approval Service (docs/approval-service/INSTALL.md).",
+  };
+}
+
 export async function doctorOp(ctx: OpContext, version: string): Promise<Record<string, unknown>> {
   loadPraxisDotenv(ctx.repo);
   const resolved = resolve(ctx.repo);
@@ -658,6 +704,7 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     issue: github.apiUrlIssue,
   });
   const security = securityDiagnostics(process.env, git ?? resolved);
+  const approvalService = await approvalServiceDiagnostics();
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? (git ? "ok" : "no-git") : "unavailable",
@@ -682,7 +729,9 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     dotenvRejected,
     providers,
     security,
-    nextSteps: doctorNextSteps({
+    approvalService,
+    nextSteps: [
+      ...doctorNextSteps({
       repoExists,
       gitRoot: Boolean(git),
       project: project.status,
@@ -691,6 +740,8 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
       security,
       dotenvRejected,
     }),
+      ...(approvalService.reachable ? [] : ["No Approval Service is running: OS-level approval isolation is not in place. Install the native service (docs/approval-service/INSTALL.md); the Desktop extension alone makes no isolation claim."]),
+    ],
     codes: {
       repository:
         capabilities.repository === "unavailable" ? OP_CODES.REPOSITORY_UNAVAILABLE : undefined,

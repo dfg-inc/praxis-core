@@ -57,13 +57,15 @@ function writeJsonAtomic(path, value, mode = 0o600) {
   chmodSync(path, mode);
 }
 
-export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, signApproved, rejectPlan, enrollSecret, multiEnroll = false, now = () => Date.now() }) {
+export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, signApproved, rejectPlan, enrollSecret, multiEnroll = false, onEnrolled, now = () => Date.now() }) {
   const base = new URL(origin);
   const rpId = base.hostname;
   const operatorsPath = join(resolve(trustedDir), "operators.json");
   const pendingDir = join(resolve(sharedDir), "pending");
   const challenges = new Map();
-  let secret = enrollSecret;
+  // enrollSecret may be a function so a long-running service can open enrollment for a short window and close it again.
+  let secret = typeof enrollSecret === "function" ? undefined : enrollSecret;
+  const currentSecret = () => (typeof enrollSecret === "function" ? enrollSecret() : secret);
 
   const readOperators = () =>
     existsSync(operatorsPath) ? JSON.parse(readFileSync(operatorsPath, "utf8")) : { version: 1, rpId, origin, credentials: [] };
@@ -191,8 +193,8 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
     },
 
     "POST /api/enroll/challenge": (body) => {
-      if (!secret) throw httpError(403, "ENROLLMENT_CLOSED", "enrollment is not open on this broker");
-      if (!equalSecret(body.secret, secret)) throw httpError(403, "ENROLLMENT_SECRET", "wrong enrollment secret");
+      if (!currentSecret()) throw httpError(403, "ENROLLMENT_CLOSED", "enrollment is not open on this broker");
+      if (!equalSecret(body.secret, currentSecret())) throw httpError(403, "ENROLLMENT_SECRET", "wrong enrollment secret");
       const label = String(body.label ?? "operator").slice(0, 40).replace(/[^\w .@-]/g, "") || "operator";
       const challenge = newNonce();
       const challengeId = issue({ type: "enroll", challenge, label });
@@ -213,8 +215,8 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
     },
 
     "POST /api/enroll/finish": (body) => {
-      if (!secret) throw httpError(403, "ENROLLMENT_CLOSED", "enrollment is not open on this broker");
-      if (!equalSecret(body.secret, secret)) throw httpError(403, "ENROLLMENT_SECRET", "wrong enrollment secret");
+      if (!currentSecret()) throw httpError(403, "ENROLLMENT_CLOSED", "enrollment is not open on this broker");
+      if (!equalSecret(body.secret, currentSecret())) throw httpError(403, "ENROLLMENT_SECRET", "wrong enrollment secret");
       const record = consume(body.challengeId);
       if (record.type !== "enroll") throw httpError(409, "WRONG_CEREMONY", "that challenge was not issued for enrollment");
       let registered;
@@ -246,8 +248,11 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
         enrolledAt: new Date(now()).toISOString(),
       });
       writeOperators(operators);
-      if (!multiEnroll) secret = undefined; // one authenticator per enrollment ceremony
-      return { ok: true, credentialId: registered.credentialId, label: record.label, enrollmentClosed: !secret };
+      if (!multiEnroll) {
+        secret = undefined; // one authenticator per enrollment ceremony
+        onEnrolled?.();
+      }
+      return { ok: true, credentialId: registered.credentialId, label: record.label, enrollmentClosed: multiEnroll ? !currentSecret() : true };
     },
   };
 
@@ -274,7 +279,7 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
     }
     return page(
       "Praxis approvals",
-      `<h1>Praxis approvals</h1><p>${operators.credentials.length} enrolled authenticator(s).${secret ? ' <a href="/enroll">Enroll one</a>.' : ""}</p>` +
+      `<h1>Praxis approvals</h1><p>${operators.credentials.length} enrolled authenticator(s).${currentSecret() ? ' <a href="/enroll">Enroll one</a>.' : ""}</p>` +
         `<h2>Waiting for a decision</h2><ul>${rows || "<li>Nothing is waiting.</li>"}</ul>`,
     );
   }

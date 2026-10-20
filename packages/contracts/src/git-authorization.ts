@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { buildActionPlan, type ActionPlan } from "./action-plan.js";
 import { decisionKindFor } from "./authority.js";
 import {
+  type AuthorizationBody,
   approvedContentDigest,
   assertSecureExecutor,
   readLedgerEntry,
@@ -126,7 +127,7 @@ export function buildGitPlan(key: GitRequestKey, live: GitDescribed, now = new D
 }
 
 /** The plan the Runtime would write for this request, with another plan's timestamps (so only content can differ). */
-function rebuildWithTimes(key: GitRequestKey, live: GitDescribed, like: ActionPlan): ActionPlan {
+export function rebuildWithTimes(key: GitRequestKey, live: GitDescribed, like: ActionPlan): ActionPlan {
   const created = new Date(like.createdAt);
   return buildGitPlan(key, live, created, Date.parse(like.expiresAt) - created.getTime());
 }
@@ -137,6 +138,52 @@ export class GitApprovalRequired extends WorkflowError {
     super(code, message);
     this.details = details;
   }
+}
+
+/**
+ * The pure part of verifying a Git approval: the token is signed by the trust anchor, and the plan it names is for
+ * exactly this request. Shared by the Runtime-side flow and by the Approval Service's executor so both refuse the
+ * same things. Returns the verified body and the approved content; throws before any side effect.
+ */
+export function assertTokenBindsPlan(input: { token: string; plan: ActionPlan; key: GitRequestKey; publicKeyPem: string; now: Date }): { body: AuthorizationBody; content: string } {
+  const { key, plan, token, now } = input;
+  const planId = gitPlanId(key);
+  const body = verifyAuthorization(token, input.publicKeyPem, now);
+  assertApprovalChannelAcceptable(body);
+
+  const action = plan.actions[0]!;
+  const content = action.content ?? "";
+  const bound =
+    plan.planId === planId &&
+    plan.provider === "local" &&
+    plan.operations.length === 1 &&
+    plan.operations[0] === key.operation &&
+    action.action === key.action &&
+    plan.workItemIds.length === 1 &&
+    plan.workItemIds[0] === key.workItemId &&
+    plan.repositories.length === 1 &&
+    plan.repositories[0] === resolve(key.repository) &&
+    plan.decisionKind === decisionKindFor(key.operation, key.action);
+  if (!bound) throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the approved plan is not for this operation, work item or repository");
+  let approvedRequest: Record<string, unknown>;
+  try {
+    approvedRequest = JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the approved plan has no readable request");
+  }
+  if (approvedRequest.contract !== GIT_REQUEST_CONTRACT || approvedRequest.previewFingerprint !== key.previewFingerprint) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the approved request is not this preview");
+  }
+  if (
+    body.planId !== planId ||
+    body.planFingerprint !== plan.fingerprint ||
+    body.contentDigest !== approvedContentDigest(content) ||
+    JSON.stringify(body.targets ?? []) !== JSON.stringify(action.targets) ||
+    body.instanceId !== plan.instanceId
+  ) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the token is not for the plan the owner was shown");
+  }
+  return { body, content };
 }
 
 export type GitAuthorizeInput<T> = {
@@ -188,41 +235,7 @@ export async function authorizeGitOperation<T>(input: GitAuthorizeInput<T>): Pro
   const stored = readInboxPlan(planId);
   if (!stored) throw new WorkflowError("APPROVAL_REQUIRED", `a token exists for ${planId} but its plan is not in the inbox; refusing`);
   const plan = stored.plan;
-  const body = verifyAuthorization(token, publicKeyPem, now);
-  assertApprovalChannelAcceptable(body);
-
-  const action = plan.actions[0]!;
-  const content = action.content ?? "";
-  const bound =
-    plan.planId === planId &&
-    plan.provider === "local" &&
-    plan.operations.length === 1 &&
-    plan.operations[0] === key.operation &&
-    action.action === key.action &&
-    plan.workItemIds.length === 1 &&
-    plan.workItemIds[0] === key.workItemId &&
-    plan.repositories.length === 1 &&
-    plan.repositories[0] === resolve(key.repository) &&
-    plan.decisionKind === decisionKindFor(key.operation, key.action);
-  if (!bound) throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the approved plan is not for this operation, work item or repository");
-  let approvedRequest: Record<string, unknown>;
-  try {
-    approvedRequest = JSON.parse(content) as Record<string, unknown>;
-  } catch {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the approved plan has no readable request");
-  }
-  if (approvedRequest.contract !== GIT_REQUEST_CONTRACT || approvedRequest.previewFingerprint !== key.previewFingerprint) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the approved request is not this preview");
-  }
-  if (
-    body.planId !== planId ||
-    body.planFingerprint !== plan.fingerprint ||
-    body.contentDigest !== approvedContentDigest(content) ||
-    JSON.stringify(body.targets ?? []) !== JSON.stringify(action.targets) ||
-    body.instanceId !== plan.instanceId
-  ) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the token is not for the plan the owner was shown");
-  }
+  const { body, content } = assertTokenBindsPlan({ token, plan, key, publicKeyPem, now });
 
   const request: MutationRequest = {
     repo: input.repo,

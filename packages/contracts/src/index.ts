@@ -631,6 +631,8 @@ export {
   GIT_REQUEST_CONTRACT,
   GitApprovalRequired,
   authorizeGitOperation,
+  assertTokenBindsPlan,
+  rebuildWithTimes,
   buildGitPlan,
   gitPlanId,
   planTtlMs,
@@ -644,3 +646,34 @@ export {
 export { productionBuild, testIdentityOverrideActive } from "./deployment.js";
 
 export { isHumanApprovalChannel, assertApprovalChannelAcceptable } from "./deployment.js";
+
+export {
+  APPROVAL_SERVICE_PROTOCOL,
+  SERVICE_OPERATIONS,
+  MAX_MESSAGE_BYTES,
+  ApprovalServiceError,
+  assessApprovalService,
+  callApprovalService,
+  defaultServiceEndpoint,
+  parseServiceRequest,
+  serviceDelegationActive,
+  serviceEndpoint,
+  type RequestState,
+  type ServiceAssessment,
+  type ServiceHealth,
+  type ServiceOperation,
+  type ServiceParseResult,
+  type ServiceReply,
+  type ServiceRequest,
+  type SubmitRequest,
+} from "./approval-service.js";
+
+export {
+  approvalServiceDelegate,
+  gitExecutorDelegate,
+  withGitExecutorDelegate,
+  type DelegatedCommit,
+  type DelegatedMergeRequest,
+  type DelegatedPush,
+  type GitExecutorDelegate,
+} from "./git-executor-delegate.js";

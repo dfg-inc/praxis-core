@@ -17,8 +17,11 @@
     "accept:git-delivery-e2e": "node tools/scripts/git-delivery-e2e-acceptance.mjs",
     "verify": "npm run build && npm run typecheck && npm run test && npm run test:security && npm run check:tests",
     "check:version": "node tools/scripts/check-ecosystem-version.mjs",
-    "test:security": "node tools/broker/human-approval-denial.test.mjs && node tools/broker/executor-real-mutation.test.mjs && node tools/broker/security-hardening-1-5.test.mjs && node --test tools/broker/webauthn.test.mjs tools/broker/operator-web.test.mjs",
-    "check:tests": "node tools/scripts/check-test-completeness.mjs"
+    "test:security": "node tools/broker/human-approval-denial.test.mjs && node tools/broker/executor-real-mutation.test.mjs && node tools/broker/security-hardening-1-5.test.mjs && node --test tools/broker/webauthn.test.mjs tools/broker/operator-web.test.mjs && npm run test:approval-service",
+    "check:tests": "node tools/scripts/check-test-completeness.mjs",
+    "test:approval-service": "node --test tools/approval-service/service.test.mjs tools/approval-service/cli.test.mjs tools/approval-service/packaging/artifact.test.mjs",
+    "build:approval-service": "node tools/approval-service/packaging/build.mjs --variant production",
+    "pack:approval-service-macos": "node tools/approval-service/packaging/build.mjs --variant production --macos-pkg"
   },
   "engines": {
     "node": ">=20"
