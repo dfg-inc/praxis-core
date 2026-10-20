@@ -440,6 +440,7 @@ export {
   applyWorkflowCommand,
   storyContentFingerprint,
   decisionContentFingerprint,
+  humanGrantRequest,
   serviceGrantSubject,
   exportWorkflowSnapshot,
   renderWorkflowSnapshotHtml,
@@ -536,6 +537,7 @@ export {
   hasMutationLease,
   requireMutationLease,
   runAuthorizedMutation,
+  runWorkflowRecordWrite,
 } from "./approval-store.js";
 export type {
   ApprovalState,

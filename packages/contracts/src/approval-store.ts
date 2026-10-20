@@ -320,6 +320,16 @@ export function hasMutationLease(): boolean {
   return mutationLease.getStore() !== undefined;
 }
 
+/**
+ * Agent-authored workflow records (a requirement, a handoff, a verdict) are the agent's own work product: it can
+ * write them to disk with a shell anyway, and nothing is claimed about them beyond "the agent recorded this".
+ * The Runtime writes them under this lease instead of an approval. It is for those records only. Anything that
+ * confirms, approves or has an effect outside the repository needs a human grant or an approved mutation.
+ */
+export function runWorkflowRecordWrite<T>(write: () => T): T {
+  return mutationLease.run({ action: "workflow-record" }, write);
+}
+
 /** Lowest-level writers call this. A direct call outside an authorized mutation throws before any write. */
 export function requireMutationLease(): void {
   if (!mutationLease.getStore()) {

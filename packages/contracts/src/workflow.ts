@@ -531,6 +531,109 @@ function storyGrantDigest(input: { storyId: string; revision: number; contentFin
   return `sha256:${createHash("sha256").update(JSON.stringify(canonicalValue(input))).digest("hex")}`;
 }
 
+export type HumanGrantRequest = {
+  action: "confirm-story" | "confirm-decision" | "approve-service";
+  targetId: string;
+  /** Exactly what the grant must bind. */
+  content: string;
+  /** Stable id: the same subject always proposes the same plan, so a standing approval is found, not duplicated. */
+  planId: string;
+  role: "ba" | "architect" | "quality";
+  summary: string;
+  /** Everything the human needs to decide, in plain text. */
+  description: string;
+  risks: string[];
+};
+
+const bullet = (items: readonly string[]) => (items.length ? items.map((item) => `  - ${item}`).join("\n") : "  (none)");
+
+/**
+ * If this command is a human act, what must be asked of the human. Built only from the Runtime's own state, so
+ * what the human is shown is what the grant will bind.
+ */
+export function humanGrantRequest(state: WorkflowState, command: WorkflowCommand): HumanGrantRequest | null {
+  const idFor = (action: string, content: string) =>
+    `hg-${action}-${createHash("sha256").update(content).digest("hex").slice(0, 20)}`;
+  if (command.action === "confirm-story") {
+    const story = state.stories.find((item) => item.id === command.id && item.status !== "superseded");
+    if (!story) return null;
+    const contentFingerprint = storyContentFingerprint(story);
+    const content = humanGrantContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint });
+    return {
+      action: "confirm-story",
+      targetId: story.id,
+      content,
+      planId: idFor("confirm-story", content),
+      role: "ba",
+      summary: `Confirm Story ${story.id} revision ${story.revision}`,
+      description: [
+        `Story ${story.id} (revision ${story.revision}) for requirement(s) ${story.requirementIds.join(", ")}.`,
+        `As ${story.actor}: ${story.narrative}`,
+        `Objective: ${story.objective}`,
+        `User value: ${story.userValue}`,
+        `Preconditions:\n${bullet(story.preconditions)}`,
+        `Happy path:\n${bullet(story.happyPath)}`,
+        `Alternatives:\n${bullet(story.alternatives)}`,
+        `Negative cases:\n${bullet(story.negative)}`,
+        `Edge cases:\n${bullet(story.edgeCases)}`,
+        `Business rules:\n${bullet(story.businessRules)}`,
+        `Acceptance criteria:\n${bullet(story.acceptanceCriteria.map((c) => `${c.id}: Given ${c.given}; When ${c.when}; Then ${c.then}`))}`,
+        `Expected results:\n${bullet(story.expectedResults)}`,
+        `Content fingerprint: ${contentFingerprint}`,
+      ].join("\n"),
+      risks: ["Confirming records that you accept this behavior as written. It does not authorize implementation, commits or pushes."],
+    };
+  }
+  if (command.action === "confirm-decision") {
+    const decision = state.decisions.find((item) => item.id === command.id);
+    if (!decision) return null;
+    const contentFingerprint = decisionContentFingerprint(decision);
+    const content = humanGrantContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint });
+    return {
+      action: "confirm-decision",
+      targetId: decision.id,
+      content,
+      planId: idFor("confirm-decision", content),
+      role: "architect",
+      summary: `Confirm architecture decision ${decision.id}`,
+      description: [
+        `Decision ${decision.id} (revision ${decision.revision}).`,
+        decision.statement,
+        decision.rationale ? `Rationale: ${decision.rationale}` : "Rationale: (none recorded)",
+        decision.notes ? `Notes: ${decision.notes}` : "",
+        `Content fingerprint: ${contentFingerprint}`,
+      ].filter(Boolean).join("\n"),
+      risks: ["Confirming records the decision as accepted. It does not confirm stories, authorize implementation or approve any service."],
+    };
+  }
+  if (command.action === "set-service") {
+    const approving = command.service.status === "approved" || command.service.status === "completed";
+    const previous = state.services.find((item) => item.id === command.service.id);
+    if (!approving || (previous && fingerprintPayload(previous) === fingerprintPayload(command.service))) return null;
+    const subject = serviceGrantSubject(state, command.service);
+    const content = humanGrantContent("approve-service", subject);
+    const verdicts = state.verdicts.filter((v) => !v.stale && v.scope === "service" && v.scopeId === command.service.id);
+    return {
+      action: "approve-service",
+      targetId: command.service.id,
+      content,
+      planId: idFor("approve-service", content),
+      role: "quality",
+      summary: `Mark service ${command.service.id} ${command.service.status}`,
+      description: [
+        `Service ${command.service.id} (${command.service.name}) in work item ${state.workItem.id}: ${previous?.status ?? "new"} -> ${command.service.status}.`,
+        `Responsibilities:\n${bullet(command.service.responsibilities)}`,
+        `Requirements: ${command.service.requirementIds.join(", ") || "(none)"}`,
+        `Depends on: ${command.service.dependsOn.join(", ") || "(none)"}`,
+        `Implementation it rests on:\n${bullet((subject.implementation as Array<{ id: string; path: string; summary: string }>).map((u) => `${u.id} ${u.path}: ${u.summary}`))}`,
+        `Quality verdicts on record:\n${bullet(verdicts.map((v) => `${v.id}: ${v.verdict}`))}`,
+      ].join("\n"),
+      risks: ["Approving a service is part of declaring the feature complete. It does not confirm stories or decisions, commit or push anything."],
+    };
+  }
+  return null;
+}
+
 export function decisionContentFingerprint(decision: {
   id: string;
   statement: string;
@@ -1128,7 +1231,7 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     id: z.string().min(1),
     revision: z.number().int().positive(),
     contentFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-    authorization: z.string().min(1),
+    authorization: z.string().min(1).optional(),
   }),
   z.object({
     action: z.literal("record-context"),
@@ -1142,7 +1245,8 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     id: StoryIdSchema,
     revision: z.number().int().positive(),
     contentFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-    authorization: z.string().min(1),
+    /** Broker-signed grant. Without one the command is refused with APPROVAL_REQUIRED. */
+    authorization: z.string().min(1).optional(),
   }),
   z.object({
     action: z.literal("record-implementation"),
@@ -1320,6 +1424,9 @@ export function applyWorkflowCommand(
     if (contentFingerprint !== command.contentFingerprint) {
       throw new WorkflowError("DECISION_FINGERPRINT", `decision ${command.id} content is not the reviewed revision`);
     }
+    if (!command.authorization) {
+      throw new WorkflowError("APPROVAL_REQUIRED", `confirming decision ${decision.id} needs a human grant: propose the plan, have the owner approve it, then apply`);
+    }
     verifyHumanGrant({
       token: command.authorization,
       action: "confirm-decision",
@@ -1437,6 +1544,9 @@ export function applyWorkflowCommand(
     const contentFingerprint = storyContentFingerprint(story);
     if (contentFingerprint !== command.contentFingerprint) {
       throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the reviewed revision`);
+    }
+    if (!command.authorization) {
+      throw new WorkflowError("APPROVAL_REQUIRED", `confirming story ${story.id} needs a human grant: propose the plan, have the owner approve it, then apply`);
     }
     verifyHumanGrant({
       token: command.authorization,
