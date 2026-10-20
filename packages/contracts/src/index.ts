@@ -616,3 +616,28 @@ export type {
   BaJiraWritePlanItem,
   QualityWpReport,
 } from "./jira-orchestration.js";
+
+export {
+  INBOX_PLAN_ID,
+  brokerSharedDir,
+  operatorPageUrl,
+  readInboxToken,
+  readInboxPlan,
+  inboxStatus,
+  proposeInboxPlan,
+  type InboxStatus,
+} from "./broker-inbox.js";
+export {
+  GIT_REQUEST_CONTRACT,
+  GitApprovalRequired,
+  authorizeGitOperation,
+  buildGitPlan,
+  gitPlanId,
+  gitRequestContent,
+  type GitAuthorizeInput,
+  type GitDescribed,
+  type GitOperationKind,
+  type GitRequestKey,
+} from "./git-authorization.js";
+
+export { productionBuild, testIdentityOverrideActive } from "./deployment.js";

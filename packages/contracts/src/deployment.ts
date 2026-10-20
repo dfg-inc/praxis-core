@@ -10,6 +10,20 @@ import { WorkflowError } from "./workflow.js";
  * the broker's directory, and refuses to call such a host secure.
  */
 
+/**
+ * The packaged Desktop extension is built with PRAXIS_BUNDLE_KIND="production" as a compile-time constant, so the
+ * same-identity test override cannot be switched on there by any environment value, file or setting. From source
+ * (unit tests, the acceptance harness's test variant) the constant is absent and the override works as documented.
+ */
+export function productionBuild(): boolean {
+  return process.env.PRAXIS_BUNDLE_KIND === "production";
+}
+
+/** The override as every caller must read it: requested AND allowed in this build. */
+export function testIdentityOverrideActive(): boolean {
+  return process.env.PRAXIS_TEST_ALLOW_SAME_IDENTITY === "1" && !productionBuild();
+}
+
 export type DeploymentTier =
   /** No blocking finding: the evidence visible from here is consistent with an isolated broker. */
   | "isolated"
@@ -107,7 +121,7 @@ export function assessApprovalDeployment(opts: {
   const brokerDir = nonEmpty(env.PRAXIS_BROKER_TRUSTED_DIR);
   const privateInline = nonEmpty(env.PRAXIS_APPROVAL_PRIVATE_KEY);
   const privatePath = nonEmpty(env.PRAXIS_APPROVAL_PRIVATE_KEY_PATH);
-  const testHarnessOverride = env.PRAXIS_TEST_ALLOW_SAME_IDENTITY === "1";
+  const testHarnessOverride = env.PRAXIS_TEST_ALLOW_SAME_IDENTITY === "1" && !productionBuild();
   const sockets = opts.dockerSockets ?? DOCKER_SOCKETS(env.HOME ?? "");
   const dockerSocketReachable = sockets.some((socket) => probe.canRead(socket) && probe.canWrite(socket));
   const signingKeyVisible = Boolean(privateInline) || Boolean(privatePath && probe.canRead(privatePath));
@@ -148,6 +162,14 @@ export function assessApprovalDeployment(opts: {
     return finish("compatibility");
   }
 
+  if (env.PRAXIS_TEST_ALLOW_SAME_IDENTITY === "1" && productionBuild()) {
+    add({
+      id: "test-override-ignored",
+      severity: "warning",
+      detail: "PRAXIS_TEST_ALLOW_SAME_IDENTITY=1 is set but this is a production build, which never honours it.",
+      remedy: "Remove PRAXIS_TEST_ALLOW_SAME_IDENTITY from the environment.",
+    });
+  }
   if (testHarnessOverride) {
     add({
       id: "test-harness-override",

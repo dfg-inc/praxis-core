@@ -1,0 +1,270 @@
+{
+  "contract": "praxis.workflow.state",
+  "version": "1.0.0",
+  "workflowId": "WF-WI-SECURE-GIT-AUTHORIZATION-001",
+  "projectId": "praxis-core",
+  "workItem": {
+    "id": "WI-SECURE-GIT-AUTHORIZATION-001",
+    "projectId": "praxis-core",
+    "title": "Secure Git authorization through the packaged MCPB",
+    "source": "local",
+    "status": "in_progress",
+    "revision": 2
+  },
+  "requirements": [
+    {
+      "id": "REQ-GIT-001",
+      "statement": "In secure mode a protected Git operation (commit, push, merge request) runs only when a broker-signed authorization exists for that exact request, delivered through the broker's shared inbox and not through the process environment or the MCP response.",
+      "revision": 1,
+      "status": "proposed",
+      "acceptanceCriteria": [
+        {
+          "id": "REQ-GIT-001-AC-01",
+          "requirementId": "REQ-GIT-001",
+          "statement": "The agent's apply call without approval proposes the exact plan in the broker inbox and writes nothing to the repository.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-GIT-001-AC-02",
+          "requirementId": "REQ-GIT-001",
+          "statement": "After the owner approves in the broker, the same apply call executes the operation once and the signed token is never returned in an MCP response.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-GIT-001-AC-03",
+          "requirementId": "REQ-GIT-001",
+          "statement": "The authorization binds repository, operation, action, work item, target, provider, instance, revision and plan fingerprint; local requests carry instance local and push or merge requests carry the remote identity.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-GIT-001-AC-04",
+          "requirementId": "REQ-GIT-001",
+          "statement": "With no broker, no trust anchor or no isolation the call is refused before any side effect.",
+          "revision": 1
+        }
+      ],
+      "serviceIds": [],
+      "assumptionIds": []
+    },
+    {
+      "id": "REQ-GIT-002",
+      "statement": "An approval authorizes exactly one operation on exactly one request: it cannot be reused for another operation, target, repository, instance or revision, cannot be replayed to run twice, and a changed plan needs a new approval.",
+      "revision": 1,
+      "status": "proposed",
+      "acceptanceCriteria": [
+        {
+          "id": "REQ-GIT-002-AC-01",
+          "requirementId": "REQ-GIT-002",
+          "statement": "A commit approval cannot authorize a push, a push approval cannot authorize a merge request, and approving a plan does not approve publishing it.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-GIT-002-AC-02",
+          "requirementId": "REQ-GIT-002",
+          "statement": "A changed target, repository, operation, instance or repository state (HEAD) is refused without consuming the approval.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-GIT-002-AC-03",
+          "requirementId": "REQ-GIT-002",
+          "statement": "Replaying a completed approved request returns the recorded result and does not execute again.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-GIT-002-AC-04",
+          "requirementId": "REQ-GIT-002",
+          "statement": "An expired or rejected approval is refused and nothing changes.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-GIT-002-AC-05",
+          "requirementId": "REQ-GIT-002",
+          "statement": "Several independent approvals can be used in one MCP session, each once, across work items and repositories.",
+          "revision": 1
+        }
+      ],
+      "serviceIds": [],
+      "assumptionIds": []
+    },
+    {
+      "id": "REQ-GIT-003",
+      "statement": "The test signer cannot be mistaken for, or substituted for, a human approval, and an operator can tell which MCP tools and which build a host actually runs.",
+      "revision": 1,
+      "status": "proposed",
+      "acceptanceCriteria": [
+        {
+          "id": "REQ-GIT-003-AC-01",
+          "requirementId": "REQ-GIT-003",
+          "statement": "The test signer is not activated from repository files, is absent from the MCPB and role ZIPs, and its keys are never shipped.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-GIT-003-AC-02",
+          "requirementId": "REQ-GIT-003",
+          "statement": "Negative tests prove no Git change happened (HEAD, refs, working tree and remote unchanged).",
+          "revision": 1
+        },
+        {
+          "id": "REQ-GIT-003-AC-03",
+          "requirementId": "REQ-GIT-003",
+          "statement": "praxis_doctor reports where the active MCP tools come from: bundle path, fingerprint, tool count and tool-name digest, so Chat and Code can be compared.",
+          "revision": 1
+        }
+      ],
+      "serviceIds": [],
+      "assumptionIds": []
+    }
+  ],
+  "services": [],
+  "handoffs": [
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-SECURE-GIT-AUTHORIZATION-001",
+      "workItemId": "WI-SECURE-GIT-AUTHORIZATION-001",
+      "handoffId": "HO-1",
+      "sourceRole": "ba",
+      "targetRole": "architect",
+      "serviceIds": [],
+      "requirementIds": [
+        "REQ-GIT-001",
+        "REQ-GIT-002",
+        "REQ-GIT-003"
+      ],
+      "acceptanceCriterionIds": [
+        "REQ-GIT-001-AC-01",
+        "REQ-GIT-001-AC-02",
+        "REQ-GIT-001-AC-03",
+        "REQ-GIT-001-AC-04",
+        "REQ-GIT-002-AC-01",
+        "REQ-GIT-002-AC-02",
+        "REQ-GIT-002-AC-03",
+        "REQ-GIT-002-AC-04",
+        "REQ-GIT-002-AC-05",
+        "REQ-GIT-003-AC-01",
+        "REQ-GIT-003-AC-02",
+        "REQ-GIT-003-AC-03"
+      ],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [],
+      "assumptions": [],
+      "openQuestions": [
+        "Should the executor stay in the Runtime process or move to the broker identity (needs a separate OS user, not available here)?",
+        "Is the merge operation in scope? No tool performs a merge today."
+      ],
+      "risks": [
+        "The Runtime process runs as the same OS user as the agent here, so it is also the executor: verification (signature, scope, ledger) is real, OS isolation is not.",
+        "A pending plan the agent can write to the inbox must never be mistaken for an approval: only a token signed by the trust-anchor key counts."
+      ],
+      "blockers": [],
+      "decisionRecords": [],
+      "notes": "Reproduced facts: guardWrite in core cli requires a stored host approval and, in secure mode, an env token; local requests have no instanceId so runSecureMutation refuses them; the packaged MCPB phase of git-delivery acceptance can only prove refusals.",
+      "resolved": [],
+      "nextActions": [],
+      "readiness": "ready",
+      "evidenceRefs": [],
+      "revision": 1,
+      "fingerprint": "sha256:1865e80638a1898498b42ab0f65a19bd55386b7768334e5009fdbdc5f5910472"
+    },
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-SECURE-GIT-AUTHORIZATION-001",
+      "workItemId": "WI-SECURE-GIT-AUTHORIZATION-001",
+      "handoffId": "HO-2",
+      "sourceRole": "architect",
+      "targetRole": "developer",
+      "serviceIds": [],
+      "requirementIds": [
+        "REQ-GIT-001",
+        "REQ-GIT-002",
+        "REQ-GIT-003"
+      ],
+      "acceptanceCriterionIds": [
+        "REQ-GIT-001-AC-01",
+        "REQ-GIT-001-AC-02",
+        "REQ-GIT-001-AC-03",
+        "REQ-GIT-001-AC-04",
+        "REQ-GIT-002-AC-01",
+        "REQ-GIT-002-AC-02",
+        "REQ-GIT-002-AC-03",
+        "REQ-GIT-002-AC-04",
+        "REQ-GIT-002-AC-05",
+        "REQ-GIT-003-AC-01",
+        "REQ-GIT-003-AC-02",
+        "REQ-GIT-003-AC-03"
+      ],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [
+        "DEC-GIT-001"
+      ],
+      "assumptions": [],
+      "openQuestions": [
+        "Should the executor stay in the Runtime process or move to the broker identity (needs a separate OS user, not available here)?"
+      ],
+      "risks": [
+        "The Runtime process runs as the same OS user as the agent here, so it is also the executor: verification (signature, scope, ledger) is real, OS isolation is not.",
+        "A pending plan the agent can write to the inbox must never be mistaken for an approval: only a token signed by the trust-anchor key counts."
+      ],
+      "blockers": [],
+      "decisionRecords": [
+        {
+          "id": "DEC-GIT-001",
+          "statement": "Protected Git writes use broker-inbox authorization in core's guardWrite, for every host (CLI, Code, Chat). On apply the Runtime derives a deterministic planId from (operation, repository, work item, previewFingerprint), builds the exact ActionPlan from the live preview (target, instance, revision, content), proposes it into the broker's pending inbox and refuses. After the owner approves in the broker, the next identical apply finds the broker-signed token by planId, verifies signature, expiry, plan binding and ledger, re-checks the live state equals the approved content, and only then runs the Git operation once under the mutation lease. Local operations carry instance local; push and merge request carry the remote identity. Tokens are never placed in MCP responses or the environment. The Runtime process is the executor in this deployment; a privileged out-of-process executor is the production path and stays BLOCKED on a separate OS identity.",
+          "confirmed": false,
+          "revision": 2,
+          "rationale": "One mechanism already exists for human grants (inbox plus signed token per plan). Reusing it gives per-request tokens, removes the process-env token, and keeps the agent a requester only. Putting it in guardWrite fixes CLI, Code and Chat together. The stored host-approval file is agent-writable and is not an authority in secure mode. Deriving planId from the request makes replay idempotent and a changed request a new plan."
+        }
+      ],
+      "notes": "DEC-GIT-001 is recorded and UNCONFIRMED. Merge stays out of scope: the contract names it as a separate operation and refuses a merge_request approval for it, but no tool performs it. Executor-in-Runtime is explicit; the separate-identity executor remains BLOCKED.",
+      "resolved": [
+        "Is the merge operation in scope? No tool performs a merge today."
+      ],
+      "nextActions": [
+        "core/contracts: broker-inbox.ts and git-authorization.ts",
+        "core/cli: guardWrite uses them in secure mode for Git operations",
+        "runtime: packaged-MCPB acceptance with a real broker process, plus negative and multi-approval tests",
+        "praxis_doctor: tool-origin report",
+        "security review of tools/scripts/test-broker.mjs"
+      ],
+      "readiness": "ready",
+      "evidenceRefs": [],
+      "revision": 2,
+      "fingerprint": "sha256:94466a75a341944fcc471747fea892a48cfd42dbffbe0d2afc276a93e4c57ef3"
+    }
+  ],
+  "findings": [],
+  "verdicts": [],
+  "decisions": [
+    {
+      "id": "DEC-GIT-001",
+      "statement": "Protected Git writes use broker-inbox authorization in core's guardWrite, for every host (CLI, Code, Chat). On apply the Runtime derives a deterministic planId from (operation, repository, work item, previewFingerprint), builds the exact ActionPlan from the live preview (target, instance, revision, content), proposes it into the broker's pending inbox and refuses. After the owner approves in the broker, the next identical apply finds the broker-signed token by planId, verifies signature, expiry, plan binding and ledger, re-checks the live state equals the approved content, and only then runs the Git operation once under the mutation lease. Local operations carry instance local; push and merge request carry the remote identity. Tokens are never placed in MCP responses or the environment. The Runtime process is the executor in this deployment; a privileged out-of-process executor is the production path and stays BLOCKED on a separate OS identity.",
+      "confirmed": false,
+      "revision": 2,
+      "rationale": "One mechanism already exists for human grants (inbox plus signed token per plan). Reusing it gives per-request tokens, removes the process-env token, and keeps the agent a requester only. Putting it in guardWrite fixes CLI, Code and Chat together. The stored host-approval file is agent-writable and is not an authority in secure mode. Deriving planId from the request makes replay idempotent and a changed request a new plan."
+    }
+  ],
+  "openQuestions": [],
+  "risks": [],
+  "blockers": [],
+  "assumptions": [],
+  "implementationUnits": [],
+  "stories": [],
+  "coverage": [],
+  "changes": [],
+  "stage": "in_progress",
+  "history": [
+    {
+      "revision": 1,
+      "stage": "draft",
+      "note": "A protected Git operation (commit, push, merge request) must be executable through the packaged Runtime MCP in secure mode only with an approval that a human gave through the broker for that exact request. Today the token travels in a process environment variable, local requests carry no instanceId, and no positive signed Git write has been proven through the MCPB."
+    },
+    {
+      "revision": 2,
+      "stage": "in_progress",
+      "note": "ba → architect"
+    }
+  ]
+}

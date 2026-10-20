@@ -1,6 +1,6 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { accessSync, constants, readFileSync } from "node:fs";
-import { assertSecureDeploymentAssessment, assessApprovalDeployment } from "./deployment.js";
+import { assertSecureDeploymentAssessment, assessApprovalDeployment, testIdentityOverrideActive } from "./deployment.js";
 import { canonicalValue, WorkflowError } from "./workflow.js";
 
 // Deliberately independent of broker.ts and approval.ts: those evaluate workflow schemas when loaded, and the
@@ -132,7 +132,7 @@ export function verifyHumanGrant(input: {
 }): void {
   assertSigningKeyHiddenFromThisProcess();
   const compatibility = process.env.PRAXIS_SECURITY_MODE?.trim() === "compatibility";
-  if (!compatibility && process.env.PRAXIS_TEST_ALLOW_SAME_IDENTITY !== "1") {
+  if (!compatibility && !testIdentityOverrideActive()) {
     // A signature proves nothing when the signer's trust chain is in the agent's reach.
     assertSecureDeploymentAssessment(assessApprovalDeployment());
   }

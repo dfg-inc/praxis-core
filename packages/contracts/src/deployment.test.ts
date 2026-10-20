@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertSecureDeploymentAssessment, assessApprovalDeployment, type DeploymentProbe } from "./index.js";
+import { assertSecureDeploymentAssessment, assessApprovalDeployment, testIdentityOverrideActive, type DeploymentProbe } from "./index.js";
 
 const ME = 501;
 /** A probe describing an isolated deployment unless a case changes it. */
@@ -114,5 +114,26 @@ describe("assessApprovalDeployment", () => {
     const secret = "TOP-SECRET-PEM-BODY";
     const result = assessApprovalDeployment({ env: { PRAXIS_APPROVAL_PRIVATE_KEY: secret, PRAXIS_APPROVAL_PUBLIC_KEY: secret }, probe: probe(), dockerSockets: [] });
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+});
+
+describe("the test override in a production build", () => {
+  it("is ignored: a production bundle never honours PRAXIS_TEST_ALLOW_SAME_IDENTITY", () => {
+    const saved = process.env.PRAXIS_BUNDLE_KIND;
+    process.env.PRAXIS_BUNDLE_KIND = "production";
+    try {
+      const assessment = assessApprovalDeployment({
+        env: { PRAXIS_TEST_ALLOW_SAME_IDENTITY: "1", PRAXIS_APPROVAL_PUBLIC_KEY: "k", PRAXIS_APPROVAL_LEDGER: "/x/ledger" },
+        probe: { uid: () => 501, canRead: () => false, canWrite: () => false, stat: () => undefined },
+        dockerSockets: [],
+      } as never);
+      expect(assessment.observed.testHarnessOverride).toBe(false);
+      expect(assessment.findings.map((f) => f.id)).toContain("test-override-ignored");
+      expect(assessment.findings.map((f) => f.id)).not.toContain("test-harness-override");
+      expect(testIdentityOverrideActive()).toBe(false);
+    } finally {
+      if (saved === undefined) delete process.env.PRAXIS_BUNDLE_KIND;
+      else process.env.PRAXIS_BUNDLE_KIND = saved;
+    }
   });
 });

@@ -39,10 +39,16 @@ import { resolveWorkPackageRef, type ResolvedIdentifier } from "./identity.js";
 import { doctorNextSteps, providerDiagnostics, securityDiagnostics } from "./diagnostics.js";
 import { VcsError, githubTokenFlags, gitlabTokenFlags, type GitDeliveryJournal, type GitWriteFields } from "@praxis/vcs";
 import {
+  authorizeGitOperation,
+  GitApprovalRequired,
+  hasMutationLease,
   inspectMutation,
   runAuthorizedMutation,
+  securityMode,
   WorkflowError,
   type ApprovalOperation,
+  type GitDescribed,
+  type GitOperationKind,
 } from "@praxis/contracts";
 import {
   gitCommitData,
@@ -498,6 +504,12 @@ type ProtectedSpec = {
   repository: string;
   workItemId?: string;
   requireYes: boolean;
+  /**
+   * Set for protected Git operations. In secure mode they are authorized request by request through the broker's
+   * inbox (see authorizeGitOperation); this describes the live request so the owner is shown, and the token binds,
+   * exactly what will run. It must throw when the caller's preview is stale.
+   */
+  git?: { describe: () => Promise<GitDescribed> | GitDescribed };
 };
 
 function replayResult<T>(result: unknown): T {
@@ -519,6 +531,28 @@ function asApprovalError(err: unknown): never {
 async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => Promise<T> | T): Promise<T> {
   if (spec.requireYes) requireConfirm(ctx.confirmation, spec.what);
   const repo = resolve(spec.repository);
+  if (spec.git && securityMode() === "secure" && !hasMutationLease()) {
+    // Secure mode: no stored approval file, no environment token. One broker authorization per request.
+    try {
+      return await authorizeGitOperation({
+        repo,
+        key: {
+          operation: spec.operation as GitOperationKind,
+          action: spec.action,
+          repository: repo,
+          workItemId: spec.workItemId ?? "",
+          previewFingerprint: ctx.previewFingerprint ?? "",
+        },
+        describe: spec.git.describe,
+        write,
+      });
+    } catch (err) {
+      if (err instanceof GitApprovalRequired) {
+        throw new PraxisOpError(err.code as OpCode, err.message, { details: err.details });
+      }
+      asApprovalError(err);
+    }
+  }
   let inspection;
   try {
     inspection = inspectMutation({
@@ -1475,6 +1509,88 @@ export async function developerGitConnectPreviewOp(ctx: OpContext) {
   }
 }
 
+// --- request descriptions for secure Git authorization -----------------------------------------------------
+// Each one re-reads the live repository and refuses a stale preview, so what the owner is shown and what the
+// token binds is exactly what would run now.
+
+function staleGitPreview(): never {
+  throw new PraxisOpError(OP_CODES.GIT_PREVIEW_STALE, "the Git preview is stale; run the preview again");
+}
+
+const describeConnect = (ctx: OpContext) => async (): Promise<GitDescribed> => {
+  const p = gitConnectPreviewData(gitCtx(ctx));
+  if (p.previewFingerprint !== ctx.previewFingerprint) staleGitPreview();
+  return {
+    instanceId: "local",
+    targets: [`remote:${p.proposedRemoteName}`, `identity:${p.proposedIdentity}`, `url:${p.proposedUrlDisplay}`],
+    revision: p.previewFingerprint,
+    previewFingerprint: p.previewFingerprint,
+    summary: `Set Git remote ${p.proposedRemoteName} to ${p.proposedIdentity}`,
+    description: `Configure remote ${p.proposedRemoteName} as ${p.proposedUrlDisplay} (${p.proposedIdentity}). No push.`,
+    risks: ["changes where this repository publishes to"],
+  };
+};
+
+const describeIdentity = (ctx: OpContext) => async (): Promise<GitDescribed> => {
+  const p = gitIdentityPreviewData(gitCtx(ctx));
+  if (p.previewFingerprint !== ctx.previewFingerprint) staleGitPreview();
+  return {
+    instanceId: "local",
+    targets: [`git-user:${p.proposedName ?? ""} <${p.proposedEmail ?? ""}>`, "scope:local"],
+    revision: p.previewFingerprint,
+    previewFingerprint: p.previewFingerprint,
+    summary: "Set the repository-local Git author identity",
+    description: `Set user.name=${p.proposedName ?? "(unchanged)"} and user.email=${p.proposedEmail ?? "(unchanged)"} in this repository only.`,
+  };
+};
+
+const describeCommit = (ctx: OpContext) => async (): Promise<GitDescribed> => {
+  const p = await gitPreviewData(gitCtx(ctx));
+  if (p.previewFingerprint !== ctx.previewFingerprint) staleGitPreview();
+  const files = p.fileHashes.map((f) => `${f.path}@${f.sha256 ?? "deleted"}`);
+  return {
+    instanceId: "local",
+    targets: [`branch:${p.branch}`, ...files],
+    revision: p.headSha ?? "unborn",
+    previewFingerprint: p.previewFingerprint,
+    summary: `Commit ${files.length} file(s) to branch ${p.branch}`,
+    description: `Commit on branch ${p.branch} from HEAD ${p.headSha ?? "(none)"} with message "${p.commitMessage}". Files: ${files.join(", ") || "(none)"}.`,
+    risks: ["creates a commit; does not push"],
+    branch: p.branch,
+  };
+};
+
+const describePublish = (ctx: OpContext) => async (): Promise<GitDescribed> => {
+  const p = await gitPublishPreviewData(gitCtx(ctx));
+  if (p.previewFingerprint !== ctx.previewFingerprint) staleGitPreview();
+  return {
+    instanceId: p.remoteIdentity,
+    targets: [`refspec:${p.refspec}`, `remote:${p.remoteName}`, `mode:${p.mode}`],
+    revision: p.sourceCommitSha,
+    previewFingerprint: p.previewFingerprint,
+    summary: `Push ${p.sourceBranch} to ${p.remoteIdentity} (${p.targetRemoteBranch})`,
+    description: `Push ${p.refspec} to remote ${p.remoteName} (${p.remoteIdentity}), mode ${p.mode}. Never forced.`,
+    risks: ["publishes commits to a remote"],
+    branch: p.sourceBranch,
+    remote: p.remoteIdentity,
+  };
+};
+
+const describeMergeRequest = (ctx: OpContext) => async (): Promise<GitDescribed> => {
+  const m = await gitMergeRequestPreviewData(gitCtx(ctx));
+  if (m.previewFingerprint !== ctx.previewFingerprint) staleGitPreview();
+  return {
+    instanceId: m.remoteIdentity,
+    targets: [`merge-request:${m.sourceBranch}->${m.targetBranch}`],
+    revision: m.commitSha,
+    previewFingerprint: m.previewFingerprint,
+    summary: `Open a merge request ${m.sourceBranch} -> ${m.targetBranch} on ${m.remoteIdentity}`,
+    description: `Open a merge or pull request from ${m.sourceBranch} (commit ${m.commitSha}) into ${m.targetBranch} on ${m.remoteIdentity}. It is not merged.`,
+    risks: ["creates a review request on the hosting provider"],
+    remote: m.remoteIdentity,
+  };
+};
+
 export async function developerGitConnectApplyOp(ctx: OpContext) {
   requireGitWp(ctx);
   if (!ctx.previewFingerprint) {
@@ -1490,6 +1606,7 @@ export async function developerGitConnectApplyOp(ctx: OpContext) {
       repository: repo,
       workItemId: ctx.wp,
       requireYes: true,
+      git: { describe: describeConnect(ctx) },
     }, () => gitConnectApplyData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
@@ -1520,6 +1637,7 @@ export async function developerGitIdentityApplyOp(ctx: OpContext) {
       repository: repo,
       workItemId: ctx.wp,
       requireYes: true,
+      git: { describe: describeIdentity(ctx) },
     }, () => gitIdentityApplyData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
@@ -1550,6 +1668,7 @@ export async function developerGitCommitOp(ctx: OpContext): Promise<GitDeliveryJ
       repository: repo,
       workItemId: ctx.wp,
       requireYes: true,
+      git: { describe: describeCommit(ctx) },
     }, () => gitCommitData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
@@ -1580,6 +1699,7 @@ export async function developerGitPublishOp(ctx: OpContext): Promise<GitDelivery
       repository: repo,
       workItemId: ctx.wp,
       requireYes: true,
+      git: { describe: describePublish(ctx) },
     }, () => gitPublishData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
@@ -1610,6 +1730,7 @@ export async function developerGitMergeRequestOp(ctx: OpContext): Promise<GitDel
       repository: repo,
       workItemId: ctx.wp,
       requireYes: true,
+      git: { describe: describeMergeRequest(ctx) },
     }, () => gitMergeRequestData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
