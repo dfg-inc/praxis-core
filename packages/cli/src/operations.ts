@@ -251,6 +251,7 @@ const DOTENV_FORBIDDEN_PREFIXES = [
   "PRAXIS_DEPLOYMENT_",
   "PRAXIS_ALLOW_",
   "PRAXIS_FIXTURE_",
+  "PRAXIS_TEST_",
 ];
 
 let dotenvRejected: string[] = [];
@@ -621,7 +622,7 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     valid: github.apiUrlValid !== false,
     issue: github.apiUrlIssue,
   });
-  const security = securityDiagnostics(process.env);
+  const security = securityDiagnostics(process.env, git ?? resolved);
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? (git ? "ok" : "no-git") : "unavailable",

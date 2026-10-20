@@ -515,6 +515,8 @@ export {
   renderActionPlanForHuman,
 } from "./action-plan.js";
 export type { ActionPlan, DecisionKind } from "./action-plan.js";
+export { assessApprovalDeployment, assertSecureDeploymentAssessment } from "./deployment.js";
+export type { DeploymentAssessment, DeploymentFinding, DeploymentProbe, DeploymentTier } from "./deployment.js";
 export {
   installHostApproval,
   saveProposal,

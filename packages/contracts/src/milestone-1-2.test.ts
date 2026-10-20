@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   applyWorkflowCommand,
   encodeAuthorization,
@@ -14,6 +14,7 @@ import {
   storyConfirmationDigest,
   storyContentFingerprint,
   type AuthorizationBody,
+  assertSecureExecutor,
 } from "./index.js";
 
 const story = {
@@ -204,7 +205,14 @@ describe("secure mutation mode", () => {
   const previousLedger = process.env.PRAXIS_APPROVAL_LEDGER;
   const previousPrivate = process.env.PRAXIS_APPROVAL_PRIVATE_KEY;
 
+  // These tests run the broker and the verifier as one user in a temp dir, which a real deployment would
+  // refuse. The override is explicit, reported by the deployment assessment, and test-only.
+  beforeEach(() => {
+    process.env.PRAXIS_TEST_ALLOW_SAME_IDENTITY = "1";
+  });
+
   afterEach(() => {
+    delete process.env.PRAXIS_TEST_ALLOW_SAME_IDENTITY;
     process.env.PRAXIS_SECURITY_MODE = previousMode;
     if (previousAuth === undefined) delete process.env.PRAXIS_APPROVAL_AUTHORIZATION;
     else process.env.PRAXIS_APPROVAL_AUTHORIZATION = previousAuth;
@@ -214,6 +222,26 @@ describe("secure mutation mode", () => {
     else process.env.PRAXIS_APPROVAL_LEDGER = previousLedger;
     if (previousPrivate === undefined) delete process.env.PRAXIS_APPROVAL_PRIVATE_KEY;
     else process.env.PRAXIS_APPROVAL_PRIVATE_KEY = previousPrivate;
+  });
+
+  it("regression: refuses a same-identity deployment instead of only reporting it", () => {
+    // Original gap: assertSecureExecutor checked the signing key and Docker, but a trust anchor and ledger the
+    // agent identity could rewrite were accepted, so the agent could sign its own approvals.
+    delete process.env.PRAXIS_TEST_ALLOW_SAME_IDENTITY;
+    process.env.PRAXIS_SECURITY_MODE = "secure";
+    const keys = generateApprovalKeyPair();
+    process.env.PRAXIS_APPROVAL_PUBLIC_KEY = keys.publicKeyPem;
+    delete process.env.PRAXIS_APPROVAL_PRIVATE_KEY;
+    const repo = mkdtempSync(join(tmpdir(), "praxis-same-identity-"));
+    process.env.PRAXIS_APPROVAL_LEDGER = join(tmpdir(), `praxis-ledger-${Date.now()}`);
+    try {
+      assertSecureExecutor(repo);
+      throw new Error("expected refusal");
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe("APPROVAL_ISOLATION_UNAVAILABLE");
+      expect((error as Error).message).toMatch(/trust-anchor-unverifiable/);
+      expect((error as Error).message).toMatch(/ledger-writable/);
+    }
   });
 
   it("does not accept a JSON approval file in secure mode", () => {

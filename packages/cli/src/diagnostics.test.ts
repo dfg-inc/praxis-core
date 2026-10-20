@@ -75,8 +75,11 @@ describe("securityDiagnostics", () => {
     const compat = securityDiagnostics({ PRAXIS_SECURITY_MODE: "compatibility" });
     expect(compat.mode).toBe("compatibility");
     expect(compat.approvals).toMatch(/NOT enforced/);
-    expect(securityDiagnostics({ PRAXIS_SECURITY_MODE: "off" }).mode).toBe("invalid");
-    expect(securityDiagnostics({}).isolation).toBe("unverified");
+    expect(compat).toMatchObject({ secureOperation: false, deploymentTier: "compatibility" });
+    expect(securityDiagnostics({ PRAXIS_SECURITY_MODE: "off" })).toMatchObject({ mode: "invalid", deploymentTier: "invalid", secureOperation: false });
+    // Secure by default, but with no broker configured nothing protected can run: reported, not claimed.
+    expect(securityDiagnostics({})).toMatchObject({ mode: "secure", secureOperation: false, deploymentTier: "unconfigured" });
+    expect(securityDiagnostics({}).deployment.map((f) => f.id)).toContain("broker-not-configured");
   });
 });
 
@@ -87,11 +90,17 @@ describe("doctorNextSteps", () => {
     project: "loaded" as const,
     quality: { status: "healthy" },
     providers: providerDiagnostics({}, ok),
-    security: securityDiagnostics({}),
+    security: { ...securityDiagnostics({}), secureOperation: true, deploymentTier: "isolated", deployment: [] },
   };
 
   it("has nothing to say when everything is in order (Jira is optional)", () => {
     expect(doctorNextSteps(base)).toEqual([]);
+  });
+
+  it("says plainly that secure operation is unavailable, and what to do, when it is", () => {
+    const steps = doctorNextSteps({ ...base, security: securityDiagnostics({}) }).join("\n");
+    expect(steps).toMatch(/Secure operation is NOT available on this host \(unconfigured\)/);
+    expect(steps).toMatch(/broker-not-configured: Deploy the broker and executor under a separate identity/);
   });
 
   it("gives actionable steps for a missing .project and a not-started Quality service", () => {
@@ -150,7 +159,9 @@ describe("doctor end to end", () => {
     expect(out.project.status).toBe("missing");
     expect(out.nextSteps.join("\n")).toMatch(/praxis_project_init_preview/);
     expect(out.nextSteps.join("\n")).toMatch(/praxis_quality_ensure/);
-    expect(out.nextSteps.join("\n")).not.toMatch(/jira/i);
+    // Jira is optional: no step is about Jira configuration.
+    expect(out.nextSteps.filter((step: string) => /^jira:/i.test(step))).toEqual([]);
+    expect(out.security).toMatchObject({ mode: "secure", secureOperation: false });
   });
 
   it("Desktop placeholders for every optional setting leave all providers unconfigured", async () => {

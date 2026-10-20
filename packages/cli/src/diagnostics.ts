@@ -19,9 +19,15 @@ export type SecurityReport = {
   mode: "secure" | "compatibility" | "invalid";
   /** What the mode means for mutations, stated plainly. */
   approvals: string;
-  /** The Runtime cannot prove the agent is isolated from the approval broker. */
-  isolation: "unverified";
+  /** True only when no evidence visible from this process says the agent can reach the trust chain. */
+  secureOperation: boolean;
+  /** isolated | unisolated | unconfigured | compatibility | invalid. Evidence-based, never a configuration claim. */
+  deploymentTier: string;
+  /** Why secure operation is or is not available. Names settings and reasons, never values. */
+  deployment: Array<{ id: string; severity: "blocking" | "warning"; detail: string; remedy: string }>;
 };
+
+import { assessApprovalDeployment } from "@praxis/contracts";
 
 const present = (value: string | undefined): boolean => Boolean(value && value.trim());
 
@@ -94,27 +100,34 @@ export function providerDiagnostics(
   return { jira, github, gitlab };
 }
 
-export function securityDiagnostics(env: NodeJS.ProcessEnv): SecurityReport {
+export function securityDiagnostics(env: NodeJS.ProcessEnv, workspace?: string): SecurityReport {
   const raw = (env.PRAXIS_SECURITY_MODE ?? "").trim();
+  const assessment = assessApprovalDeployment({ env, workspace });
+  const evidence = {
+    secureOperation: assessment.secureOperation,
+    deploymentTier: assessment.tier,
+    deployment: assessment.findings,
+  };
   if (raw === "" || raw === "secure") {
     return {
       mode: "secure",
-      approvals: "Every mutation requires a stored, fingerprint-bound approval. confirmation=YES alone is rejected.",
-      isolation: "unverified",
+      approvals:
+        "Protected mutations need an approval signed by a broker the agent cannot reach; confirmation=YES alone and local approval files are refused. Agent-authored workflow records are written without one and are marked as unconfirmed.",
+      ...evidence,
     };
   }
   if (raw === "compatibility") {
     return {
       mode: "compatibility",
       approvals:
-        "Approvals are NOT enforced: mutations proceed on confirmation=YES supplied by the agent. This is not a security boundary.",
-      isolation: "unverified",
+        "Approvals are NOT enforced against the agent: stored approval files are forgeable by the same user. This is not a security boundary.",
+      ...evidence,
     };
   }
   return {
     mode: "invalid",
     approvals: "PRAXIS_SECURITY_MODE must be 'secure' or 'compatibility'; mutations fail closed until it is fixed.",
-    isolation: "unverified",
+    ...evidence,
   };
 }
 
@@ -162,6 +175,13 @@ export function doctorNextSteps(input: {
     if (report.state === "partial") {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
+  }
+  if (input.security.mode === "secure" && !input.security.secureOperation) {
+    const blocking = input.security.deployment.filter((finding) => finding.severity === "blocking");
+    steps.push(
+      `Secure operation is NOT available on this host (${input.security.deploymentTier}): protected mutations (Jira, Git, confirmations) are refused until an isolated broker is in place. ` +
+        blocking.map((finding) => `${finding.id}: ${finding.remedy}`).join(" "),
+    );
   }
   if (input.security.mode === "invalid") {
     steps.push("Set PRAXIS_SECURITY_MODE (extension setting security_mode) to 'secure' or 'compatibility', or leave it blank for secure.");

@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { relative, resolve } from "node:path";
 import { canonicalize } from "./approval.js";
+import { assertSecureDeploymentAssessment, assessApprovalDeployment } from "./deployment.js";
 import { decisionKindFor, DecisionKindSchema } from "./action-plan.js";
 import { WorkflowError } from "./workflow.js";
 
@@ -228,6 +229,12 @@ export function assertSecureDeployment(): DeploymentThreatAssessment {
 export function assertSecureExecutor(repo: string): { ledger: string; publicKeyPem: string } {
   assertSecureDeployment();
   assertSigningKeyHidden();
+  // Fail closed on a host where the agent identity can reach the trust chain: reporting it is not enough.
+  // PRAXIS_TEST_ALLOW_SAME_IDENTITY=1 exists for automated tests that run broker and agent as one user; the
+  // assessment still reports that host as unisolated and it is refused as a dotenv-supplied value.
+  if (process.env.PRAXIS_TEST_ALLOW_SAME_IDENTITY !== "1") {
+    assertSecureDeploymentAssessment(assessApprovalDeployment({ workspace: repo }));
+  }
   const publicKeyPem =
     process.env.PRAXIS_APPROVAL_PUBLIC_KEY?.trim() ||
     (process.env.PRAXIS_APPROVAL_PUBLIC_KEY_PATH
