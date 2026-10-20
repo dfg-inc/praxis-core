@@ -769,6 +769,44 @@ export function evaluateRequirementBehavior(input: {
   return { verdict: "PASS" };
 }
 
+export type RequirementEvidence =
+  | { status: "missing"; reasons: string[] }
+  | { status: "executed"; verdict: QualityVerdict; reasons: string[]; provenance: string[] };
+
+/**
+ * The single source of executed evidence for a requirement: coverage recorded by
+ * verify-stories for the current revision of non-superseded Stories. Used by both
+ * record-verification and quality-check so their requirement verdicts cannot diverge.
+ */
+export function requirementEvidence(state: WorkflowState, requirementId: string): RequirementEvidence {
+  const current = new Map(
+    state.stories.filter((story) => story.status !== "superseded").map((story) => [story.id, story]),
+  );
+  const executed = state.coverage.filter((entry) => {
+    if (entry.requirementId !== requirementId) return false;
+    const story = current.get(entry.storyId);
+    if (!story || entry.scenarioId === `${entry.storyId}-CONFIRMATION`) return false;
+    // Entries written before storyRevision existed only count for an unrevised Story.
+    return (entry.storyRevision ?? 1) === story.revision;
+  });
+  if (executed.length === 0) return { status: "missing", reasons: ["missing independent evidence"] };
+  const rolled = rollupStoryVerdict(executed);
+  let verdict: QualityVerdict = rolled.verdict;
+  const reasons = [...rolled.reasons];
+  const verified = new Set(executed.map((entry) => entry.storyId));
+  const linked = [...current.values()].filter((story) => story.requirementIds.includes(requirementId));
+  for (const story of linked) {
+    if (!verified.has(story.id)) reasons.push(`story-not-verified:${story.id}@${story.revision}`);
+    else if (!story.confirmedBehavior) reasons.push(`story-unconfirmed:${story.id}@${story.revision}`);
+  }
+  if (verdict === "PASS" && reasons.length > 0) verdict = "PASS_WITH_RISKS";
+  const provenance = [
+    ...[...verified].map((id) => `story:${id}@${current.get(id)!.revision}`),
+    ...executed.map((entry) => `${entry.scenarioId}:${entry.status}`),
+  ];
+  return { status: "executed", verdict, reasons, provenance };
+}
+
 export function recordVerdict(
   state: WorkflowState,
   verdict: Omit<VerdictRecord, "stale">,
@@ -1275,13 +1313,17 @@ export function applyWorkflowCommand(
     return { state, duplicate: false, result: { questions } };
   }
   if (command.action === "record-verification") {
-    const scenarios = command.scenarios.map((scenario) =>
-      scenario.critical || scenario.kind === "happy" ? { ...scenario, critical: true } : scenario,
-    );
+    const scenarios = command.scenarios.map((scenario) => {
+      const storyRevision =
+        scenario.storyRevision ?? state.stories.find((story) => story.id === scenario.storyId)?.revision;
+      const stamped = storyRevision === undefined ? scenario : { ...scenario, storyRevision };
+      return stamped.critical || stamped.kind === "happy" ? { ...stamped, critical: true } : stamped;
+    });
     const unconfirmed = state.stories.filter((story) => !story.confirmedBehavior && story.status !== "superseded");
     for (const story of unconfirmed) {
       scenarios.push({
         storyId: story.id,
+        storyRevision: story.revision,
         requirementId: story.requirementIds[0]!,
         acceptanceCriterionId: story.acceptanceCriteria[0]?.id ?? story.id,
         scenarioId: `${story.id}-CONFIRMATION`,
@@ -1324,6 +1366,22 @@ export function applyWorkflowCommand(
         verdict: rolled.verdict,
         evidenceRefs: rolled.reasons.length ? rolled.reasons : [`${serviceId} scenarios passed`],
         requirementIds: [...new Set(entries.map((scenario) => scenario.requirementId))],
+      });
+    }
+    for (const requirementId of [...new Set(scenarios.map((scenario) => scenario.requirementId))]) {
+      const evidence = requirementEvidence(next, requirementId);
+      if (evidence.status !== "executed") continue;
+      next = recordVerdict(next, {
+        id: `V-${requirementId}-${next.verdicts.length + 1}`,
+        scope: "requirement",
+        scopeId: requirementId,
+        verdict: evidence.verdict,
+        evidenceRefs: [
+          ...(command.independentRerun ? ["independentRerun:true"] : ["independentRerun:false"]),
+          ...evidence.reasons,
+          ...evidence.provenance,
+        ],
+        requirementIds: [requirementId],
       });
     }
     const verdictId = `V-STORY-${next.verdicts.length + 1}`;
@@ -1436,22 +1494,42 @@ export function applyWorkflowCommand(
     testsGreen: command.testsGreen,
     developerClaimsPass: command.developerClaimsPass,
   });
-  const evidence = [
-    ...(check.finding?.evidence ?? [`observed:${observedBehavior}`]),
-  ];
+  const executed = requirementEvidence(state, command.requirementId);
+  const implementationEvidence: string[] = [];
   if (command.implementationSource) {
-    evidence.push(`implementation:${fingerprintPayload(command.implementationSource)}`);
+    implementationEvidence.push(`implementation:${fingerprintPayload(command.implementationSource)}`);
     if (command.observedBehavior && command.observedBehavior !== observedBehavior) {
-      evidence.push(`unsupported-claim:${command.observedBehavior}`);
+      implementationEvidence.push(`unsupported-claim:${command.observedBehavior}`);
     }
   }
-  const finding = check.finding
-    ? {
-        ...check.finding,
-        serviceIds: command.serviceId ? [command.serviceId] : check.finding.serviceIds,
-        evidence,
-      }
-    : undefined;
+  const serviceIds = (fallback: string[]) => (command.serviceId ? [command.serviceId] : fallback);
+  let verdict: QualityVerdict;
+  let evidence: string[];
+  let finding: Finding | undefined;
+  if (check.verdict === "FAIL" || executed.status === "missing") {
+    // The heuristic FAIL always wins; without executed coverage the heuristic is all we have.
+    verdict = check.verdict;
+    evidence = [...(check.finding?.evidence ?? [`observed:${observedBehavior}`]), ...implementationEvidence];
+    finding = check.finding
+      ? { ...check.finding, serviceIds: serviceIds(check.finding.serviceIds), evidence }
+      : undefined;
+  } else {
+    verdict = executed.verdict;
+    evidence = [...executed.reasons, ...executed.provenance, ...implementationEvidence];
+    // An unconfirmed Story is a BA confirmation risk, not a Developer defect.
+    finding =
+      executed.verdict === "FAIL"
+        ? {
+            id: `F-${command.requirementId}-coverage`,
+            requirementIds: [command.requirementId],
+            serviceIds: serviceIds([]),
+            owner: "developer",
+            summary: `${command.requirementId} failed executed verification: ${executed.reasons.join("; ")}`,
+            evidence,
+            status: "open",
+          }
+        : undefined;
+  }
   let next = state;
   if (finding) {
     const returned = returnFinding(next, finding);
@@ -1462,14 +1540,19 @@ export function applyWorkflowCommand(
     id: verdictId,
     scope: "requirement",
     scopeId: command.requirementId,
-    verdict: check.verdict,
+    verdict,
     evidenceRefs: evidence,
     requirementIds: [command.requirementId],
   });
   return {
     state: next,
     duplicate: false,
-    result: { verdict: check.verdict, observedBehavior, finding: finding ?? null },
+    result: {
+      verdict,
+      observedBehavior,
+      evidenceStatus: executed.status,
+      finding: finding ?? null,
+    },
   };
 }
 

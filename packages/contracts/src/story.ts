@@ -54,6 +54,8 @@ export type UserStory = z.infer<typeof UserStorySchema>;
 
 export const CoverageEntrySchema = z.object({
   storyId: StoryIdSchema,
+  /** Story revision this scenario verified. Older revisions are not evidence for the current one. */
+  storyRevision: z.number().int().positive().optional(),
   requirementId: RequirementIdSchema,
   acceptanceCriterionId: z.string().min(1),
   scenarioId: z.string().min(1),

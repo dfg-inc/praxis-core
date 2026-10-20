@@ -423,6 +423,8 @@ export {
   featureReadiness,
   evaluateRequirementBehavior,
   recordVerdict,
+  requirementEvidence,
+  type RequirementEvidence,
   returnFinding,
   classifyClarification,
   questionsToAsk,
