@@ -520,6 +520,7 @@ export {
 export type { ActionPlan, DecisionKind } from "./action-plan.js";
 export { HUMAN_GRANT_KIND, humanGrantContent, verifyHumanGrant } from "./grants.js";
 export type { HumanGrantAction } from "./grants.js";
+export type { HumanGrantRequest } from "./workflow.js";
 export { assessApprovalDeployment, assertSecureDeploymentAssessment } from "./deployment.js";
 export type { DeploymentAssessment, DeploymentFinding, DeploymentProbe, DeploymentTier } from "./deployment.js";
 export {
