@@ -9,7 +9,7 @@
     "title": "Native cross-platform Approval Service",
     "source": "local",
     "status": "changes_requested",
-    "revision": 12
+    "revision": 19
   },
   "requirements": [
     {
@@ -701,6 +701,114 @@
       ],
       "revision": 12,
       "fingerprint": "sha256:bef930213432f1238bb4c1587e4e423812248074d94d40909d4eb80b22bb1971"
+    },
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "workItemId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "handoffId": "HO-13",
+      "sourceRole": "quality",
+      "targetRole": "architect",
+      "serviceIds": [
+        "platform-adapters-installers"
+      ],
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "acceptanceCriterionIds": [],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [],
+      "assumptions": [],
+      "openQuestions": [],
+      "risks": [],
+      "blockers": [
+        "macOS has never run as a launchd daemon under a separate account, and Windows has never run at all; Linux ran only in a container, not under systemd."
+      ],
+      "decisionRecords": [],
+      "resolved": [],
+      "nextActions": [
+        "Correct REQ-NAS-001 and resubmit evidence"
+      ],
+      "readiness": "blocked",
+      "evidenceRefs": [
+        "US-NAS-004-S3, US-NAS-005-S3, US-NAS-005-S4 BLOCKED; Windows UNTESTED"
+      ],
+      "revision": 13,
+      "fingerprint": "sha256:291f79245a84158ffbf28af4742502581f7174cd4d7a933698639a3238e145db"
+    },
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "workItemId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "handoffId": "HO-14",
+      "sourceRole": "quality",
+      "targetRole": "architect",
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "requirementIds": [
+        "REQ-NAS-002"
+      ],
+      "acceptanceCriterionIds": [],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [],
+      "assumptions": [],
+      "openQuestions": [],
+      "risks": [],
+      "blockers": [
+        "No real person has approved anything: every approval in the tests is a software authenticator."
+      ],
+      "decisionRecords": [],
+      "resolved": [],
+      "nextActions": [
+        "Correct REQ-NAS-002 and resubmit evidence"
+      ],
+      "readiness": "blocked",
+      "evidenceRefs": [
+        "US-NAS-001-S3 BLOCKED"
+      ],
+      "revision": 14,
+      "fingerprint": "sha256:ad1810e5bdf5f5baa80996145b66f0636381221f113a2501ca62b7f551a84118"
+    },
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "workItemId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "handoffId": "HO-15",
+      "sourceRole": "quality",
+      "targetRole": "architect",
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "acceptanceCriterionIds": [],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [],
+      "assumptions": [],
+      "openQuestions": [],
+      "risks": [],
+      "blockers": [
+        "A local agent can delay the owner's decision by spamming challenges (availability only), and the operator page is not TLS-bound to a service-held key (review M6, H1 residual)."
+      ],
+      "decisionRecords": [],
+      "resolved": [],
+      "nextActions": [
+        "Correct REQ-NAS-001 and resubmit evidence"
+      ],
+      "readiness": "blocked",
+      "evidenceRefs": [
+        "documented in README and SECURITY-REVIEW"
+      ],
+      "revision": 15,
+      "fingerprint": "sha256:1aae4ae164795ab33db34d81d642fa42e6270d87886d3edf4b0502f92765565e"
     }
   ],
   "findings": [
@@ -775,15 +883,12 @@
         "platform-adapters-installers"
       ],
       "owner": "quality",
-      "summary": "The independent review was cut short by a tooling safety stop: packaging scripts, provider code and the IPC flood/slowloris, XSS, CSRF and DNS-rebinding areas were NOT reviewed independently.",
+      "summary": "The independent review was incomplete.",
       "evidence": [
-        "reviewer report: read-only review of core, executor, gitx, audit, delegate, operator page only; no proofs of concept beyond the .env finding"
+        "round 2 (read-only independent review) covered the operator page, installers, providers/config and the service core; findings H1,H2,M1-M8,L1-L11,I1-I3 triaged in docs/approval-service/SECURITY-REVIEW.md; operator-ui.test.mjs and 100+ regression tests added",
+        "limits stated: Windows pieces never run, macOS never installed under a separate account, no human review"
       ],
-      "status": "open",
-      "severity": "high",
-      "expected": "An independent review of every area in the Quality brief",
-      "observed": "Partial review",
-      "suggestion": "Re-run the review of packaging, providers and the operator page before any installation"
+      "status": "resolved"
     },
     {
       "id": "F-NAS-006",
@@ -793,46 +898,12 @@
       "serviceIds": [
         "approval-service-core"
       ],
-      "owner": "architect",
-      "summary": "Truncating the tail of the audit chain is not detectable by hash chaining alone; health now exposes the chain head but nothing anchors it outside the service.",
-      "evidence": [
-        "documented limit; head hash in health"
-      ],
-      "status": "open",
-      "severity": "medium",
-      "expected": "An external anchor for the chain head",
-      "observed": "No anchor",
-      "suggestion": "Owner decision: periodic head export to a second protected location"
-    },
-    {
-      "id": "F-US-NAS-001-S3-human-touch-id",
-      "requirementIds": [
-        "REQ-NAS-002"
-      ],
-      "serviceIds": [
-        "approval-service-core"
-      ],
       "owner": "developer",
-      "summary": "US-NAS-001-S3-human-touch-id BLOCKED",
+      "summary": "Audit chain truncation or rollback was undetectable.",
       "evidence": [
-        "observed:browser or deployed end-to-end execution is unavailable"
+        "signed head anchors in independent sinks, ledger cross-check, off-host witness; tests: truncated tail, whole-state rollback, deleted sink, forged anchor, rolled-back ledger, mismatch while running, concurrent writers; Quality scenario US-NAS-006-S1 PASS"
       ],
-      "status": "open",
-      "severity": "high",
-      "storyIds": [
-        "US-NAS-001"
-      ],
-      "acceptanceCriterionIds": [
-        "US-NAS-001-AC-03"
-      ],
-      "repository": "praxis-core",
-      "file": "acceptance/quality-checks.mjs",
-      "expected": "{}",
-      "observed": "browser or deployed end-to-end execution is unavailable",
-      "reproduction": [
-        "Execute acceptance/quality-checks.mjs for US-NAS-001-S3-human-touch-id."
-      ],
-      "suggestion": "host-patch:approval-service-core"
+      "status": "resolved"
     },
     {
       "id": "F-US-NAS-004-S2-os-identity-linux",
@@ -955,6 +1026,66 @@
       "suggestion": "host-patch:platform-adapters-installers"
     },
     {
+      "id": "F-US-NAS-007-S1-desktop-mcpb",
+      "requirementIds": [
+        "REQ-NAS-004"
+      ],
+      "serviceIds": [
+        "runtime-client"
+      ],
+      "owner": "developer",
+      "summary": "US-NAS-007-S1-desktop-mcpb FAIL",
+      "evidence": [
+        "observed:{\"result\":\"FAIL: \",\"steps\":0}"
+      ],
+      "status": "open",
+      "severity": "high",
+      "storyIds": [
+        "US-NAS-007"
+      ],
+      "acceptanceCriterionIds": [
+        "US-NAS-007-AC-01"
+      ],
+      "repository": "praxis-core",
+      "file": "quality-checks.mjs",
+      "expected": "{\"result\":\"PASS service-delegation\",\"steps\":10}",
+      "observed": "{\"result\":\"FAIL: \",\"steps\":0}",
+      "reproduction": [
+        "Execute quality-checks.mjs for US-NAS-007-S1-desktop-mcpb."
+      ],
+      "suggestion": "host-patch:runtime-client"
+    },
+    {
+      "id": "F-US-NAS-001-S3-human-touch-id",
+      "requirementIds": [
+        "REQ-NAS-002"
+      ],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "owner": "developer",
+      "summary": "US-NAS-001-S3-human-touch-id BLOCKED",
+      "evidence": [
+        "observed:browser or deployed end-to-end execution is unavailable"
+      ],
+      "status": "open",
+      "severity": "high",
+      "storyIds": [
+        "US-NAS-001"
+      ],
+      "acceptanceCriterionIds": [
+        "US-NAS-001-AC-03"
+      ],
+      "repository": "praxis-core",
+      "file": "acceptance/quality-checks.mjs",
+      "expected": "{}",
+      "observed": "browser or deployed end-to-end execution is unavailable",
+      "reproduction": [
+        "Execute acceptance/quality-checks.mjs for US-NAS-001-S3-human-touch-id."
+      ],
+      "suggestion": "host-patch:approval-service-core"
+    },
+    {
       "id": "F-US-NAS-005-S3-macos-install",
       "requirementIds": [
         "REQ-NAS-004"
@@ -1015,34 +1146,91 @@
       "suggestion": "host-patch:platform-adapters-installers"
     },
     {
-      "id": "F-US-NAS-007-S1-desktop-mcpb",
+      "id": "F-NAS-007",
       "requirementIds": [
-        "REQ-NAS-004"
+        "REQ-NAS-003"
       ],
       "serviceIds": [
-        "runtime-client"
+        "approval-service-core"
       ],
       "owner": "developer",
-      "summary": "US-NAS-007-S1-desktop-mcpb FAIL",
+      "summary": "Repository .git/config was screened once and then read by push and ls-remote; flipping it during execution could run code or redirect a credentialed push (review H2).",
       "evidence": [
-        "observed:{\"result\":\"FAIL: \",\"steps\":0}"
+        "push runs from a service-owned bare repository, ls-remote from an empty one, files hashed as raw bytes; unit test proves a hostile parent .git is never consulted"
+      ],
+      "status": "resolved"
+    },
+    {
+      "id": "F-NAS-008",
+      "requirementIds": [
+        "REQ-NAS-002"
+      ],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "owner": "developer",
+      "summary": "Loopback impersonation of the operator page on ::1 (review H1).",
+      "evidence": [
+        "both loopback addresses held, start refused if ::1 is taken; residual: no TLS binding of the page to a service-held key"
+      ],
+      "status": "resolved"
+    },
+    {
+      "id": "F-NAS-009",
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "serviceIds": [
+        "platform-adapters-installers"
+      ],
+      "owner": "architect",
+      "summary": "macOS has never run as a launchd daemon under a separate account, and Windows has never run at all; Linux ran only in a container, not under systemd.",
+      "evidence": [
+        "US-NAS-004-S3, US-NAS-005-S3, US-NAS-005-S4 BLOCKED; Windows UNTESTED"
       ],
       "status": "open",
       "severity": "high",
-      "storyIds": [
-        "US-NAS-007"
+      "expected": "installed-service isolation acceptance on macOS and Windows and a systemd host",
+      "observed": "not run",
+      "suggestion": "Owner installs the macOS package and runs ISOLATION-ACCEPTANCE.md; Windows needs a Windows machine; Linux needs a systemd host"
+    },
+    {
+      "id": "F-NAS-010",
+      "requirementIds": [
+        "REQ-NAS-002"
       ],
-      "acceptanceCriterionIds": [
-        "US-NAS-007-AC-01"
+      "serviceIds": [
+        "approval-service-core"
       ],
-      "repository": "praxis-core",
-      "file": "quality-checks.mjs",
-      "expected": "{\"result\":\"PASS service-delegation\",\"steps\":10}",
-      "observed": "{\"result\":\"FAIL: \",\"steps\":0}",
-      "reproduction": [
-        "Execute quality-checks.mjs for US-NAS-007-S1-desktop-mcpb."
+      "owner": "architect",
+      "summary": "No real person has approved anything: every approval in the tests is a software authenticator.",
+      "evidence": [
+        "US-NAS-001-S3 BLOCKED"
       ],
-      "suggestion": "host-patch:runtime-client"
+      "status": "open",
+      "severity": "high",
+      "expected": "Touch ID or a security key enrolled and used on the operator page",
+      "observed": "not run",
+      "suggestion": "Owner follows ISOLATION-ACCEPTANCE.md section C"
+    },
+    {
+      "id": "F-NAS-011",
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "owner": "architect",
+      "summary": "A local agent can delay the owner's decision by spamming challenges (availability only), and the operator page is not TLS-bound to a service-held key (review M6, H1 residual).",
+      "evidence": [
+        "documented in README and SECURITY-REVIEW"
+      ],
+      "status": "open",
+      "severity": "low",
+      "expected": "A decision that cannot be delayed by an unauthenticated local client",
+      "observed": "bounded but possible",
+      "suggestion": "Owner decision whether to require a TLS operator page with a service-held key"
     }
   ],
   "verdicts": [
@@ -1255,6 +1443,294 @@
       "requirementIds": [
         "REQ-NAS-002",
         "REQ-NAS-001",
+        "REQ-NAS-003",
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-SERVICE-approval-service-core-10",
+      "scope": "service",
+      "scopeId": "approval-service-core",
+      "verdict": "FAIL",
+      "evidenceRefs": [
+        "US-NAS-001-S3-human-touch-id BLOCKED"
+      ],
+      "requirementIds": [
+        "REQ-NAS-002",
+        "REQ-NAS-001",
+        "REQ-NAS-003"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-SERVICE-runtime-client-11",
+      "scope": "service",
+      "scopeId": "runtime-client",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "US-NAS-007-CONFIRMATION PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "[redacted]",
+      "scope": "service",
+      "scopeId": "platform-adapters-installers",
+      "verdict": "FAIL",
+      "evidenceRefs": [
+        "US-NAS-004-S3-os-identity-macos-windows BLOCKED",
+        "US-NAS-005-S3-macos-install BLOCKED",
+        "US-NAS-005-S4-windows-install BLOCKED"
+      ],
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-REQ-NAS-002-13",
+      "scope": "requirement",
+      "scopeId": "REQ-NAS-002",
+      "verdict": "FAIL",
+      "evidenceRefs": [
+        "independentRerun:false",
+        "US-NAS-001-S3-human-touch-id BLOCKED",
+        "story-unconfirmed:US-NAS-001@1",
+        "story:US-NAS-001@1",
+        "US-NAS-001-S1-approved-commit:PASS",
+        "US-NAS-001-S2-rejected-commit:PASS",
+        "US-NAS-001-S3-human-touch-id:BLOCKED"
+      ],
+      "requirementIds": [
+        "REQ-NAS-002"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-REQ-NAS-001-14",
+      "scope": "requirement",
+      "scopeId": "REQ-NAS-001",
+      "verdict": "FAIL",
+      "evidenceRefs": [
+        "independentRerun:false",
+        "US-NAS-004-S3-os-identity-macos-windows BLOCKED",
+        "story-unconfirmed:US-NAS-002@1",
+        "story-unconfirmed:US-NAS-004@1",
+        "story-unconfirmed:US-NAS-006@1",
+        "story:US-NAS-002@1",
+        "story:US-NAS-004@1",
+        "story:US-NAS-006@1",
+        "US-NAS-002-S1-no-approve-path:PASS",
+        "US-NAS-002-S2-forged-approvals:PASS",
+        "US-NAS-002-S3-impostor-and-dead-service:PASS",
+        "US-NAS-002-S4-fails-closed:PASS",
+        "US-NAS-002-S5-production-refuses-unverified:PASS",
+        "US-NAS-004-S2-os-identity-linux:PASS",
+        "US-NAS-004-S3-os-identity-macos-windows:BLOCKED",
+        "US-NAS-006-S1-audit-ledger-integrity:PASS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-REQ-NAS-003-15",
+      "scope": "requirement",
+      "scopeId": "REQ-NAS-003",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "independentRerun:false",
+        "story-not-verified:US-NAS-001@1",
+        "story-unconfirmed:US-NAS-003@1",
+        "story-unconfirmed:US-NAS-004@1",
+        "story-unconfirmed:US-NAS-006@1",
+        "story:US-NAS-003@1",
+        "story:US-NAS-004@1",
+        "story:US-NAS-006@1",
+        "US-NAS-003-S1-replay-commit-push-mr:PASS",
+        "US-NAS-003-S2-changed-plan:PASS",
+        "US-NAS-004-S1-no-secrets-no-artifacts:PASS",
+        "US-NAS-006-S2-concurrency:PASS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-003"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-REQ-NAS-004-16",
+      "scope": "requirement",
+      "scopeId": "REQ-NAS-004",
+      "verdict": "FAIL",
+      "evidenceRefs": [
+        "independentRerun:false",
+        "US-NAS-005-S3-macos-install BLOCKED",
+        "US-NAS-005-S4-windows-install BLOCKED",
+        "story-unconfirmed:US-NAS-005@1",
+        "story-unconfirmed:US-NAS-007@1",
+        "story:US-NAS-005@1",
+        "story:US-NAS-007@1",
+        "US-NAS-005-S1-linux-lifecycle:PASS",
+        "US-NAS-005-S2-macos-package:PASS",
+        "US-NAS-005-S3-macos-install:BLOCKED",
+        "US-NAS-005-S4-windows-install:BLOCKED",
+        "US-NAS-007-S1-desktop-mcpb:PASS",
+        "US-NAS-007-S2-cli-dotenv:PASS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-STORY-17",
+      "scope": "feature",
+      "scopeId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "verdict": "FAIL",
+      "evidenceRefs": [
+        "independentRerun:false",
+        "US-NAS-001-S3-human-touch-id BLOCKED",
+        "US-NAS-004-S3-os-identity-macos-windows BLOCKED",
+        "US-NAS-005-S3-macos-install BLOCKED",
+        "US-NAS-005-S4-windows-install BLOCKED",
+        "US-NAS-001-S1-approved-commit:PASS",
+        "US-NAS-001-S2-rejected-commit:PASS",
+        "US-NAS-001-S3-human-touch-id:BLOCKED",
+        "US-NAS-002-S1-no-approve-path:PASS",
+        "US-NAS-002-S2-forged-approvals:PASS",
+        "US-NAS-002-S3-impostor-and-dead-service:PASS",
+        "US-NAS-002-S4-fails-closed:PASS",
+        "US-NAS-002-S5-production-refuses-unverified:PASS",
+        "US-NAS-003-S1-replay-commit-push-mr:PASS",
+        "US-NAS-003-S2-changed-plan:PASS",
+        "US-NAS-004-S1-no-secrets-no-artifacts:PASS",
+        "US-NAS-004-S2-os-identity-linux:PASS",
+        "US-NAS-004-S3-os-identity-macos-windows:BLOCKED",
+        "US-NAS-005-S1-linux-lifecycle:PASS",
+        "US-NAS-005-S2-macos-package:PASS",
+        "US-NAS-005-S3-macos-install:BLOCKED",
+        "US-NAS-005-S4-windows-install:BLOCKED",
+        "US-NAS-006-S1-audit-ledger-integrity:PASS",
+        "US-NAS-006-S2-concurrency:PASS",
+        "US-NAS-007-S1-desktop-mcpb:PASS",
+        "US-NAS-007-S2-cli-dotenv:PASS",
+        "US-NAS-001-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-002-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-003-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-004-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-005-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-006-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-007-CONFIRMATION:PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-002",
+        "REQ-NAS-001",
+        "REQ-NAS-003",
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-SERVICE-approval-service-core-18",
+      "scope": "service",
+      "scopeId": "approval-service-core",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "US-NAS-001-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-002-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-003-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-004-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-006-CONFIRMATION PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-002",
+        "REQ-NAS-001",
+        "REQ-NAS-003"
+      ],
+      "stale": false
+    },
+    {
+      "id": "[redacted]",
+      "scope": "service",
+      "scopeId": "platform-adapters-installers",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "US-NAS-005-CONFIRMATION PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-SERVICE-runtime-client-20",
+      "scope": "service",
+      "scopeId": "runtime-client",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "US-NAS-007-CONFIRMATION PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-STORY-21",
+      "scope": "feature",
+      "scopeId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "testsGreen:true",
+        "green tests are not story evidence",
+        "independentRerun:false",
+        "US-NAS-001-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-002-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-003-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-004-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-005-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-006-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-007-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-001-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-002-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-003-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-004-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-005-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-006-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-007-CONFIRMATION:PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-002",
+        "REQ-NAS-001",
+        "REQ-NAS-003",
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-FEATURE-22",
+      "scope": "feature",
+      "scopeId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "verdict": "FAIL",
+      "evidenceRefs": [
+        "REQ-NAS-001 is FAIL",
+        "REQ-NAS-002 is FAIL",
+        "REQ-NAS-003 is PASS_WITH_RISKS",
+        "REQ-NAS-004 is FAIL",
+        "dependency not done: runtime-client",
+        "dependency not done: platform-adapters-installers",
+        "services are not approved"
+      ],
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-002",
         "REQ-NAS-003",
         "REQ-NAS-004"
       ],
@@ -1736,405 +2212,6 @@
   "coverage": [
     {
       "storyId": "US-NAS-001",
-      "requirementId": "REQ-NAS-002",
-      "acceptanceCriterionId": "US-NAS-001-AC-01",
-      "scenarioId": "US-NAS-001-S1-approved-commit",
-      "kind": "happy",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"proposed\":\"awaiting-operator\",\"refusedBeforeApproval\":\"APPROVAL_REQUIRED\",\"executed\":\"completed\",\"newCommits\":1,\"author\":\"Praxis Approval Service\",\"files\":[\"f.txt\"]}",
-        "observed:{\"proposed\":\"awaiting-operator\",\"refusedBeforeApproval\":\"APPROVAL_REQUIRED\",\"executed\":\"completed\",\"newCommits\":1,\"author\":\"Praxis Approval Service\",\"files\":[\"f.txt\"]}"
-      ],
-      "status": "PASS",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-001",
-      "requirementId": "REQ-NAS-002",
-      "acceptanceCriterionId": "US-NAS-001-AC-02",
-      "scenarioId": "US-NAS-001-S2-rejected-commit",
-      "kind": "negative",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"status\":\"rejected\",\"execute\":\"APPROVAL_REJECTED\",\"headMoved\":false,\"untracked\":\"?? f.txt\"}",
-        "observed:{\"status\":\"rejected\",\"execute\":\"APPROVAL_REJECTED\",\"headMoved\":false,\"untracked\":\"?? f.txt\"}"
-      ],
-      "status": "PASS",
-      "critical": false,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-001",
-      "requirementId": "REQ-NAS-002",
-      "acceptanceCriterionId": "US-NAS-001-AC-03",
-      "scenarioId": "US-NAS-001-S3-human-touch-id",
-      "kind": "happy",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:e2e",
-        "no browser runner is available",
-        "deployed end-to-end coverage was not claimed"
-      ],
-      "status": "BLOCKED",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-002",
-      "requirementId": "REQ-NAS-001",
-      "acceptanceCriterionId": "US-NAS-002-AC-01",
-      "scenarioId": "US-NAS-002-S1-no-approve-path",
-      "kind": "security",
-      "serviceId": "runtime-client",
-      "repository": "praxis-core",
-      "implementationPath": "quality-checks.mjs",
-      "testRef": "quality-checks.mjs",
-      "evidence": [
-        "level:contract",
-        "expected:{\"refused\":[\"UNKNOWN_OPERATION\"],\"strictExtraFieldRefused\":\"BAD_REQUEST\",\"allowed\":[true,true,true]}",
-        "observed:{\"refused\":[\"UNKNOWN_OPERATION\"],\"strictExtraFieldRefused\":\"BAD_REQUEST\",\"allowed\":[true,true,true]}"
-      ],
-      "status": "PASS",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-002",
-      "requirementId": "REQ-NAS-001",
-      "acceptanceCriterionId": "US-NAS-002-AC-02",
-      "scenarioId": "US-NAS-002-S2-forged-approvals",
-      "kind": "security",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"unknownOperations\":{\"approve\":\"UNKNOWN_OPERATION\",\"reject\":\"UNKNOWN_OPERATION\",\"sign\":\"UNKNOWN_OPERATION\",\"enroll\":\"UNKNOWN_OPERATION\",\"set-config\":\"UNKNOWN_OPERATION\",\"exec\":\"UNKNOWN_OPERATION\"},\"forged\":{\"otherKey\":false,\"machineChannel\":false},\"headMoved\":false}",
-        "observed:{\"unknownOperations\":{\"approve\":\"UNKNOWN_OPERATION\",\"reject\":\"UNKNOWN_OPERATION\",\"sign\":\"UNKNOWN_OPERATION\",\"enroll\":\"UNKNOWN_OPERATION\",\"set-config\":\"UNKNOWN_OPERATION\",\"exec\":\"UNKNOWN_OPERATION\"},\"forged\":{\"otherKey\":false,\"machineChannel\":false},\"headMoved\":false}"
-      ],
-      "status": "PASS",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-002",
-      "requirementId": "REQ-NAS-001",
-      "acceptanceCriterionId": "US-NAS-002-AC-03",
-      "scenarioId": "US-NAS-002-S3-impostor-and-dead-service",
-      "kind": "security",
-      "serviceId": "runtime-client",
-      "repository": "praxis-core",
-      "implementationPath": "quality-checks.mjs",
-      "testRef": "quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"impostorReachable\":true,\"impostorIsolated\":false,\"deadReachable\":false,\"deadIsolated\":false,\"callToDeadService\":\"SERVICE_UNAVAILABLE\"}",
-        "observed:{\"impostorReachable\":true,\"impostorIsolated\":false,\"deadReachable\":false,\"deadIsolated\":false,\"callToDeadService\":\"SERVICE_UNAVAILABLE\"}"
-      ],
-      "status": "PASS",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-002",
-      "requirementId": "REQ-NAS-001",
-      "acceptanceCriterionId": "US-NAS-002-AC-03",
-      "scenarioId": "US-NAS-002-S4-fails-closed",
-      "kind": "edge",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"executeOk\":false,\"headMoved\":false}",
-        "observed:{\"executeOk\":false,\"headMoved\":false}"
-      ],
-      "status": "PASS",
-      "critical": false,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-002",
-      "requirementId": "REQ-NAS-001",
-      "acceptanceCriterionId": "US-NAS-002-AC-03",
-      "scenarioId": "[redacted]",
-      "kind": "security",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"productionWithFailingProbe\":\"refused\"}",
-        "observed:{\"productionWithFailingProbe\":\"refused\"}"
-      ],
-      "status": "PASS",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-003",
-      "requirementId": "REQ-NAS-003",
-      "acceptanceCriterionId": "US-NAS-003-AC-01",
-      "scenarioId": "US-NAS-003-S1-replay-commit-push-mr",
-      "kind": "contract",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"commit\":{\"state\":\"completed\",\"sameResult\":true},\"push\":{\"state\":\"completed\",\"sameResult\":true},\"mergeRequest\":{\"state\":\"completed\",\"sameResult\":true,\"requestsCreated\":1},\"nothingRanAgain\":true}",
-        "observed:{\"commit\":{\"state\":\"completed\",\"sameResult\":true},\"push\":{\"state\":\"completed\",\"sameResult\":true},\"mergeRequest\":{\"state\":\"completed\",\"sameResult\":true,\"requestsCreated\":1},\"nothingRanAgain\":true}"
-      ],
-      "status": "PASS",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-003",
-      "requirementId": "REQ-NAS-003",
-      "acceptanceCriterionId": "US-NAS-003-AC-02",
-      "scenarioId": "US-NAS-003-S2-changed-plan",
-      "kind": "negative",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"sameIdDifferentMessage\":\"CHANGED_PLAN\",\"sameIdDifferentPath\":\"CHANGED_PLAN\",\"changedAfterApproval\":\"APPROVAL_SCOPE_MISMATCH\",\"headMoved\":false}",
-        "observed:{\"sameIdDifferentMessage\":\"CHANGED_PLAN\",\"sameIdDifferentPath\":\"CHANGED_PLAN\",\"changedAfterApproval\":\"APPROVAL_SCOPE_MISMATCH\",\"headMoved\":false}"
-      ],
-      "status": "PASS",
-      "critical": false,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-004",
-      "requirementId": "REQ-NAS-003",
-      "acceptanceCriterionId": "US-NAS-004-AC-01",
-      "scenarioId": "US-NAS-004-S1-no-secrets-no-artifacts",
-      "kind": "security",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"tokenOrKeyInReplyOrLog\":false,\"newRefs\":[],\"approvalFilesInRepo\":0,\"cleanWorktree\":true}",
-        "observed:{\"tokenOrKeyInReplyOrLog\":false,\"newRefs\":[],\"approvalFilesInRepo\":0,\"cleanWorktree\":true}"
-      ],
-      "status": "PASS",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-004",
-      "requirementId": "REQ-NAS-001",
-      "acceptanceCriterionId": "US-NAS-004-AC-02",
-      "scenarioId": "US-NAS-004-S2-os-identity-linux",
-      "kind": "security",
-      "serviceId": "platform-adapters-installers",
-      "repository": "praxis-core",
-      "implementationPath": "quality-checks.mjs",
-      "testRef": "quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"summary\":\"LINUX-CONTAINER PASS\",\"failedChecks\":0,\"exit\":0}",
-        "observed:{\"summary\":\"no result\",\"failedChecks\":0,\"exit\":null}"
-      ],
-      "status": "FAIL",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-004",
-      "requirementId": "REQ-NAS-001",
-      "acceptanceCriterionId": "US-NAS-004-AC-02",
-      "scenarioId": "US-NAS-004-S3-os-identity-macos-windows",
-      "kind": "security",
-      "serviceId": "platform-adapters-installers",
-      "repository": "praxis-core",
-      "implementationPath": "quality-checks.mjs",
-      "testRef": "quality-checks.mjs",
-      "evidence": [
-        "level:e2e",
-        "no browser runner is available",
-        "deployed end-to-end coverage was not claimed"
-      ],
-      "status": "BLOCKED",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-005",
-      "requirementId": "REQ-NAS-004",
-      "acceptanceCriterionId": "US-NAS-005-AC-01",
-      "scenarioId": "US-NAS-005-S1-linux-lifecycle",
-      "kind": "happy",
-      "serviceId": "platform-adapters-installers",
-      "repository": "praxis-core",
-      "implementationPath": "quality-checks.mjs",
-      "testRef": "quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"summary\":\"LINUX-CONTAINER PASS\",\"failedChecks\":0,\"exit\":0}",
-        "observed:{\"summary\":\"no result\",\"failedChecks\":0,\"exit\":null}"
-      ],
-      "status": "FAIL",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-005",
-      "requirementId": "REQ-NAS-004",
-      "acceptanceCriterionId": "US-NAS-005-AC-02",
-      "scenarioId": "US-NAS-005-S2-macos-package",
-      "kind": "contract",
-      "serviceId": "platform-adapters-installers",
-      "repository": "praxis-core",
-      "implementationPath": "quality-checks.mjs",
-      "testRef": "quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"daemonPlist\":true,\"agentPlist\":false,\"ctl\":true,\"signed\":false}",
-        "observed:The built-in Node.js runtime cannot start \"Claude Helper (Plugin)\" as a Node.js subprocess (child_process.fork or process.execPath). Install Node.js and turn off \"Use built-in Node.js for MCP\" in Settings > Extensions > Advanced settings, or avoid spawning Node from this server."
-      ],
-      "status": "FAIL",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-005",
-      "requirementId": "REQ-NAS-004",
-      "acceptanceCriterionId": "US-NAS-005-AC-03",
-      "scenarioId": "US-NAS-005-S3-macos-install",
-      "kind": "happy",
-      "serviceId": "platform-adapters-installers",
-      "repository": "praxis-core",
-      "implementationPath": "quality-checks.mjs",
-      "testRef": "quality-checks.mjs",
-      "evidence": [
-        "level:e2e",
-        "no browser runner is available",
-        "deployed end-to-end coverage was not claimed"
-      ],
-      "status": "BLOCKED",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-005",
-      "requirementId": "REQ-NAS-004",
-      "acceptanceCriterionId": "US-NAS-005-AC-04",
-      "scenarioId": "US-NAS-005-S4-windows-install",
-      "kind": "happy",
-      "serviceId": "platform-adapters-installers",
-      "repository": "praxis-core",
-      "implementationPath": "quality-checks.mjs",
-      "testRef": "quality-checks.mjs",
-      "evidence": [
-        "level:e2e",
-        "no browser runner is available",
-        "deployed end-to-end coverage was not claimed"
-      ],
-      "status": "BLOCKED",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-006",
-      "requirementId": "REQ-NAS-001",
-      "acceptanceCriterionId": "US-NAS-006-AC-01",
-      "scenarioId": "US-NAS-006-S1-audit-ledger-integrity",
-      "kind": "security",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"truncatedTail\":\"refused\",\"ledgerRemoved\":\"refused\",\"intactStateStarts\":true,\"replayAfterRestart\":true}",
-        "observed:{\"truncatedTail\":\"refused\",\"ledgerRemoved\":\"refused\",\"intactStateStarts\":true,\"replayAfterRestart\":true}"
-      ],
-      "status": "PASS",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-006",
-      "requirementId": "REQ-NAS-003",
-      "acceptanceCriterionId": "US-NAS-006-AC-02",
-      "scenarioId": "US-NAS-006-S2-concurrency",
-      "kind": "edge",
-      "serviceId": "approval-service-core",
-      "repository": "praxis-core",
-      "implementationPath": "acceptance/quality-checks.mjs",
-      "testRef": "acceptance/quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"allOk\":true,\"commitsInA\":1,\"commitsInB\":1,\"subjects\":[\"A\",\"B\"],\"auditIntact\":true}",
-        "observed:{\"allOk\":true,\"commitsInA\":1,\"commitsInB\":1,\"subjects\":[\"A\",\"B\"],\"auditIntact\":true}"
-      ],
-      "status": "PASS",
-      "critical": false,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-007",
-      "requirementId": "REQ-NAS-004",
-      "acceptanceCriterionId": "US-NAS-007-AC-01",
-      "scenarioId": "US-NAS-007-S1-desktop-mcpb",
-      "kind": "happy",
-      "serviceId": "runtime-client",
-      "repository": "praxis-core",
-      "implementationPath": "quality-checks.mjs",
-      "testRef": "quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"result\":\"PASS service-delegation\",\"steps\":10}",
-        "observed:{\"result\":\"FAIL: \",\"steps\":0}"
-      ],
-      "status": "FAIL",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-007",
-      "requirementId": "REQ-NAS-004",
-      "acceptanceCriterionId": "US-NAS-007-AC-02",
-      "scenarioId": "US-NAS-007-S2-cli-dotenv",
-      "kind": "security",
-      "serviceId": "runtime-client",
-      "repository": "praxis-core",
-      "implementationPath": "quality-checks.mjs",
-      "testRef": "quality-checks.mjs",
-      "evidence": [
-        "level:service-integration",
-        "expected:{\"endpointFromRepoFile\":null,\"securityModeFromRepoFile\":null,\"rejected\":[\"PRAXIS_APPROVAL_SERVICE_ENDPOINT\",\"PRAXIS_SECURITY_MODE\"]}",
-        "observed:{\"endpointFromRepoFile\":null,\"securityModeFromRepoFile\":null,\"rejected\":[\"PRAXIS_APPROVAL_SERVICE_ENDPOINT\",\"PRAXIS_SECURITY_MODE\"]}"
-      ],
-      "status": "PASS",
-      "critical": true,
-      "storyRevision": 1
-    },
-    {
-      "storyId": "US-NAS-001",
       "storyRevision": 1,
       "requirementId": "REQ-NAS-002",
       "acceptanceCriterionId": "US-NAS-001-AC-01",
@@ -2315,6 +2392,41 @@
       "revision": 12,
       "stage": "changes_requested",
       "note": "finding F-US-NAS-007-S1-desktop-mcpb returned to developer"
+    },
+    {
+      "revision": 13,
+      "stage": "changes_requested",
+      "note": "finding F-US-NAS-001-S3-human-touch-id returned to developer"
+    },
+    {
+      "revision": 14,
+      "stage": "changes_requested",
+      "note": "finding F-US-NAS-004-S3-os-identity-macos-windows returned to developer"
+    },
+    {
+      "revision": 15,
+      "stage": "changes_requested",
+      "note": "finding F-US-NAS-005-S3-macos-install returned to developer"
+    },
+    {
+      "revision": 16,
+      "stage": "changes_requested",
+      "note": "finding F-US-NAS-005-S4-windows-install returned to developer"
+    },
+    {
+      "revision": 17,
+      "stage": "changes_requested",
+      "note": "finding F-NAS-009 returned to architect"
+    },
+    {
+      "revision": 18,
+      "stage": "changes_requested",
+      "note": "finding F-NAS-010 returned to architect"
+    },
+    {
+      "revision": 19,
+      "stage": "changes_requested",
+      "note": "finding F-NAS-011 returned to architect"
     }
   ]
 }
