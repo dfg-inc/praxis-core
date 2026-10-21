@@ -545,7 +545,7 @@ async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => P
   try {
     const described: Described | undefined = await (spec.git?.describe ?? spec.describe)?.();
     if (described?.previewFingerprint && ctx.previewFingerprint && described.previewFingerprint !== ctx.previewFingerprint) {
-      throw new PraxisOpError(OP_CODES.CONFLICT, `${spec.what} previewFingerprint mismatch (stale preview or state drift); preview again before asking the user`);
+      throw new PraxisOpError(OP_CODES.APPROVAL_FINGERPRINT_MISMATCH, `${spec.what} previewFingerprint mismatch (stale preview or state drift); preview again before asking the user`);
     }
     const subject = JSON.stringify(canonicalize({
       action: spec.action,
