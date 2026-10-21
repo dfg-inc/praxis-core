@@ -28,71 +28,37 @@ import {
   applyQualityReview as applyQualityReviewRaw,
   writeQualityEvidence,
 } from "../src/workflows.js";
-import { permitMutation } from "./permit-mutation.js";
+import { runApprovedForTest } from "@praxis/contracts";
+
+// Each Jira write runs as if the user had approved that action; the library refuses to write outside an approval.
+const INSTANCE = "https://praxis-test.example";
+const approved = <T>(action: string, write: () => T): T => {
+  if (!process.env.PRAXIS_JIRA_BASE_URL) process.env.PRAXIS_JIRA_BASE_URL = INSTANCE;
+  return runApprovedForTest(action, write);
+};
 
 function baAnalyzeEpic(opts: Parameters<typeof baAnalyzeEpicRaw>[0]) {
-  if (!opts.dryRun) {
-    permitMutation(opts.repo, {
-      action: "praxis_ba_apply",
-      operation: "external_record_update",
-      workItemId: opts.epicKey,
-      role: "ba",
-      previewFingerprint: opts.previewFingerprint,
-    });
-  }
-  return baAnalyzeEpicRaw(opts);
+  return opts.dryRun ? baAnalyzeEpicRaw(opts) : approved("praxis_ba_apply", () => baAnalyzeEpicRaw(opts));
 }
 
 function architectPlanEpic(opts: Parameters<typeof architectPlanEpicRaw>[0]) {
-  if (!opts.dryRun) {
-    permitMutation(opts.repo, {
-      action: "praxis_architect_apply",
-      operation: "external_record_update",
-      workItemId: opts.epicKey,
-      role: "architect",
-      previewFingerprint: opts.previewFingerprint,
-    });
-  }
-  return architectPlanEpicRaw(opts);
+  return opts.dryRun ? architectPlanEpicRaw(opts) : approved("praxis_architect_apply", () => architectPlanEpicRaw(opts));
 }
 
 function claimWorkPackage(opts: Parameters<typeof claimWorkPackageRaw>[0]) {
-  permitMutation(opts.repo, {
-    action: "praxis_developer_claim",
-    operation: "external_state_change",
-    workItemId: opts.wpKey,
-  });
-  return claimWorkPackageRaw(opts);
+  return approved("praxis_developer_claim", () => claimWorkPackageRaw(opts));
 }
 
 function developerCompleteWp(opts: Parameters<typeof developerCompleteWpRaw>[0]) {
-  permitMutation(opts.repo, {
-    action: "praxis_developer_complete",
-    operation: "external_state_change",
-    workItemId: opts.wpKey,
-  });
-  return developerCompleteWpRaw(opts);
+  return approved("praxis_developer_complete", () => developerCompleteWpRaw(opts));
 }
 
 function applyQualityReview(opts: Parameters<typeof applyQualityReviewRaw>[0]) {
-  permitMutation(opts.repo, {
-    action: "praxis_quality_apply",
-    operation: "external_state_change",
-    workItemId: opts.workPackageId,
-    role: "quality",
-    previewFingerprint: opts.previewFingerprint,
-  });
-  return applyQualityReviewRaw(opts);
+  return approved("praxis_quality_apply", () => applyQualityReviewRaw(opts));
 }
 
 function qaVerifyWorkPackage(opts: Parameters<typeof qaVerifyWorkPackageRaw>[0]) {
-  permitMutation(opts.repo, {
-    action: "praxis_quality_verify",
-    operation: "validation_with_side_effects",
-    workItemId: opts.wpKey,
-    role: "quality",
-  });
-  return qaVerifyWorkPackageRaw(opts);
+  return approved("praxis_quality_verify", () => qaVerifyWorkPackageRaw(opts));
 }
 import { loadWriteJournal } from "../src/write-journal.js";
 import { resolveBaArtifactId } from "../src/artifact-id.js";

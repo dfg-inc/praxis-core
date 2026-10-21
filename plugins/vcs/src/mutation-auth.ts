@@ -1,12 +1,18 @@
 import { resolve } from "node:path";
-import {
-  hasMutationLease,
-  runAuthorizedMutation,
-  type ApprovalOperation,
-  type MutationRequest,
-} from "@praxis/contracts";
+import { ApprovalError, hasMutationLease, type ApprovalOperation } from "@praxis/contracts";
 
 export { hasMutationLease };
+
+/** What a local Git/delivery write is, for the error that explains why it did not run. */
+export type LocalMutationRequest = {
+  repo: string;
+  operation: ApprovalOperation;
+  provider: "local";
+  workItemId: string;
+  repository: string;
+  action: string;
+  previewFingerprint?: string;
+};
 
 export function localMutation(
   repo: string,
@@ -16,7 +22,7 @@ export function localMutation(
     workItemId: string;
     previewFingerprint?: string;
   },
-): MutationRequest {
+): LocalMutationRequest {
   const root = resolve(repo);
   return {
     repo: root,
@@ -26,13 +32,17 @@ export function localMutation(
     repository: root,
     action: spec.action,
     ...(spec.previewFingerprint ? { previewFingerprint: spec.previewFingerprint } : {}),
-    ...(process.env.PRAXIS_APPROVAL_AUTHORIZATION
-      ? { authorization: process.env.PRAXIS_APPROVAL_AUTHORIZATION }
-      : {}),
   };
 }
 
-export function authorizeLocal<T>(request: MutationRequest, write: () => T): T {
+/**
+ * A repository or delivery write runs only inside an approved action (the user's approval opens the lease in the
+ * Praxis apply tool). Called any other way it refuses before anything changes.
+ */
+export function authorizeLocal<T>(request: LocalMutationRequest, write: () => T): T {
   if (hasMutationLease()) return write();
-  return runAuthorizedMutation(request, write);
+  throw new ApprovalError(
+    "APPROVAL_REQUIRED",
+    `${request.action} changes the repository and needs the user's approval: run it through its Praxis apply tool (preview, then approve). Nothing was changed.`,
+  );
 }

@@ -89,25 +89,21 @@ describe("doctor with Claude Desktop placeholders", () => {
   });
 });
 
-// REQ-CFG-001 coverage: one test per acceptance criterion, plus the settings added with the approval broker.
+// REQ-CFG-001 coverage: one test per acceptance criterion, plus the approval setting.
 describe("REQ-CFG-001 acceptance criteria", () => {
   const DESKTOP_SETTINGS: Record<string, string> = {
     PRAXIS_JIRA_BASE_URL: "${user_config.jira_base_url}",
     PRAXIS_JIRA_EMAIL: "${user_config.jira_email}",
     PRAXIS_JIRA_PROJECT_KEY: "${user_config.jira_project_key}",
     PRAXIS_JIRA_TOKEN: "${user_config.jira_token}",
-    PRAXIS_SECURITY_MODE: "${user_config.security_mode}",
-    PRAXIS_BROKER_SHARED_DIR: "${user_config.broker_shared_dir}",
-    PRAXIS_APPROVAL_PUBLIC_KEY_PATH: "${user_config.approval_public_key_path}",
-    PRAXIS_APPROVAL_LEDGER: "${user_config.approval_ledger}",
-    PRAXIS_OPERATOR_URL: "${user_config.operator_url}",
+    PRAXIS_APPROVAL_STRICT: "${user_config.approval_strict}",
     PRAXIS_GITHUB_TOKEN: "${user_config.github_token}",
     PRAXIS_GITHUB_API_URL: "${user_config.github_api_url}",
     PRAXIS_GITLAB_TOKEN: "${user_config.gitlab_token}",
     PRAXIS_GITLAB_BASE_URL: "${user_config.gitlab_base_url}",
   };
 
-  it("AC-01/02: every Desktop setting left blank is unset, in the doctor and in the security report", async () => {
+  it("AC-01/02: every Desktop setting left blank is unset, in the doctor and in the approval report", async () => {
     const saved = Object.fromEntries(Object.keys(DESKTOP_SETTINGS).map((k) => [k, process.env[k]]));
     Object.assign(process.env, DESKTOP_SETTINGS);
     try {
@@ -116,9 +112,8 @@ describe("REQ-CFG-001 acceptance criteria", () => {
       expect(out.github.tokenConfigured).toBe(false);
       expect(out.github.apiUrlConfigured).toBe(false);
       expect(out.jira.configured).toBe(false);
-      expect(out.security.mode).toBe("secure"); // a blank mode is the default, not an invalid value
-      expect(out.security.humanApproval.inbox).toBe("not-configured");
-      expect(out.security.humanApproval.operatorUrl).toBeNull();
+      expect(out.approval.strict).toBe(false); // a blank strict setting is the default, not an invalid value
+      expect(out.approval.mode).toBe("unverified-fallback");
       expect(out.hostPlaceholdersIgnored).toEqual(expect.arrayContaining(Object.keys(DESKTOP_SETTINGS).filter((k) => k !== "PRAXIS_JIRA_TOKEN")));
       expect(JSON.stringify(out)).not.toContain("${");
     } finally {

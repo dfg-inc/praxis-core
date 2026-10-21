@@ -182,7 +182,7 @@ function ctxFrom(flags: Flags, repo: string): OpContext {
 export async function runCli(argv: string[]): Promise<ExitCode> {
   const flags = parseFlags(argv);
   const repo = resolve(flags.repo);
-  // The filtered loader: a repository file can never set security, approval or approval-service variables.
+  // The filtered loader: a repository file can never set approval variables.
   loadPraxisDotenv(repo);
   const path = flags.argv;
 

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Pure rules about what kind of decision an approval is. No imports from the workflow or the broker, so
+ * Pure rules about what kind of decision an approval is. No imports from the workflow, so
  * both can use it without forming a cycle.
  */
 export const DecisionKindSchema = z.enum([

@@ -1,108 +1,82 @@
-import { existsSync, mkdtempSync, statSync, utimesSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
-import {
-  installHostApproval,
-  proposePlan,
-  rejectStoredApproval,
-  revokeStoredApproval,
-  saveProposal,
-} from "@praxis/contracts";
-import { developerGitMergeRequestOp, developerGitPublishOp, projectInitApplyOp } from "./operations.js";
-
-const fingerprint = `sha256:${"ab".repeat(32)}`;
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { withApprovalChannel, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
+import { projectInitApplyOp } from "./operations.js";
 
 function repo() {
   return mkdtempSync(join(tmpdir(), "praxis-guard-"));
 }
 
-function approveInit(root: string, patch: Record<string, unknown> = {}) {
-  return installHostApproval(root, {
-    planId: "init-1",
-    role: "ba",
-    provider: "local",
-    workItemIds: ["local"],
-    repositories: [resolve(root)],
-    operations: ["repository_edit"],
-    inScope: ["praxis_project_init_apply"],
-    outOfScope: ["git push"],
-    assumptions: [],
-    risks: ["writes .project"],
-    ...patch,
-  });
+function channel(answer: AskAnswer, seen: ApprovalRequest[] = []): UserApprovalChannel {
+  return {
+    kind: "client-elicitation",
+    async ask(request) {
+      seen.push(request);
+      return answer;
+    },
+  };
 }
 
-describe("mutation approval enforcement", () => {
-  it("does not write when confirmation=YES has no stored approval", async () => {
+const log = (root: string) =>
+  readFileSync(join(root, ".praxis", "approvals", "decisions.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+
+const strictBefore = process.env.PRAXIS_APPROVAL_STRICT;
+afterEach(() => {
+  if (strictBefore === undefined) delete process.env.PRAXIS_APPROVAL_STRICT;
+  else process.env.PRAXIS_APPROVAL_STRICT = strictBefore;
+});
+
+describe("a protected action runs only after the user approves it", () => {
+  it("without confirmation=YES nothing is asked and nothing is written", async () => {
     const root = repo();
-    await expect(projectInitApplyOp({
-      repo: root,
-      confirmation: "YES",
-    })).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" });
+    await expect(projectInitApplyOp({ repo: root })).rejects.toMatchObject({ code: "CONFIRMATION_REQUIRED" });
     expect(existsSync(join(root, ".project"))).toBe(false);
   });
 
-  it("does not treat a rejected or revoked approval as permission to write", async () => {
+  it("Approve in the client dialog: the action runs, and the user was shown this action", async () => {
     const root = repo();
-    const plan = proposePlan({
-      planId: "init-1",
-      role: "ba",
-      provider: "local",
-      workItemIds: ["local"],
-      repositories: [resolve(root)],
-      operations: ["repository_edit"],
-      inScope: ["praxis_project_init_apply"],
-      outOfScope: [],
-      assumptions: [],
-      risks: ["writes .project"],
-    });
-    saveProposal(root, plan);
-    rejectStoredApproval(root, plan.planId);
-    await expect(projectInitApplyOp({ repo: root, confirmation: "YES", planId: plan.planId })).rejects.toMatchObject({
-      code: "APPROVAL_REJECTED",
-    });
-    expect(existsSync(join(root, ".project"))).toBe(false);
+    const seen: ApprovalRequest[] = [];
+    const result = await withApprovalChannel(channel({ answer: "approve" }, seen), () => projectInitApplyOp({ repo: root, confirmation: "YES" }));
+    expect(result.wrote).toBe(true);
+    expect(existsSync(join(root, ".project"))).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ action: "praxis_project_init_apply", kind: "development_action" });
+    expect(seen[0]!.description).toContain("praxis_project_init_apply");
+    expect(log(root).at(-1)).toMatchObject({ decision: "approved", channel: "client-elicitation", assurance: "client-ui" });
+  });
 
-    approveInit(root, { planId: "init-2" });
-    revokeStoredApproval(root, "init-2");
-    await expect(projectInitApplyOp({ repo: root, confirmation: "YES", planId: "init-2" })).rejects.toMatchObject({
-      code: "APPROVAL_REVOKED",
-    });
+  it("Reject and Dismiss: nothing is written, and the agent's confirmation=YES does not override them", async () => {
+    for (const answer of ["reject", "dismiss"] as const) {
+      const root = repo();
+      await expect(
+        withApprovalChannel(channel({ answer }), () => projectInitApplyOp({ repo: root, confirmation: "YES" })),
+      ).rejects.toMatchObject({ code: "APPROVAL_REJECTED" });
+      expect(existsSync(join(root, ".project"))).toBe(false);
+      expect(log(root).at(-1)).toMatchObject({ decision: answer === "reject" ? "rejected" : "dismissed", assurance: "client-ui" });
+    }
+  });
+
+  it("confirmation=NO is a rejection even in a client without a dialog", async () => {
+    const root = repo();
+    await expect(projectInitApplyOp({ repo: root, confirmation: "NO" })).rejects.toMatchObject({ code: "APPROVAL_REJECTED" });
     expect(existsSync(join(root, ".project"))).toBe(false);
   });
 
-  it("writes once for a matching approval and does not write again on replay", async () => {
+  it("a client without a dialog: the action runs on confirmation=YES and is recorded as unverified", async () => {
     const root = repo();
-    approveInit(root);
-    const first = await projectInitApplyOp({ repo: root, confirmation: "YES", planId: "init-1" });
-    expect(first.wrote).toBe(true);
-    const path = first.path;
-    expect(existsSync(path)).toBe(true);
-    const old = new Date("2020-01-01T00:00:00.000Z");
-    utimesSync(path, old, old);
-    const second = await projectInitApplyOp({ repo: root, confirmation: "YES", planId: "init-1" });
-    expect(second.replayed).toBe(true);
-    expect(statSync(path).mtime.toISOString()).toBe(old.toISOString());
+    const result = await projectInitApplyOp({ repo: root, confirmation: "YES" });
+    expect(result.wrote).toBe(true);
+    expect(log(root).at(-1)).toMatchObject({ decision: "approved", channel: "confirmation-flag", assurance: "unverified" });
   });
 
-  it("refuses git publish and merge request without that operation in the approval", async () => {
+  it("strict mode refuses the fallback and writes nothing", async () => {
+    process.env.PRAXIS_APPROVAL_STRICT = "1";
     const root = repo();
-    approveInit(root);
-    await expect(developerGitPublishOp({
-      repo: root,
-      wp: "WP-1",
-      confirmation: "YES",
-      planId: "init-1",
-      previewFingerprint: fingerprint,
-    })).rejects.toMatchObject({ code: "APPROVAL_SCOPE_SEPARATE" });
-    await expect(developerGitMergeRequestOp({
-      repo: root,
-      wp: "WP-1",
-      confirmation: "YES",
-      planId: "init-1",
-      previewFingerprint: fingerprint,
-    })).rejects.toMatchObject({ code: "APPROVAL_SCOPE_SEPARATE" });
-    expect(existsSync(join(root, ".git"))).toBe(false);
+    await expect(projectInitApplyOp({ repo: root, confirmation: "YES" })).rejects.toMatchObject({ code: "APPROVAL_CLIENT_UI_REQUIRED" });
+    expect(existsSync(join(root, ".project"))).toBe(false);
+    const viaDialog = await withApprovalChannel(channel({ answer: "approve" }), () => projectInitApplyOp({ repo: root, confirmation: "YES" }));
+    expect(viaDialog.wrote).toBe(true);
   });
 });

@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { runAuthorizedMutation } from "@praxis/contracts";
-import { permitLocal } from "./permit-mutation.js";
+import { runApprovedForTest } from "@praxis/contracts";
 import {
   applyCommit as applyCommitRaw,
   applyConnect as applyConnectRaw,
@@ -39,63 +38,23 @@ import {
 const WP = "WP-20260914-002";
 
 function applyConnect(opts: Parameters<typeof applyConnectRaw>[0]) {
-  permitLocal(opts.repo, {
-    action: "praxis_developer_git_connect_apply",
-    operation: "repository_edit",
-    workItemId: opts.workPackageId,
-    previewFingerprint: opts.previewFingerprint,
-  });
-  return applyConnectRaw(opts);
+  return runApprovedForTest("praxis_developer_git_connect_apply", () => applyConnectRaw(opts));
 }
 
 function applyCommit(opts: Parameters<typeof applyCommitRaw>[0]) {
-  permitLocal(opts.repo, {
-    action: "praxis_developer_git_commit",
-    operation: "git_commit",
-    workItemId: opts.workPackageId,
-    previewFingerprint: opts.previewFingerprint,
-  });
-  return applyCommitRaw(opts);
+  return runApprovedForTest("praxis_developer_git_commit", () => applyCommitRaw(opts));
 }
 
 function applyPublish(opts: Parameters<typeof applyPublishRaw>[0]) {
-  permitLocal(opts.repo, {
-    action: "praxis_developer_git_publish",
-    operation: "git_push",
-    workItemId: opts.workPackageId,
-    previewFingerprint: opts.previewFingerprint,
-  });
-  return applyPublishRaw(opts);
+  return runApprovedForTest("praxis_developer_git_publish", () => applyPublishRaw(opts));
 }
 
 function withDeliveryLease<T>(write: () => T): T {
-  const repo = realpathSync(mkdtempSync(join(tmpdir(), "praxis-lease-")));
-  const previewFingerprint = `sha256:${"ab".repeat(32)}`;
-  permitLocal(repo, {
-    action: "praxis_developer_git_merge_request",
-    operation: "merge_request",
-    workItemId: "WP-1",
-    previewFingerprint,
-  });
-  return runAuthorizedMutation({
-    repo,
-    operation: "merge_request",
-    provider: "local",
-    repository: repo,
-    workItemId: "WP-1",
-    action: "praxis_developer_git_merge_request",
-    previewFingerprint,
-  }, write);
+  return runApprovedForTest("praxis_developer_git_merge_request", write);
 }
 
 function applyMergeRequest(opts: Parameters<typeof applyMergeRequestRaw>[0]) {
-  permitLocal(opts.repo, {
-    action: "praxis_developer_git_merge_request",
-    operation: "merge_request",
-    workItemId: opts.workPackageId,
-    previewFingerprint: opts.previewFingerprint,
-  });
-  return applyMergeRequestRaw(opts);
+  return runApprovedForTest("praxis_developer_git_merge_request", () => applyMergeRequestRaw(opts));
 }
 
 function sha(text: string) {

@@ -36,28 +36,18 @@ import {
   type QualityCommentReadback,
 } from "@praxis/jira/workflow";
 import { resolveWorkPackageRef, type ResolvedIdentifier } from "./identity.js";
-import { doctorNextSteps, providerDiagnostics, securityDiagnostics } from "./diagnostics.js";
+import { approvalDiagnostics, doctorNextSteps, providerDiagnostics } from "./diagnostics.js";
 import { VcsError, githubTokenFlags, gitlabTokenFlags, type GitDeliveryJournal, type GitWriteFields } from "@praxis/vcs";
 import {
-  APPROVAL_SERVICE_PROTOCOL,
-  SERVICE_OPERATIONS,
-  approvalServiceDelegate,
-  executionIdFor,
-  recordedExecution,
-  assessApprovalService,
-  authorizeGitOperation,
-  GitApprovalRequired,
+  ApprovalError,
+  canonicalize,
+  decisionKindFor,
   hasMutationLease,
-  inspectMutation,
-  runAuthorizedMutation,
-  runWorkflowRecordWrite,
-  securityMode,
-  serviceDelegationActive,
-  withGitExecutorDelegate,
+  obtainUserApproval,
+  runApprovedMutation,
   WorkflowError,
   type ApprovalOperation,
   type GitDescribed,
-  type GitOperationKind,
 } from "@praxis/contracts";
 import {
   gitCommitData,
@@ -138,6 +128,7 @@ export const OP_CODES = {
   APPROVAL_EXPIRED: "APPROVAL_EXPIRED",
   APPROVAL_REVOKED: "APPROVAL_REVOKED",
   APPROVAL_REJECTED: "APPROVAL_REJECTED",
+  APPROVAL_CLIENT_UI_REQUIRED: "APPROVAL_CLIENT_UI_REQUIRED",
   APPROVAL_RECONCILIATION_REQUIRED: "APPROVAL_RECONCILIATION_REQUIRED",
   APPROVAL_SELF_GRANT_FORBIDDEN: "APPROVAL_SELF_GRANT_FORBIDDEN",
   APPROVAL_AMBIGUOUS: "APPROVAL_AMBIGUOUS",
@@ -227,11 +218,8 @@ export type OpContext = {
   providerKind?: "github" | "gitlab";
   vcsFetchImpl?: typeof fetch;
   vcsProvider?: import("@praxis/vcs").VcsProvider;
-  planId?: string;
-  planFingerprint?: string;
+  /** Jira instance, when the caller knows it. */
   instanceId?: string;
-  /** Set when an outer entry point already started the consumption ledger. */
-  approvalConsumed?: boolean;
 };
 
 const HOST_PLACEHOLDER_RE = /^\$\{[^}]*\}$/;
@@ -257,14 +245,11 @@ export function scrubUnexpandedPlaceholders(env: NodeJS.ProcessEnv = process.env
 let hostPlaceholdersIgnored: string[] = [];
 
 /**
- * Keys that decide who may approve a mutation. Repository files are writable by the agent, so
+ * Keys that decide how a mutation is approved. Repository files are writable by the agent, so
  * they must never supply these: only the operator's real environment can.
  */
 const DOTENV_FORBIDDEN_PREFIXES = [
-  "PRAXIS_SECURITY_",
   "PRAXIS_APPROVAL_",
-  "PRAXIS_BROKER_",
-  "PRAXIS_DEPLOYMENT_",
   "PRAXIS_ALLOW_",
   "PRAXIS_FIXTURE_",
   "PRAXIS_TEST_",
@@ -505,6 +490,18 @@ function requireConfirm(confirmation: string | undefined, what: string): void {
   }
 }
 
+/** What the user is shown before they approve a protected action. Built from the live state, never from the agent's words. */
+type Described = {
+  summary?: string;
+  /** The preview, in plain text. */
+  description: string;
+  /** When present it must equal the caller's previewFingerprint: a stale preview is refused before the user is asked. */
+  previewFingerprint?: string;
+  targets?: string[];
+  revision?: string;
+  risks?: string[];
+};
+
 type ProtectedSpec = {
   what: string;
   action: string;
@@ -513,11 +510,9 @@ type ProtectedSpec = {
   repository: string;
   workItemId?: string;
   requireYes: boolean;
-  /**
-   * Set for protected Git operations. In secure mode they are authorized request by request through the broker's
-   * inbox (see authorizeGitOperation); this describes the live request so the owner is shown, and the token binds,
-   * exactly what will run. It must throw when the caller's preview is stale.
-   */
+  /** The live preview for this action. Without one the user is shown the action, its target and the preview fingerprint. */
+  describe?: () => Promise<Described> | Described;
+  /** Protected Git operations: the live request (exact branch, refspec, files, revision). Same role as `describe`. */
   git?: { describe: () => Promise<GitDescribed> | GitDescribed };
 };
 
@@ -527,96 +522,63 @@ function replayResult<T>(result: unknown): T {
 }
 
 function asApprovalError(err: unknown): never {
-  if (err instanceof WorkflowError && err.code in OP_CODES) {
-    throw new PraxisOpError(err.code as OpCode, err.message);
+  if ((err instanceof WorkflowError || err instanceof ApprovalError) && err.code in OP_CODES) {
+    const details = err instanceof ApprovalError && Object.keys(err.details).length ? { details: err.details } : undefined;
+    throw new PraxisOpError(err.code as OpCode, err.message, details);
   }
   throw err;
 }
 
 /**
- * confirmation=YES is an extra compatibility check. It never authorizes a write.
- * The persisted approval is checked before the mutation.
+ * Action -> Preview -> the user approves or rejects -> Execute -> Result.
+ *
+ * The write runs only after the user's approval of exactly this action: asked in the MCP client's own dialog when the
+ * client supports it, otherwise accepted from the agent's confirmation=YES and recorded as unverified (see
+ * user-approval.ts). A stale preview is refused before the user is asked, so what they approve is what runs.
  */
 async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => Promise<T> | T): Promise<T> {
-  if (spec.requireYes) requireConfirm(ctx.confirmation, spec.what);
+  // "NO" is the user's refusal reported by the agent: it is recorded and refused below, not treated as a missing YES.
+  if (spec.requireYes && ctx.confirmation !== "NO") requireConfirm(ctx.confirmation, spec.what);
+  // Nested inside an action that is already approved (one approval covers the operations it is made of).
+  if (hasMutationLease()) return write();
   const repo = resolve(spec.repository);
-  if (spec.git && securityMode() === "secure" && !hasMutationLease() && (SERVICE_OPERATIONS as readonly string[]).includes(spec.operation) && serviceDelegationActive()) {
-    // The Approval Service is the authority and the executor: it derives the plan from the repository, shows it to the
-    // owner, and runs the commit / push / merge request itself under its own OS identity. This process only prepares,
-    // verifies and keeps its delivery journal; the journal write below runs under the workflow-record lease because
-    // it records what the service did, it does not authorize anything.
-    const executionId = executionIdFor({ operation: spec.operation, repository: repo, workItemId: spec.workItemId ?? "", previewFingerprint: ctx.previewFingerprint ?? "" });
-    // The same logical operation, asked again after it completed, returns what the service recorded. It does not matter
-    // that the repository has moved on (a commit changes HEAD): nothing runs a second time.
-    const recorded = await recordedExecution(executionId);
-    if (recorded) {
-      return { ok: true, writeSucceeded: false, verificationStatus: "ok", partial: false, completed: true, replayed: true, executedBy: "approval-service", executionId, serviceResult: recorded } as unknown as T;
-    }
-    try {
-      return await runWorkflowRecordWrite(() => withGitExecutorDelegate(approvalServiceDelegate(undefined, executionId), write));
-    } catch (err) {
-      if (err instanceof GitApprovalRequired) {
-        throw new PraxisOpError(err.code as OpCode, err.message, { details: err.details });
-      }
-      asApprovalError(err);
-    }
-  }
-  if (spec.git && securityMode() === "secure" && !hasMutationLease()) {
-    // Secure mode: no stored approval file, no environment token. One broker authorization per request.
-    try {
-      return await authorizeGitOperation({
-        repo,
-        key: {
-          operation: spec.operation as GitOperationKind,
-          action: spec.action,
-          repository: repo,
-          workItemId: spec.workItemId ?? "",
-          previewFingerprint: ctx.previewFingerprint ?? "",
-        },
-        describe: spec.git.describe,
-        write,
-      });
-    } catch (err) {
-      if (err instanceof GitApprovalRequired) {
-        throw new PraxisOpError(err.code as OpCode, err.message, { details: err.details });
-      }
-      asApprovalError(err);
-    }
-  }
-  let inspection;
   try {
-    inspection = inspectMutation({
-      repo,
-      planId: ctx.planId,
-      planFingerprint: ctx.planFingerprint,
+    const described: Described | undefined = await (spec.git?.describe ?? spec.describe)?.();
+    if (described?.previewFingerprint && ctx.previewFingerprint && described.previewFingerprint !== ctx.previewFingerprint) {
+      throw new PraxisOpError(OP_CODES.CONFLICT, `${spec.what} previewFingerprint mismatch (stale preview or state drift); preview again before asking the user`);
+    }
+    const subject = JSON.stringify(canonicalize({
+      action: spec.action,
       operation: spec.operation,
       provider: spec.provider,
-      instanceId: spec.provider === "local" ? undefined : (ctx.instanceId ?? process.env.PRAXIS_JIRA_BASE_URL),
-      workItemId: spec.workItemId,
       repository: repo,
-      previewFingerprint: ctx.previewFingerprint,
-      action: spec.action,
-      resumeInFlight: Boolean(ctx.approvalConsumed),
-    });
+      workItemId: spec.workItemId ?? "",
+      previewFingerprint: described?.previewFingerprint ?? ctx.previewFingerprint ?? "",
+      targets: described?.targets ?? [],
+      revision: described?.revision ?? "",
+    }));
+    const summary = described?.summary ?? `Apply ${spec.what}${spec.workItemId ? ` for ${spec.workItemId}` : ""}`;
+    const description = described?.description ?? [
+      `Action: ${spec.action}`,
+      `Provider: ${spec.provider}`,
+      spec.workItemId ? `Work item: ${spec.workItemId}` : undefined,
+      `Repository: ${repo}`,
+      ctx.previewFingerprint ? `Preview fingerprint: ${ctx.previewFingerprint}` : undefined,
+    ].filter(Boolean).join("\n");
+    const approval = await obtainUserApproval(
+      {
+        action: spec.action,
+        kind: decisionKindFor(spec.operation, spec.action),
+        summary,
+        description,
+        subject,
+        ...(described?.risks?.length ? { risks: described.risks } : {}),
+      },
+      { confirmation: ctx.confirmation, repo },
+    );
+    return await runApprovedMutation(approval, write);
   } catch (err) {
-    asApprovalError(err);
-  }
-  if (inspection.kind === "replay") return replayResult<T>(inspection.result);
-  try {
-    return await runAuthorizedMutation({
-      repo,
-      planId: ctx.planId,
-      planFingerprint: ctx.planFingerprint,
-      operation: spec.operation,
-      provider: spec.provider,
-      instanceId: spec.provider === "local" ? undefined : (ctx.instanceId ?? process.env.PRAXIS_JIRA_BASE_URL),
-      workItemId: spec.workItemId,
-      repository: repo,
-      previewFingerprint: ctx.previewFingerprint,
-      action: spec.action,
-      resumeInFlight: true,
-    }, write);
-  } catch (err) {
+    if (err instanceof PraxisOpError) throw err;
     asApprovalError(err);
   }
 }
@@ -650,31 +612,6 @@ async function tracedFingerprint(
     durationMs: Date.now() - t0,
   });
   return fp;
-}
-
-/**
- * What the agent side can honestly say about the Approval Service. "isolated" needs agreement of file-ownership
- * evidence and the service's own production attestation; installing the Desktop extension alone never produces it.
- */
-async function approvalServiceDiagnostics(): Promise<Record<string, unknown>> {
-  const assessment = await assessApprovalService({ timeoutMs: 3000 });
-  const health = assessment.health;
-  const compatible = health ? health.protocol === APPROVAL_SERVICE_PROTOCOL : undefined;
-  return {
-    endpoint: assessment.endpoint,
-    reachable: assessment.reachable,
-    isolated: assessment.isolated && compatible === true,
-    delegating: serviceDelegationActive(),
-    reasons: assessment.reasons,
-    ...(health
-      ? { version: health.version, protocol: health.protocol, protocolCompatible: compatible, mode: health.mode, platform: health.platform, operatorChannel: health.operatorChannel, pending: health.pending, auditChain: health.auditChain, selfReportedIsolation: health.isolation }
-      : {}),
-    note: assessment.reachable
-      ? assessment.isolated
-        ? "The service answers, runs in production mode, and its endpoint belongs to another principal."
-        : "The service answers but OS-level isolation is NOT established; see reasons."
-      : "No approval service is reachable. Installing the Desktop extension alone does not provide OS-level isolation; install the native Approval Service (docs/approval-service/INSTALL.md).",
-  };
 }
 
 export async function doctorOp(ctx: OpContext, version: string): Promise<Record<string, unknown>> {
@@ -712,8 +649,7 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     valid: github.apiUrlValid !== false,
     issue: github.apiUrlIssue,
   });
-  const security = securityDiagnostics(process.env, git ?? resolved);
-  const approvalService = await approvalServiceDiagnostics();
+  const approval = approvalDiagnostics(process.env);
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? (git ? "ok" : "no-git") : "unavailable",
@@ -737,8 +673,7 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     hostPlaceholdersIgnored,
     dotenvRejected,
     providers,
-    security,
-    approvalService,
+    approval,
     nextSteps: [
       ...doctorNextSteps({
       repoExists,
@@ -746,10 +681,9 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
       project: project.status,
       quality: { status: qualityProbe.status, logPath: (qualityProbe as { logPath?: string }).logPath },
       providers,
-      security,
+      approval,
       dotenvRejected,
     }),
-      ...(approvalService.reachable ? [] : ["No Approval Service is running: OS-level approval isolation is not in place. Install the native service (docs/approval-service/INSTALL.md); the Desktop extension alone makes no isolation claim."]),
     ],
     codes: {
       repository:
@@ -892,6 +826,15 @@ export async function baApplyOp(ctx: OpContext) {
     repository: repo,
     workItemId: ctx.epic,
     requireYes: true,
+    // What the user approves is the plan this dry run produces, shown in full.
+    describe: () => withProvider({ ...ctx, repo }, async (p) => {
+      const dry = await baAnalyzeEpic({ provider: p, epicKey: ctx.epic!, repo, dryRun: true });
+      return {
+        summary: `Write the BA plan for ${ctx.epic} to Jira`,
+        description: dry.planText,
+        previewFingerprint: previewFingerprint(dry.plan),
+      };
+    }),
   }, () => withProvider({ ...ctx, repo }, async (p) => {
     const preview = await baAnalyzeEpic({
       provider: p,
@@ -989,6 +932,19 @@ export async function architectApplyOp(ctx: OpContext) {
     repository: repo,
     workItemId: ctx.epic,
     requireYes: true,
+    describe: () => withProvider({ ...ctx, repo }, async (p) => {
+      try {
+        const dry = await architectPlanEpic({ provider: p, epicKey: ctx.epic!, repo, dryRun: true, workPackageId: ctx.wp });
+        return {
+          summary: `Write the architecture plan for ${ctx.epic} to Jira`,
+          description: dry.planText ?? JSON.stringify(dry.plan, null, 2),
+          previewFingerprint: previewFingerprint(dry.plan),
+        };
+      } catch (e) {
+        if (e instanceof WorkPackageScopeError) mapArchitectWpError(e);
+        throw e;
+      }
+    }),
   }, () => withProvider({ ...ctx, repo }, async (p) => {
     try {
       const preview = await architectPlanEpic({

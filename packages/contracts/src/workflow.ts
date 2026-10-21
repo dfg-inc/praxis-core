@@ -1,7 +1,8 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import { z } from "zod";
-import { humanGrantContent, verifyHumanGrant } from "./grants.js";
+import { humanActContent } from "./human-acts.js";
+import { verifyUserApproval, type UserApproval } from "./user-approval.js";
 import {
   assertStoryNarrative,
   ChangeRecordSchema,
@@ -527,14 +528,10 @@ export function canonicalValue(value: unknown): unknown {
   return value;
 }
 
-function storyGrantDigest(input: { storyId: string; revision: number; contentFingerprint: string }): string {
-  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalValue(input))).digest("hex")}`;
-}
-
-export type HumanGrantRequest = {
+export type HumanActRequest = {
   action: "confirm-story" | "confirm-decision" | "approve-service";
   targetId: string;
-  /** Exactly what the grant must bind. */
+  /** Exactly what the approval must bind. */
   content: string;
   /** Stable id: the same subject always proposes the same plan, so a standing approval is found, not duplicated. */
   planId: string;
@@ -549,16 +546,16 @@ const bullet = (items: readonly string[]) => (items.length ? items.map((item) =>
 
 /**
  * If this command is a human act, what must be asked of the human. Built only from the Runtime's own state, so
- * what the human is shown is what the grant will bind.
+ * what the human is shown is what the approval will bind.
  */
-export function humanGrantRequest(state: WorkflowState, command: WorkflowCommand): HumanGrantRequest | null {
+export function humanActRequest(state: WorkflowState, command: WorkflowCommand): HumanActRequest | null {
   const idFor = (action: string, content: string) =>
     `hg-${action}-${createHash("sha256").update(content).digest("hex").slice(0, 20)}`;
   if (command.action === "confirm-story") {
     const story = state.stories.find((item) => item.id === command.id && item.status !== "superseded");
     if (!story) return null;
     const contentFingerprint = storyContentFingerprint(story);
-    const content = humanGrantContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint });
+    const content = humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint });
     return {
       action: "confirm-story",
       targetId: story.id,
@@ -588,7 +585,7 @@ export function humanGrantRequest(state: WorkflowState, command: WorkflowCommand
     const decision = state.decisions.find((item) => item.id === command.id);
     if (!decision) return null;
     const contentFingerprint = decisionContentFingerprint(decision);
-    const content = humanGrantContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint });
+    const content = humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint });
     return {
       action: "confirm-decision",
       targetId: decision.id,
@@ -610,8 +607,8 @@ export function humanGrantRequest(state: WorkflowState, command: WorkflowCommand
     const approving = command.service.status === "approved" || command.service.status === "completed";
     const previous = state.services.find((item) => item.id === command.service.id);
     if (!approving || (previous && fingerprintPayload(previous) === fingerprintPayload(command.service))) return null;
-    const subject = serviceGrantSubject(state, command.service);
-    const content = humanGrantContent("approve-service", subject);
+    const subject = serviceApprovalSubject(state, command.service);
+    const content = humanActContent("approve-service", subject);
     const verdicts = state.verdicts.filter((v) => !v.stale && v.scope === "service" && v.scopeId === command.service.id);
     return {
       action: "approve-service",
@@ -651,7 +648,7 @@ export function decisionContentFingerprint(decision: {
 }
 
 /** What approving a service binds: the service as recorded and the implementation it rests on. */
-export function serviceGrantSubject(
+export function serviceApprovalSubject(
   state: Pick<WorkflowState, "workItem" | "implementationUnits">,
   service: Service,
 ): Record<string, unknown> {
@@ -1209,8 +1206,6 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("set-service"),
     service: ServiceSchema,
-    /** Broker-signed grant. Required to move a service to approved or completed. */
-    authorization: z.string().min(1).optional(),
   }),
   z.object({
     action: z.literal("clarify"),
@@ -1232,7 +1227,7 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     action: z.literal("record-decision"),
     id: z.string().min(1),
     statement: z.string().min(1),
-    /** Recording a decision never confirms it; confirmation is a human grant (confirm-decision). */
+    /** Recording a decision never confirms it; confirmation is a human act (confirm-decision) that needs the user's approval. */
     confirmed: z.boolean().default(false),
     rationale: z.string().optional(),
     notes: z.string().optional(),
@@ -1242,7 +1237,6 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     id: z.string().min(1),
     revision: z.number().int().positive(),
     contentFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-    authorization: z.string().min(1).optional(),
   }),
   z.object({
     action: z.literal("record-context"),
@@ -1256,8 +1250,6 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     id: StoryIdSchema,
     revision: z.number().int().positive(),
     contentFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-    /** Broker-signed grant. Without one the command is refused with APPROVAL_REQUIRED. */
-    authorization: z.string().min(1).optional(),
   }),
   z.object({
     action: z.literal("record-implementation"),
@@ -1343,6 +1335,8 @@ export function commandFingerprint(command: WorkflowCommand): string {
 export function applyWorkflowCommand(
   state: WorkflowState | null,
   raw: WorkflowCommand | unknown,
+  /** Set by the Runtime from the user's decision. Never part of the command: nothing an agent sends can carry it. */
+  options?: { userApproval?: UserApproval },
 ): { state: WorkflowState; duplicate: boolean; result: unknown } {
   const command = WorkflowCommandSchema.parse(raw);
   if (command.action === "open") {
@@ -1381,19 +1375,17 @@ export function applyWorkflowCommand(
     const approving = command.service.status === "approved" || command.service.status === "completed";
     const unchanged = previous !== undefined && fingerprintPayload(previous) === fingerprintPayload(command.service);
     if (approving && !unchanged) {
-      // Marking a service approved is an act of authority, not a progress note: it needs a human grant bound
+      // Marking a service approved is an act of authority, not a progress note: it needs the user's approval bound
       // to this service as recorded and the implementation under it.
-      if (!command.authorization) {
+      if (!options?.userApproval) {
         throw new WorkflowError(
           "SERVICE_APPROVAL_REQUIRED",
-          `service ${command.service.id} cannot be marked ${command.service.status} by an agent; a human grant (approve-service) is required`,
+          `service ${command.service.id} cannot be marked ${command.service.status} by an agent; the user's approval (approve-service) is required`,
         );
       }
-      verifyHumanGrant({
-        token: command.authorization,
+      verifyUserApproval(options.userApproval, {
         action: "approve-service",
-        targetId: command.service.id,
-        content: humanGrantContent("approve-service", serviceGrantSubject(state, command.service)),
+        subject: humanActContent("approve-service", serviceApprovalSubject(state, command.service)),
       });
     }
     const services = [
@@ -1435,14 +1427,12 @@ export function applyWorkflowCommand(
     if (contentFingerprint !== command.contentFingerprint) {
       throw new WorkflowError("DECISION_FINGERPRINT", `decision ${command.id} content is not the reviewed revision`);
     }
-    if (!command.authorization) {
-      throw new WorkflowError("APPROVAL_REQUIRED", `confirming decision ${decision.id} needs a human grant: propose the plan, have the owner approve it, then apply`);
+    if (!options?.userApproval) {
+      throw new WorkflowError("APPROVAL_REQUIRED", `confirming decision ${decision.id} needs the user's approval: preview it, let the user approve, then apply`);
     }
-    verifyHumanGrant({
-      token: command.authorization,
+    verifyUserApproval(options.userApproval, {
       action: "confirm-decision",
-      targetId: decision.id,
-      content: humanGrantContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint }),
+      subject: humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint }),
     });
     const decisions = state.decisions.map((item) => (item.id === decision.id ? { ...item, confirmed: true } : item));
     let confirmed: WorkflowState = { ...state, decisions };
@@ -1455,7 +1445,7 @@ export function applyWorkflowCommand(
     if (command.confirmed) {
       throw new WorkflowError(
         "DECISION_CONFIRMATION_REQUIRED",
-        "recording a decision cannot confirm it; record it, then confirm the exact revision with a human grant (confirm-decision)",
+        "recording a decision cannot confirm it; record it, then confirm the exact revision with the user's approval (confirm-decision)",
       );
     }
     const decisions = [
@@ -1556,15 +1546,12 @@ export function applyWorkflowCommand(
     if (contentFingerprint !== command.contentFingerprint) {
       throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the reviewed revision`);
     }
-    if (!command.authorization) {
-      throw new WorkflowError("APPROVAL_REQUIRED", `confirming story ${story.id} needs a human grant: propose the plan, have the owner approve it, then apply`);
+    if (!options?.userApproval) {
+      throw new WorkflowError("APPROVAL_REQUIRED", `confirming story ${story.id} needs the user's approval: preview it, let the user approve, then apply`);
     }
-    verifyHumanGrant({
-      token: command.authorization,
+    verifyUserApproval(options.userApproval, {
       action: "confirm-story",
-      targetId: story.id,
-      content: humanGrantContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint }),
-      legacyPlanFingerprint: storyGrantDigest({ storyId: story.id, revision: story.revision, contentFingerprint }),
+      subject: humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint }),
     });
     const stories = state.stories.map((item) =>
       item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" as const } : item,

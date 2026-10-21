@@ -47,7 +47,6 @@ import { defaultAllowlist, planStaging } from "./staging-policy.js";
 import { createGithubProvider, githubTokenFlags } from "./github-provider.js";
 import { createGitlabProvider, gitlabTokenFlags } from "./gitlab-provider.js";
 import type { CiStatus, MergeRequestInfo, RemoteRepositoryInfo, VcsProvider } from "./provider.js";
-import { gitExecutorDelegate } from "@praxis/contracts";
 import { requireCleanSecretScan } from "./secret-scan.js";
 import { authorizeLocal, hasMutationLease, localMutation } from "./mutation-auth.js";
 
@@ -677,18 +676,15 @@ export async function applyCommit(
     }), () => applyCommit(opts));
   }
   const headBefore = gitHeadSha(repo);
-  const delegate = gitExecutorDelegate();
-  if (!delegate) {
-    const current = gitCurrentBranch(repo);
-    if (current !== preview.branch) {
-      if (branchExists(repo, preview.branch)) checkoutBranch(repo, preview.branch);
-      else createBranch(repo, preview.branch);
-    }
-    const tree = readWorkingTree(repo);
-    const foreign = tree.staged.filter((p) => !preview.selectedFiles.includes(p));
-    if (foreign.length) {
-      throw new VcsError(VCS_CODES.GIT_FOREIGN_STAGED, `refusing to commit with foreign staged paths: ${foreign.join(", ")}`);
-    }
+  const current = gitCurrentBranch(repo);
+  if (current !== preview.branch) {
+    if (branchExists(repo, preview.branch)) checkoutBranch(repo, preview.branch);
+    else createBranch(repo, preview.branch);
+  }
+  const tree = readWorkingTree(repo);
+  const foreign = tree.staged.filter((p) => !preview.selectedFiles.includes(p));
+  if (foreign.length) {
+    throw new VcsError(VCS_CODES.GIT_FOREIGN_STAGED, `refusing to commit with foreign staged paths: ${foreign.join(", ")}`);
   }
   for (const rel of preview.selectedFiles) {
     const live = fileSha256(repo, rel);
@@ -697,17 +693,8 @@ export async function applyCommit(
       throw new VcsError(VCS_CODES.GIT_PREVIEW_STALE, `file hash changed: ${rel}`);
     }
   }
-  let commitSha: string;
-  if (delegate) {
-    // The Approval Service creates the branch (when new), builds the tree from exactly these paths and commits.
-    // Nothing is staged or switched here, so a request that is still waiting for the owner leaves the repository as it was.
-    commitSha = (
-      await delegate.commit({ repo, workItemId: opts.workPackageId, branch: preview.branch, message: preview.commitMessage, paths: preview.selectedFiles })
-    ).commitSha;
-  } else {
-    stagePaths(repo, preview.selectedFiles);
-    commitSha = commitStaged(repo, preview.commitMessage);
-  }
+  stagePaths(repo, preview.selectedFiles);
+  const commitSha = commitStaged(repo, preview.commitMessage);
   const committed = listCommitFiles(repo, commitSha);
   const extra = committed.filter((p) => !preview.selectedFiles.includes(p));
   const hashes = preview.selectedFiles.map((path) => ({
@@ -1022,19 +1009,9 @@ export async function applyPublish(
       "HEAD moved since baseline preview. Re-run publish preview. Working tree is not published.",
     );
   }
-  const pushDelegate = gitExecutorDelegate();
-  let pushed: { force: boolean };
-  if (pushDelegate) {
-    if (pub.sourceBranch !== pub.targetRemoteBranch) {
-      throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "the approval service pushes a branch to the remote branch of the same name only");
-    }
-    await pushDelegate.push({ repo, workItemId: opts.workPackageId, remoteName: remote.name, branch: pub.sourceBranch });
-    pushed = { force: false };
-  } else {
-    pushed = pushRefspec(repo, remote.name, pub.sourceCommitSha, pub.targetRemoteBranch, {
-      setUpstream: pub.mode === "branch",
-    });
-  }
+  const pushed = pushRefspec(repo, remote.name, pub.sourceCommitSha, pub.targetRemoteBranch, {
+    setUpstream: pub.mode === "branch",
+  });
   if (pushed.force) {
     throw new VcsError(VCS_CODES.GIT_FORCE_PUSH_FORBIDDEN, "force push is not allowed");
   }
@@ -1243,7 +1220,6 @@ export async function applyMergeRequest(
       previewFingerprint: opts.previewFingerprint,
     }), () => applyMergeRequest(opts));
   }
-  const mrDelegate = gitExecutorDelegate();
   const mrTitle = journal.jiraWorkPackageKey ? `${journal.jiraWorkPackageKey}: ${opts.workPackageId}` : opts.workPackageId;
   const mrBody = mergeRequestBody({
     jiraKey: journal.jiraWorkPackageKey,
@@ -1254,23 +1230,17 @@ export async function applyMergeRequest(
     qualityReviewId: journal.qaReviewId,
     selectedFiles: journal.selectedFiles,
   });
-  // With the approval service the Runtime holds no hosting credential, so it neither lists nor creates through its own provider.
-  const existing = mrDelegate
-    ? []
-    : await provider.listOpenMergeRequests({
-        owner: remote.owner,
-        repo: remote.repo,
-        projectPath: remote.projectPath,
-        sourceBranch,
-        targetBranch,
-      });
+  const existing = await provider.listOpenMergeRequests({
+    owner: remote.owner,
+    repo: remote.repo,
+    projectPath: remote.projectPath,
+    sourceBranch,
+    targetBranch,
+  });
   const created = !existing[0];
   let mr: MergeRequestInfo;
   if (existing[0]) mr = existing[0];
-  else if (mrDelegate) {
-    const made = await mrDelegate.mergeRequest({ repo, workItemId: opts.workPackageId, remoteName: remote.name, sourceBranch, targetBranch, title: mrTitle, body: mrBody });
-    mr = { kind: kind === "gitlab" ? "merge-request" : "pull-request", id: made.id, url: made.url, sourceBranch, targetBranch, title: mrTitle, state: "open", merged: false };
-  } else {
+  else {
     mr = await provider.createMergeRequest({
       owner: remote.owner,
       repo: remote.repo,
@@ -1286,9 +1256,7 @@ export async function applyMergeRequest(
     throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "Existing pull/merge request is already merged. Praxis does not merge.");
   }
   const ciConfigured = hasGithubWorkflows(repo, journal.commitSha);
-  const ci = mrDelegate
-    ? { ciStatus: "unknown" as CiStatus, details: "CI status is not read while the approval service holds the hosting credential" }
-    : ciConfigured
+  const ci = ciConfigured
     ? await provider.pipelineStatus({
         owner: remote.owner,
         repo: remote.repo,

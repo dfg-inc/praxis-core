@@ -7,8 +7,8 @@ import { WorkTrackingProviderSchema, WorkflowRoleSchema } from "./workflow.js";
 
 /**
  * Shared action-plan contract for BA / Architect / Developer / Quality.
- * Presenting this plan in Claude is UX only. Authorization requires a broker
- * signature over the same fingerprint.
+ * This is the preview: what the user is shown before they approve or reject. The approval binds the plan's
+ * fingerprint (see user-approval.ts).
  */
 
 export const ACTION_PLAN_CONTRACT = "praxis.action.plan";
@@ -48,7 +48,7 @@ const ActionPlanBaseSchema = z.object({
 /**
  * A plan is its content. The fingerprint is not a label the writer chooses: it is recomputed from the plan
  * as parsed (defaults applied), so a plan whose fingerprint does not match what it says is rejected by every
- * reader, including the broker that shows it to a human.
+ * reader, including the client dialog that shows it to the user.
  */
 export const ActionPlanSchema = ActionPlanBaseSchema.extend({
   fingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),

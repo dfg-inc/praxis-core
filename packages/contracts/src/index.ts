@@ -441,70 +441,13 @@ export {
   applyWorkflowCommand,
   storyContentFingerprint,
   decisionContentFingerprint,
-  humanGrantRequest,
-  serviceGrantSubject,
+  humanActRequest,
+  serviceApprovalSubject,
   exportWorkflowSnapshot,
   renderWorkflowSnapshotHtml,
   BULK_IMPORT_REQUIREMENTS,
   WorkTrackingProviderSchema,
 } from "./workflow.js";
-export {
-  APPROVAL_CONTRACT,
-  APPROVAL_CONTRACT_VERSION,
-  DEFAULT_APPROVAL_TTL_MS,
-  PUBLICATION_OPERATIONS,
-  ApprovalStateSchema,
-  ApprovalOperationSchema,
-  ApprovalPlanSchema,
-  BrokerGrantSchema,
-  planFingerprint,
-  proposePlan,
-  transitionApproval,
-  rejectSelfApproval,
-  signBrokerGrant,
-  applyBrokerGrant,
-  revisePlan,
-  authorizeOperation,
-  requestHumanApproval,
-  approvalSummary,
-  storedPlanFingerprint,
-  canonicalize,
-} from "./approval.js";
-export {
-  AUTHORIZATION_CONTRACT,
-  AUTHORIZATION_VERSION,
-  securityMode,
-  generateApprovalKeyPair,
-  signAuthorization,
-  encodeAuthorization,
-  decodeAuthorization,
-  verifyAuthorization,
-  authorizationMatches,
-  assertExecutionPayload,
-  approvedContentDigest,
-  executionRequestFingerprint,
-  reserveLedgerEntry,
-  completeLedgerEntry,
-  failLedgerEntry,
-  assertSecureExecutor,
-  assertSigningKeyHidden,
-  signingKeyVisibleToThisProcess,
-  storyConfirmationDigest,
-  canonicalAuthorizationBytes,
-  readLedgerEntry,
-  writeLedgerEntry,
-  assessDeploymentThreats,
-  assertSecureDeployment,
-} from "./broker.js";
-export type {
-  SecurityMode,
-  AuthorizationBody,
-  SignedAuthorization,
-  DeploymentThreatAssessment,
-  ExecutionRequest,
-  LedgerEntry,
-  LedgerStatus,
-} from "./broker.js";
 export {
   ACTION_PLAN_CONTRACT,
   ACTION_PLAN_VERSION,
@@ -519,37 +462,6 @@ export {
   renderActionPlanForHuman,
 } from "./action-plan.js";
 export type { ActionPlan, DecisionKind } from "./action-plan.js";
-export { HUMAN_GRANT_KIND, humanGrantContent, verifyHumanGrant } from "./grants.js";
-export type { HumanGrantAction } from "./grants.js";
-export type { HumanGrantRequest } from "./workflow.js";
-export { assessApprovalDeployment, assertSecureDeploymentAssessment } from "./deployment.js";
-export type { DeploymentAssessment, DeploymentFinding, DeploymentProbe, DeploymentTier } from "./deployment.js";
-export {
-  installHostApproval,
-  saveProposal,
-  commitHostApproval,
-  rejectStoredApproval,
-  revokeStoredApproval,
-  reviseStoredApproval,
-  inspectMutation,
-  beginConsumption,
-  completeConsumption,
-  abortConsumption,
-  readApproval,
-  hasMutationLease,
-  requireMutationLease,
-  runAuthorizedMutation,
-  runWorkflowRecordWrite,
-} from "./approval-store.js";
-export type {
-  ApprovalState,
-  ApprovalOperation,
-  ApprovalPlan,
-  BrokerGrant,
-  ApprovalDialog,
-  ApprovalDialogAnswer,
-} from "./approval.js";
-export type { MutationRequest } from "./approval-store.js";
 export {
   StoryIdSchema,
   UserStorySchema,
@@ -616,66 +528,42 @@ export type {
   BaJiraWritePlanItem,
   QualityWpReport,
 } from "./jira-orchestration.js";
-
 export {
-  INBOX_PLAN_ID,
-  brokerSharedDir,
-  operatorPageUrl,
-  readInboxToken,
-  readInboxPlan,
-  inboxStatus,
-  proposeInboxPlan,
-  type InboxStatus,
-} from "./broker-inbox.js";
+  PUBLICATION_OPERATIONS,
+  ApprovalOperationSchema,
+  canonicalize,
+} from "./approval.js";
+export type { ApprovalOperation } from "./approval.js";
+export type { GitDescribed, GitOperationKind } from "./git-describe.js";
+export { HUMAN_ACT_KIND, humanActContent, humanActApprovalRequest } from "./human-acts.js";
+export { approvalFor, runApprovedForTest } from "./human-act-testing.js";
+export type { HumanAct } from "./human-acts.js";
+export type { HumanActRequest } from "./workflow.js";
 export {
-  GIT_REQUEST_CONTRACT,
-  GitApprovalRequired,
-  authorizeGitOperation,
-  assertTokenBindsPlan,
-  rebuildWithTimes,
-  buildGitPlan,
-  gitPlanId,
-  planTtlMs,
-  gitRequestContent,
-  type GitAuthorizeInput,
-  type GitDescribed,
-  type GitOperationKind,
-  type GitRequestKey,
-} from "./git-authorization.js";
-
-export { productionBuild, testIdentityOverrideActive } from "./deployment.js";
-
-export { isHumanApprovalChannel, assertApprovalChannelAcceptable } from "./deployment.js";
-
-export {
-  APPROVAL_SERVICE_PROTOCOL,
-  SERVICE_OPERATIONS,
-  MAX_MESSAGE_BYTES,
-  ApprovalServiceError,
-  assessApprovalService,
-  callApprovalService,
-  defaultServiceEndpoint,
-  parseServiceRequest,
-  serviceDelegationActive,
-  serviceEndpoint,
-  type RequestState,
-  type ServiceAssessment,
-  type ServiceHealth,
-  type ServiceOperation,
-  type ServiceParseResult,
-  type ServiceReply,
-  type ServiceRequest,
-  type SubmitRequest,
-} from "./approval-service.js";
-
-export {
-  approvalServiceDelegate,
-  executionIdFor,
-  recordedExecution,
-  gitExecutorDelegate,
-  withGitExecutorDelegate,
-  type DelegatedCommit,
-  type DelegatedMergeRequest,
-  type DelegatedPush,
-  type GitExecutorDelegate,
-} from "./git-executor-delegate.js";
+  USER_APPROVAL_CONTRACT,
+  USER_APPROVAL_VERSION,
+  USER_APPROVAL_TTL_MS,
+  ApprovalError,
+  createUserApproval,
+  obtainUserApproval,
+  verifyUserApproval,
+  subjectDigest,
+  withApprovalChannel,
+  currentApprovalChannel,
+  approvalModeReport,
+  logDecision,
+  hasMutationLease,
+  requireMutationLease,
+  runWorkflowRecordWrite,
+  runApprovedMutation,
+} from "./user-approval.js";
+export type {
+  ApprovalErrorCode,
+  ApprovalAssurance,
+  ApprovalChannelKind,
+  ApprovalRequest,
+  AskAnswer,
+  DecisionLogEntry,
+  UserApproval,
+  UserApprovalChannel,
+} from "./user-approval.js";

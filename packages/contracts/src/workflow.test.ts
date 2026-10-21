@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { rollupStoryVerdict } from "./story.js";
-import { decisionGrant, useEphemeralBroker } from "./grant-test-helpers.js";
+import { approvalFor } from "./human-act-testing.js";
 import {
   applyWorkflowCommand,
   BULK_IMPORT_REQUIREMENTS,
@@ -8,6 +8,7 @@ import {
   classifyClarification,
   classifyJiraFailure,
   createHandoff,
+  decisionContentFingerprint,
   diagnoseCompatibility,
   evaluateFeature,
   evaluateRequirementBehavior,
@@ -482,11 +483,11 @@ describe("capabilities, Jira failure, compatibility", () => {
     }).state;
     // Recorded, not confirmed: the stage does not advance on an agent's say-so.
     expect(state.stage).not.toBe("ready");
-    const broker = useEphemeralBroker();
-    try {
-      state = applyWorkflowCommand(state, { action: "confirm-decision", id: "ADR-ROLES", ...decisionGrant(state, "ADR-ROLES", broker.keys.privateKeyPem) }).state;
-    } finally {
-      broker.restore();
+    {
+      const decision = state.decisions.find((item) => item.id === "ADR-ROLES")!;
+      const confirm = { action: "confirm-decision" as const, id: "ADR-ROLES", revision: decision.revision, contentFingerprint: decisionContentFingerprint(decision) };
+      expect(() => applyWorkflowCommand(state, confirm)).toThrow(/needs the user's approval/);
+      state = applyWorkflowCommand(state, confirm, approvalFor(state, confirm)).state;
     }
     expect(state.decisions.find((item) => item.id === "ADR-ROLES")?.confirmed).toBe(true);
     expect(state.stage).toBe("ready");

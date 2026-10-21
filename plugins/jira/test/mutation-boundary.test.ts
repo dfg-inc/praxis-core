@@ -26,7 +26,7 @@ function cfg(): JiraConfig {
 }
 
 describe("direct Jira mutations", () => {
-  it("does not write when claim is called without a stored approval", async () => {
+  it("does not write when claim is called without the user's approval", async () => {
     const state = createMockJiraState();
     const fetchImpl = createMockFetch(state, { flavor: "cloud", projectKey: "PRX" });
     const provider = createFixtureJiraProvider({ config: cfg(), fetchImpl });

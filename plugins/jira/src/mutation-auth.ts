@@ -1,12 +1,19 @@
 import { resolve } from "node:path";
-import {
-  hasMutationLease,
-  runAuthorizedMutation,
-  type ApprovalOperation,
-  type MutationRequest,
-} from "@praxis/contracts";
+import { ApprovalError, hasMutationLease, type ApprovalOperation } from "@praxis/contracts";
 
 export { hasMutationLease };
+
+/** What a Jira write is, for the error that explains why it did not run. */
+export type JiraMutationRequest = {
+  repo: string;
+  operation: ApprovalOperation;
+  provider: "jira";
+  instanceId?: string;
+  workItemId: string;
+  repository: string;
+  action: string;
+  previewFingerprint?: string;
+};
 
 export function jiraMutation(
   repo: string,
@@ -16,7 +23,7 @@ export function jiraMutation(
     workItemId: string;
     previewFingerprint?: string;
   },
-): MutationRequest {
+): JiraMutationRequest {
   const root = resolve(repo);
   return {
     repo: root,
@@ -27,13 +34,17 @@ export function jiraMutation(
     repository: root,
     action: spec.action,
     ...(spec.previewFingerprint ? { previewFingerprint: spec.previewFingerprint } : {}),
-    ...(process.env.PRAXIS_APPROVAL_AUTHORIZATION
-      ? { authorization: process.env.PRAXIS_APPROVAL_AUTHORIZATION }
-      : {}),
   };
 }
 
-export function authorizeJira<T>(request: MutationRequest, write: () => T): T {
+/**
+ * A Jira write runs only inside an approved action (the user's approval opens the lease in the Praxis apply tool).
+ * Called any other way it refuses before anything is sent.
+ */
+export function authorizeJira<T>(request: JiraMutationRequest, write: () => T): T {
   if (hasMutationLease()) return write();
-  return runAuthorizedMutation(request, write);
+  throw new ApprovalError(
+    "APPROVAL_REQUIRED",
+    `${request.action} changes Jira and needs the user's approval: run it through its Praxis apply tool (preview, then approve). Nothing was sent.`,
+  );
 }

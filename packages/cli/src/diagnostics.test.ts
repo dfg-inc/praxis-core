@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkHttpUrl, doctorNextSteps, providerDiagnostics, securityDiagnostics } from "./diagnostics.js";
+import { approvalDiagnostics, checkHttpUrl, doctorNextSteps, providerDiagnostics, type ApprovalReport } from "./diagnostics.js";
+import { withApprovalChannel } from "@praxis/contracts";
 import { doctorOp } from "./operations.js";
 
 const ok = { configured: false, valid: true };
@@ -68,18 +69,19 @@ describe("checkHttpUrl", () => {
   ])("%s -> %s", (value, expected) => expect(checkHttpUrl(value).ok).toBe(expected));
 });
 
-describe("securityDiagnostics", () => {
-  it("blank and secure mean secure; compatibility is labelled unenforced; junk fails closed", () => {
-    expect(securityDiagnostics({}).mode).toBe("secure");
-    expect(securityDiagnostics({ PRAXIS_SECURITY_MODE: "secure" }).mode).toBe("secure");
-    const compat = securityDiagnostics({ PRAXIS_SECURITY_MODE: "compatibility" });
-    expect(compat.mode).toBe("compatibility");
-    expect(compat.approvals).toMatch(/NOT enforced/);
-    expect(compat).toMatchObject({ secureOperation: false, deploymentTier: "compatibility" });
-    expect(securityDiagnostics({ PRAXIS_SECURITY_MODE: "off" })).toMatchObject({ mode: "invalid", deploymentTier: "invalid", secureOperation: false });
-    // Secure by default, but with no broker configured nothing protected can run: reported, not claimed.
-    expect(securityDiagnostics({})).toMatchObject({ mode: "secure", secureOperation: false, deploymentTier: "unconfigured" });
-    expect(securityDiagnostics({}).deployment.map((f) => f.id)).toContain("broker-not-configured");
+describe("approvalDiagnostics", () => {
+  it("a client that cannot show a dialog is reported as an unverified fallback, in plain words", () => {
+    const report = approvalDiagnostics({});
+    expect(report).toMatchObject({ mode: "unverified-fallback", strict: false });
+    expect(report.note).toMatch(/cannot verify that a person was asked/);
+    expect(report.decisionLog).toBe(".praxis/approvals/decisions.jsonl");
+  });
+
+  it("a client that can ask is reported as client-ui; strict comes from the real environment", () => {
+    const channel = { kind: "client-elicitation" as const, ask: async () => ({ answer: "approve" as const }) };
+    expect(withApprovalChannel(channel, () => approvalDiagnostics({}))).toMatchObject({ mode: "client-ui", strict: false });
+    expect(withApprovalChannel(channel, () => approvalDiagnostics({ PRAXIS_APPROVAL_STRICT: "1" }))).toMatchObject({ mode: "client-ui", strict: true });
+    expect(approvalDiagnostics({ PRAXIS_APPROVAL_STRICT: "1" })).toMatchObject({ mode: "unverified-fallback", strict: true });
   });
 });
 
@@ -90,22 +92,20 @@ describe("doctorNextSteps", () => {
     project: "loaded" as const,
     quality: { status: "healthy" },
     providers: providerDiagnostics({}, ok),
-    security: {
-      ...securityDiagnostics({ PRAXIS_BROKER_SHARED_DIR: "/nonexistent-shared" }),
-      secureOperation: true,
-      deploymentTier: "isolated",
-      deployment: [],
-    },
+    approval: { mode: "client-ui", strict: false, note: "", decisionLog: ".praxis/approvals/decisions.jsonl" } as ApprovalReport,
   };
 
   it("has nothing to say when everything is in order (Jira is optional)", () => {
     expect(doctorNextSteps(base)).toEqual([]);
   });
 
-  it("says plainly that secure operation is unavailable, and what to do, when it is", () => {
-    const steps = doctorNextSteps({ ...base, security: securityDiagnostics({}) }).join("\n");
-    expect(steps).toMatch(/Secure operation is NOT available on this host \(unconfigured\)/);
-    expect(steps).toMatch(/broker-not-configured: Deploy the broker and executor under a separate identity/);
+  it("says plainly what the fallback means when the client cannot show an approval dialog", () => {
+    const steps = doctorNextSteps({ ...base, approval: approvalDiagnostics({}) }).join("\n");
+    expect(steps).toMatch(/cannot show an approval dialog/);
+    expect(steps).toMatch(/confirmation=YES/);
+    expect(steps).toMatch(/unverified/);
+    const strict = doctorNextSteps({ ...base, approval: approvalDiagnostics({ PRAXIS_APPROVAL_STRICT: "1" }) }).join("\n");
+    expect(strict).toMatch(/will be refused/);
   });
 
   it("gives actionable steps for a missing .project and a not-started Quality service", () => {
@@ -126,31 +126,9 @@ describe("doctorNextSteps", () => {
     expect(steps).toMatch(/jira: jira_base_url is invalid \(not-a-url\)/);
   });
 
-  it("warns about compatibility mode and refused dotenv keys", () => {
-    const steps = doctorNextSteps({
-      ...base,
-      security: securityDiagnostics({ PRAXIS_SECURITY_MODE: "compatibility" }),
-      dotenvRejected: ["PRAXIS_SECURITY_MODE"],
-    }).join("\n");
-    expect(steps).toMatch(/Compatibility mode is on/);
-    expect(steps).toMatch(/PRAXIS_SECURITY_MODE.*ignored/);
-  });
-
-  it("tells the operator when the approval inbox is missing, and when plans are waiting", () => {
-    const none = doctorNextSteps({ ...base, security: { ...base.security, humanApproval: { inbox: "not-configured", operatorUrl: null, waiting: null } } }).join("\n");
-    expect(none).toMatch(/no approval inbox is configured \(PRAXIS_BROKER_SHARED_DIR\)/);
-    expect(none).toMatch(/Agent-authored records still work/);
-    const waiting = doctorNextSteps({ ...base, security: { ...base.security, humanApproval: { inbox: "configured", operatorUrl: "http://localhost:8780", waiting: 2 } } }).join("\n");
-    expect(waiting).toMatch(/2 plan\(s\) are waiting for the owner at http:\/\/localhost:8780/);
-  });
-
-  it("reports the record policy and the inbox from the environment, never a path", () => {
-    const report = securityDiagnostics({ PRAXIS_WORKFLOW_RECORDS: "approval", PRAXIS_BROKER_SHARED_DIR: "/secret/shared/path", PRAXIS_OPERATOR_URL: "http://localhost:9000" });
-    expect(report.records).toBe("approval");
-    expect(report.humanApproval).toMatchObject({ inbox: "configured", operatorUrl: "http://localhost:9000", waiting: 0 });
-    expect(JSON.stringify(report)).not.toContain("/secret/shared/path");
-    expect(securityDiagnostics({}).records).toBe("unsigned");
-    expect(securityDiagnostics({}).humanApproval).toEqual({ inbox: "not-configured", operatorUrl: null, waiting: null });
+  it("names the refused dotenv keys and says they were ignored", () => {
+    const steps = doctorNextSteps({ ...base, dotenvRejected: ["PRAXIS_APPROVAL_STRICT"] }).join("\n");
+    expect(steps).toMatch(/PRAXIS_APPROVAL_STRICT.*ignored/);
   });
 
   it("a missing repository short-circuits", () => {
@@ -177,27 +155,29 @@ describe("doctor end to end", () => {
     const out = (await doctorOp({ repo } as never, "test")) as Record<string, any>;
     expect(out.providers.jira.state).toBe("unconfigured");
     expect(out.providers.jira.required).toBe(false);
-    expect(out.security.mode).toBe("secure");
+    expect(out.approval.mode).toBe("unverified-fallback");
     expect(out.project.status).toBe("missing");
     expect(out.nextSteps.join("\n")).toMatch(/praxis_project_init_preview/);
     expect(out.nextSteps.join("\n")).toMatch(/praxis_quality_ensure/);
     // Jira is optional: no step is about Jira configuration.
     expect(out.nextSteps.filter((step: string) => /^jira:/i.test(step))).toEqual([]);
-    expect(out.security).toMatchObject({ mode: "secure", secureOperation: false });
+    expect(out.approval).toMatchObject({ mode: "unverified-fallback", strict: false });
+    expect(out.security).toBeUndefined();
+    expect(out.approvalService).toBeUndefined();
   });
 
   it("Desktop placeholders for every optional setting leave all providers unconfigured", async () => {
     process.env.PRAXIS_JIRA_BASE_URL = "${user_config.jira_base_url}";
     process.env.PRAXIS_GITLAB_TOKEN = "${user_config.gitlab_token}";
-    process.env.PRAXIS_SECURITY_MODE = "${user_config.security_mode}";
+    process.env.PRAXIS_APPROVAL_STRICT = "${user_config.approval_strict}";
     const repo = mkdtempSync(join(tmpdir(), "praxis-doctor-"));
     mkdirSync(join(repo, ".git"), { recursive: true });
     const out = (await doctorOp({ repo } as never, "test")) as Record<string, any>;
     expect(out.providers.jira.state).toBe("unconfigured");
     expect(out.providers.gitlab.state).toBe("unconfigured");
-    expect(out.security.mode).toBe("secure");
+    expect(out.approval.strict).toBe(false);
     expect(out.hostPlaceholdersIgnored).toEqual(
-      expect.arrayContaining(["PRAXIS_JIRA_BASE_URL", "PRAXIS_GITLAB_TOKEN", "PRAXIS_SECURITY_MODE"]),
+      expect.arrayContaining(["PRAXIS_JIRA_BASE_URL", "PRAXIS_GITLAB_TOKEN", "PRAXIS_APPROVAL_STRICT"]),
     );
   });
 });

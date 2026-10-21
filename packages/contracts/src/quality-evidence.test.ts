@@ -1,14 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   applyWorkflowCommand,
-  encodeAuthorization,
-  generateApprovalKeyPair,
+  approvalFor,
   openLocalWorkflow,
   requirementEvidence,
-  signAuthorization,
-  storyConfirmationDigest,
   storyContentFingerprint,
-  type AuthorizationBody,
   type WorkflowState,
 } from "./index.js";
 
@@ -132,44 +128,12 @@ describe("requirement evidence shared by verify-stories and quality-check", () =
   });
 
   it("PASS only when every linked story is confirmed and all scenarios pass", () => {
-    const keys = generateApprovalKeyPair();
-    const previous = process.env.PRAXIS_APPROVAL_PUBLIC_KEY;
-    const previousPrivate = process.env.PRAXIS_APPROVAL_PRIVATE_KEY;
-    delete process.env.PRAXIS_APPROVAL_PRIVATE_KEY;
-    process.env.PRAXIS_APPROVAL_PUBLIC_KEY = keys.publicKeyPem;
-    try {
-      const state = base();
-      const target = state.stories[0]!;
-      const contentFingerprint = storyContentFingerprint(target);
-      const body: AuthorizationBody = {
-        contract: "praxis.approval.authorization",
-        version: 1,
-        planFingerprint: storyConfirmationDigest({ storyId: target.id, revision: target.revision, contentFingerprint }),
-        provider: "local",
-        instanceId: "local",
-        operations: ["external_record_update"],
-        workItemIds: [target.id],
-        repositories: [],
-        action: "confirm-story",
-        approver: "owner@example.com",
-        issuedAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
-        consumptionId: "qev-confirm-1",
-      };
-      const confirmed = applyWorkflowCommand(state, {
-        action: "confirm-story",
-        id: target.id,
-        revision: target.revision,
-        contentFingerprint,
-        authorization: encodeAuthorization(signAuthorization(body, keys.privateKeyPem)),
-      }).state;
-      const verified = verify(confirmed, [scenario("US-QEV-901", "PASS")]).state;
-      expect(requirementVerdicts(verified).at(-1)?.verdict).toBe("PASS");
-      expect((qualityCheck(verified).result as { verdict: string }).verdict).toBe("PASS");
-    } finally {
-      if (previous === undefined) delete process.env.PRAXIS_APPROVAL_PUBLIC_KEY;
-      else process.env.PRAXIS_APPROVAL_PUBLIC_KEY = previous;
-      if (previousPrivate !== undefined) process.env.PRAXIS_APPROVAL_PRIVATE_KEY = previousPrivate;
-    }
+    const state = base();
+    const target = state.stories[0]!;
+    const command = { action: "confirm-story" as const, id: target.id, revision: target.revision, contentFingerprint: storyContentFingerprint(target) };
+    const confirmed = applyWorkflowCommand(state, command, approvalFor(state, command)).state;
+    const verified = verify(confirmed, [scenario("US-QEV-901", "PASS")]).state;
+    expect(requirementVerdicts(verified).at(-1)?.verdict).toBe("PASS");
+    expect((qualityCheck(verified).result as { verdict: string }).verdict).toBe("PASS");
   });
 });

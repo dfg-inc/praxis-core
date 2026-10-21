@@ -5,14 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dotenvRejectedKeys, loadPraxisDotenv } from "./operations.js";
 
 const TRUST_KEYS = [
-  "PRAXIS_SECURITY_MODE",
-  "PRAXIS_APPROVAL_PUBLIC_KEY",
-  "PRAXIS_APPROVAL_PUBLIC_KEY_PATH",
-  "PRAXIS_APPROVAL_PRIVATE_KEY_PATH",
-  "PRAXIS_APPROVAL_LEDGER",
-  "PRAXIS_APPROVAL_AUTHORIZATION",
-  "PRAXIS_BROKER_SHARED_DIR",
-  "PRAXIS_DEPLOYMENT_MODEL",
+  "PRAXIS_APPROVAL_STRICT",
+  "PRAXIS_TEST_APPROVALS",
   "PRAXIS_ALLOW_DOCKER_SOCKET",
   "PRAXIS_FIXTURE_EXECUTION",
   "PRAXIS_JIRA_PROJECT_KEY",
@@ -38,17 +32,13 @@ function repoWith(file: string, body: string): string {
   return repo;
 }
 
-describe("repository dotenv files cannot set security or trust configuration", () => {
-  it("regression: a repo .env cannot downgrade the security mode or plant trust anchors", () => {
+describe("repository dotenv files cannot set approval or trust configuration", () => {
+  it("regression: a repo .env cannot relax the approval policy or switch on test approvals", () => {
     const repo = repoWith(
       ".env.praxis",
       [
-        "PRAXIS_SECURITY_MODE=compatibility",
-        "PRAXIS_APPROVAL_PUBLIC_KEY_PATH=/tmp/attacker.pub",
-        "PRAXIS_APPROVAL_LEDGER=/tmp/attacker-ledger",
-        "PRAXIS_APPROVAL_AUTHORIZATION=forged-token",
-        "PRAXIS_BROKER_SHARED_DIR=/tmp/attacker-shared",
-        "PRAXIS_DEPLOYMENT_MODEL=none",
+        "PRAXIS_APPROVAL_STRICT=0",
+        "PRAXIS_TEST_APPROVALS=1",
         "PRAXIS_ALLOW_DOCKER_SOCKET=1",
         "PRAXIS_FIXTURE_EXECUTION=1",
         "PRAXIS_JIRA_PROJECT_KEY=PRX",
@@ -62,27 +52,18 @@ describe("repository dotenv files cannot set security or trust configuration", (
     expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("PRX");
   });
 
-  it("never lets a repository file point the Runtime at another approval service", () => {
-    delete process.env.PRAXIS_APPROVAL_SERVICE_ENDPOINT;
-    const repo = repoWith(".env", "PRAXIS_APPROVAL_SERVICE_ENDPOINT=/tmp/attacker.sock\n");
-    loadPraxisDotenv(repo);
-    expect(process.env.PRAXIS_APPROVAL_SERVICE_ENDPOINT).toBeUndefined();
-    expect(dotenvRejectedKeys()).toContain("PRAXIS_APPROVAL_SERVICE_ENDPOINT");
-  });
-
   it("reports the rejected key names, never their values", () => {
-    const repo = repoWith(".env", "PRAXIS_SECURITY_MODE=compatibility\nPRAXIS_APPROVAL_AUTHORIZATION=super-secret\n");
+    const repo = repoWith(".env", "PRAXIS_APPROVAL_STRICT=0\nPRAXIS_TEST_APPROVALS=super-secret\n");
     loadPraxisDotenv(repo);
     const rejected = dotenvRejectedKeys();
-    expect(rejected).toEqual(expect.arrayContaining(["PRAXIS_SECURITY_MODE", "PRAXIS_APPROVAL_AUTHORIZATION"]));
+    expect(rejected).toEqual(expect.arrayContaining(["PRAXIS_APPROVAL_STRICT", "PRAXIS_TEST_APPROVALS"]));
     expect(JSON.stringify(rejected)).not.toContain("super-secret");
-    expect(JSON.stringify(rejected)).not.toContain("compatibility");
   });
 
   it("an operator-set environment value is unaffected by the repository file", () => {
-    process.env.PRAXIS_SECURITY_MODE = "secure";
-    const repo = repoWith(".env.praxis", "PRAXIS_SECURITY_MODE=compatibility\n");
+    process.env.PRAXIS_APPROVAL_STRICT = "1";
+    const repo = repoWith(".env.praxis", "PRAXIS_APPROVAL_STRICT=0\n");
     loadPraxisDotenv(repo);
-    expect(process.env.PRAXIS_SECURITY_MODE).toBe("secure");
+    expect(process.env.PRAXIS_APPROVAL_STRICT).toBe("1");
   });
 });

@@ -1,6 +1,6 @@
 /**
- * Pure diagnostics for praxis_doctor: which providers are usable, what security mode is in
- * force, and what the operator should do next. No I/O, no secret values: only flags and key names.
+ * Pure diagnostics for praxis_doctor: which providers are usable, how approvals are
+ * obtained, and what the operator should do next. No I/O, no secret values: only flags and key names.
  */
 
 export type ProviderState = "unconfigured" | "partial" | "configured" | "invalid";
@@ -15,25 +15,19 @@ export type ProviderReport = {
   invalid: Array<{ setting: string; issue: string }>;
 };
 
-export type SecurityReport = {
-  mode: "secure" | "compatibility" | "invalid";
-  /** What the mode means for mutations, stated plainly. */
-  approvals: string;
-  /** True only when no evidence visible from this process says the agent can reach the trust chain. */
-  secureOperation: boolean;
-  /** isolated | unisolated | unconfigured | compatibility | invalid. Evidence-based, never a configuration claim. */
-  deploymentTier: string;
-  /** Why secure operation is or is not available. Names settings and reasons, never values. */
-  deployment: Array<{ id: string; severity: "blocking" | "warning"; detail: string; remedy: string }>;
-  /** unsigned: agent-authored records need no approval. approval: every record write needs an approved mutation. */
-  records: "unsigned" | "approval";
-  /** Where confirmations and approvals are requested from the owner. */
-  humanApproval: { inbox: "configured" | "not-configured"; operatorUrl: string | null; waiting: number | null };
+/** How the user's approval is obtained for protected actions in this session. */
+export type ApprovalReport = {
+  /** client-ui: asked in the MCP client's own dialog. unverified-fallback: the client cannot ask; the agent relays confirmation=YES. */
+  mode: "client-ui" | "unverified-fallback";
+  /** PRAXIS_APPROVAL_STRICT=1 refuses every approval that was not given in the client's dialog. */
+  strict: boolean;
+  /** Stated plainly, including what is NOT guaranteed. */
+  note: string;
+  /** Where every decision is recorded for the user's later review. */
+  decisionLog: string;
 };
 
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
-import { assessApprovalDeployment } from "@praxis/contracts";
+import { approvalModeReport } from "@praxis/contracts";
 
 const present = (value: string | undefined): boolean => Boolean(value && value.trim());
 
@@ -106,50 +100,9 @@ export function providerDiagnostics(
   return { jira, github, gitlab };
 }
 
-export function securityDiagnostics(env: NodeJS.ProcessEnv, workspace?: string): SecurityReport {
-  const raw = (env.PRAXIS_SECURITY_MODE ?? "").trim();
-  const assessment = assessApprovalDeployment({ env, workspace });
-  const shared = (env.PRAXIS_BROKER_SHARED_DIR ?? "").trim();
-  let waiting: number | null = null;
-  if (shared) {
-    try {
-      waiting = readdirSync(join(shared, "pending")).filter((name) => name.endsWith(".json")).length;
-    } catch {
-      waiting = 0;
-    }
-  }
-  const evidence = {
-    secureOperation: assessment.secureOperation,
-    deploymentTier: assessment.tier,
-    deployment: assessment.findings,
-    records: (env.PRAXIS_WORKFLOW_RECORDS ?? "").trim() === "approval" ? ("approval" as const) : ("unsigned" as const),
-    humanApproval: {
-      inbox: shared ? ("configured" as const) : ("not-configured" as const),
-      operatorUrl: shared ? ((env.PRAXIS_OPERATOR_URL ?? "").trim() || "http://localhost:8780") : null,
-      waiting,
-    },
-  };
-  if (raw === "" || raw === "secure") {
-    return {
-      mode: "secure",
-      approvals:
-        "Protected mutations need an approval signed by a broker the agent cannot reach; confirmation=YES alone and local approval files are refused. Agent-authored workflow records are written without one and are marked as unconfirmed.",
-      ...evidence,
-    };
-  }
-  if (raw === "compatibility") {
-    return {
-      mode: "compatibility",
-      approvals:
-        "Approvals are NOT enforced against the agent: stored approval files are forgeable by the same user. This is not a security boundary.",
-      ...evidence,
-    };
-  }
-  return {
-    mode: "invalid",
-    approvals: "PRAXIS_SECURITY_MODE must be 'secure' or 'compatibility'; mutations fail closed until it is fixed.",
-    ...evidence,
-  };
+export function approvalDiagnostics(env: NodeJS.ProcessEnv): ApprovalReport {
+  const report = approvalModeReport();
+  return { mode: report.mode, strict: (env.PRAXIS_APPROVAL_STRICT ?? "").trim() === "1" || report.strict, note: report.note, decisionLog: ".praxis/approvals/decisions.jsonl" };
 }
 
 export function doctorNextSteps(input: {
@@ -158,7 +111,7 @@ export function doctorNextSteps(input: {
   project: "loaded" | "missing" | "invalid";
   quality: { status: string; logPath?: string };
   providers: { jira: ProviderReport; github: ProviderReport; gitlab: ProviderReport };
-  security: SecurityReport;
+  approval: ApprovalReport;
   dotenvRejected?: string[];
 }): string[] {
   const steps: string[] = [];
@@ -197,28 +150,16 @@ export function doctorNextSteps(input: {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
   }
-  if (input.security.humanApproval.inbox === "not-configured") {
+  if (input.approval.mode === "unverified-fallback") {
     steps.push(
-      "Confirming a Story, confirming a decision and approving a service need the owner's approval, and no approval inbox is configured (PRAXIS_BROKER_SHARED_DIR). Agent-authored records still work; those three are refused until it is set.",
+      input.approval.strict
+        ? "This MCP client cannot show an approval dialog and PRAXIS_APPROVAL_STRICT=1 refuses unverified approvals: protected actions (Git, Jira, confirming a Story) will be refused. Use a client that supports elicitation, or unset PRAXIS_APPROVAL_STRICT."
+        : "This MCP client cannot show an approval dialog, so protected actions run on the agent's confirmation=YES after you say yes in chat. Praxis cannot verify that a person was asked; each approval is recorded as unverified in .praxis/approvals/decisions.jsonl. Set PRAXIS_APPROVAL_STRICT=1 to refuse such approvals.",
     );
-  } else if ((input.security.humanApproval.waiting ?? 0) > 0) {
-    steps.push(`${input.security.humanApproval.waiting} plan(s) are waiting for the owner at ${input.security.humanApproval.operatorUrl}.`);
-  }
-  if (input.security.mode === "secure" && !input.security.secureOperation) {
-    const blocking = input.security.deployment.filter((finding) => finding.severity === "blocking");
-    steps.push(
-      `Secure operation is NOT available on this host (${input.security.deploymentTier}): protected mutations (Jira, Git, confirmations) are refused until an isolated broker is in place. ` +
-        blocking.map((finding) => `${finding.id}: ${finding.remedy}`).join(" "),
-    );
-  }
-  if (input.security.mode === "invalid") {
-    steps.push("Set PRAXIS_SECURITY_MODE (extension setting security_mode) to 'secure' or 'compatibility', or leave it blank for secure.");
-  } else if (input.security.mode === "compatibility") {
-    steps.push("Compatibility mode is on: approvals are not enforced. Use it only for local development you fully trust.");
   }
   if (input.dotenvRejected?.length) {
     steps.push(
-      `A repository .env file tried to set ${input.dotenvRejected.join(", ")}. Security and approval settings are only read from the real environment, so they were ignored. Remove them from the file.`,
+      `A repository .env file tried to set ${input.dotenvRejected.join(", ")}. Approval settings are only read from the real environment, so they were ignored. Remove them from the file.`,
     );
   }
   return steps;
