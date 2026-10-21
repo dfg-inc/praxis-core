@@ -1221,16 +1221,42 @@
       "serviceIds": [
         "approval-service-core"
       ],
-      "owner": "architect",
-      "summary": "A local agent can delay the owner's decision by spamming challenges (availability only), and the operator page is not TLS-bound to a service-held key (review M6, H1 residual).",
+      "owner": "developer",
+      "summary": "A local agent could delay the owner's decision by flooding challenge requests (review M6).",
       "evidence": [
-        "documented in README and SECURITY-REVIEW"
+        "fixed: operator challenges are stateless (HMAC, per-process key): nothing is stored, nothing evicted; spent only after a verified assertion; operator-ui.test.mjs: flood of 3000 requests, forged ids"
       ],
-      "status": "open",
-      "severity": "low",
-      "expected": "A decision that cannot be delayed by an unauthenticated local client",
-      "observed": "bounded but possible",
-      "suggestion": "Owner decision whether to require a TLS operator page with a service-held key"
+      "status": "resolved"
+    },
+    {
+      "id": "F-NAS-012",
+      "requirementIds": [
+        "REQ-NAS-004"
+      ],
+      "serviceIds": [
+        "platform-adapters-installers"
+      ],
+      "owner": "developer",
+      "summary": "The macOS preinstall retention of five backups used `head -n -5`, which BSD head rejects, so old backups were never pruned; an existing state without config.json made the backup fail.",
+      "evidence": [
+        "found by running the real scripts in the sandbox (macos-installer.test.mjs); fixed with tail -n +6 and an item list; tests assert retention and abort-on-failed-backup"
+      ],
+      "status": "resolved"
+    },
+    {
+      "id": "F-NAS-013",
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "owner": "developer",
+      "summary": "If every anchor sink was missing or emptied while the audit chain was rolled back, the service started as if for the first time and wrote new anchors, hiding the rollback.",
+      "evidence": [
+        "found by the separate-volume test; fixed: external sinks must pre-exist, a chain with entries and no anchor anywhere is refused; service.test.mjs REAL separate volume"
+      ],
+      "status": "resolved"
     }
   ],
   "verdicts": [
@@ -1731,6 +1757,83 @@
       "requirementIds": [
         "REQ-NAS-001",
         "REQ-NAS-002",
+        "REQ-NAS-003",
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-SERVICE-approval-service-core-23",
+      "scope": "service",
+      "scopeId": "approval-service-core",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "US-NAS-001-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-002-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-003-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-004-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-006-CONFIRMATION PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-002",
+        "REQ-NAS-001",
+        "REQ-NAS-003"
+      ],
+      "stale": false
+    },
+    {
+      "id": "[redacted]",
+      "scope": "service",
+      "scopeId": "platform-adapters-installers",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "US-NAS-005-CONFIRMATION PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-SERVICE-runtime-client-25",
+      "scope": "service",
+      "scopeId": "runtime-client",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "US-NAS-007-CONFIRMATION PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-004"
+      ],
+      "stale": false
+    },
+    {
+      "id": "V-STORY-26",
+      "scope": "feature",
+      "scopeId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "verdict": "PASS_WITH_RISKS",
+      "evidenceRefs": [
+        "testsGreen:true",
+        "green tests are not story evidence",
+        "independentRerun:false",
+        "US-NAS-001-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-002-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-003-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-004-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-005-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-006-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-007-CONFIRMATION PASS_WITH_RISKS",
+        "US-NAS-001-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-002-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-003-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-004-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-005-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-006-CONFIRMATION:PASS_WITH_RISKS",
+        "US-NAS-007-CONFIRMATION:PASS_WITH_RISKS"
+      ],
+      "requirementIds": [
+        "REQ-NAS-002",
+        "REQ-NAS-001",
         "REQ-NAS-003",
         "REQ-NAS-004"
       ],
