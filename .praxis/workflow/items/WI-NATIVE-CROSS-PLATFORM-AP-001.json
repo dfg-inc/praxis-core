@@ -197,9 +197,9 @@
       "repository": "praxis-core",
       "localPath": "tools/approval-service/platform",
       "responsibilities": [
-        "Per-OS paths, isolation probe, install, uninstall and unit rendering as data; no privileged command is run by Praxis",
-        "macOS launchd daemon plist and unsigned .pkg builder with manifest; Linux systemd unit; Windows registration script",
-        "Each platform's status reported separately: macOS BLOCKED pending operator, Linux and Windows UNTESTED"
+        "Per-OS paths, isolation probe, install, upgrade, backup, rollback, health and uninstall as scripts and data; no privileged command is run by Praxis",
+        "macOS launchd daemon and unsigned .pkg with preinstall/postinstall/ctl; Linux self-contained tarball with install.sh and hardened systemd unit; Windows zip with install.ps1 and a C# service host",
+        "Each platform's status reported separately: Linux LINUX-CONTAINER PASS, macOS OS-ISOLATION BLOCKED pending operator, Windows UNTESTED"
       ],
       "requirementIds": [
         "REQ-NAS-004",
@@ -583,7 +583,428 @@
       "stale": false
     }
   ],
-  "stories": [],
+  "stories": [
+    {
+      "id": "US-NAS-001",
+      "requirementIds": [
+        "REQ-NAS-002",
+        "REQ-NAS-003"
+      ],
+      "actor": "Repository owner",
+      "narrative": "As a repository owner, I want to approve or reject exactly the Git operation an AI agent asks for, so that nothing is committed, pushed or opened for review without my decision.",
+      "objective": "The owner sees the operation the service derived from the repository and decides; the service then acts once, or not at all.",
+      "userValue": "The owner keeps control of what leaves the repository without having to read the agent's own description of it.",
+      "preconditions": [
+        "The Approval Service is running and an authenticator is enrolled",
+        "The agent has submitted a commit request for named files"
+      ],
+      "happyPath": [
+        "The agent submits the request",
+        "The service shows the owner the files, branch, revision and remote it derived",
+        "The owner approves with a user-verified authenticator",
+        "The service creates one commit with exactly those files"
+      ],
+      "alternatives": [
+        "The owner rejects: nothing changes"
+      ],
+      "negative": [
+        "Executing before a decision is refused"
+      ],
+      "edgeCases": [
+        "The owner approves, then a file changes before execution: the approval does not cover the new content"
+      ],
+      "businessRules": [
+        "One approval authorizes one operation on one request"
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "US-NAS-001-AC-01",
+          "given": "a submitted commit request",
+          "when": "the owner approves and the agent asks for execution",
+          "then": "exactly one commit is created, authored by the service, containing exactly the named files"
+        },
+        {
+          "id": "US-NAS-001-AC-02",
+          "given": "a submitted commit request",
+          "when": "the owner rejects it",
+          "then": "the repository, remote and index are unchanged and execution is refused"
+        },
+        {
+          "id": "US-NAS-001-AC-03",
+          "given": "a real Touch ID or security key",
+          "when": "the owner approves on the operator page",
+          "then": "the assertion is verified with user verification and the approval is accepted (needs the owner)"
+        }
+      ],
+      "expectedResults": [
+        "Approved: one commit",
+        "Rejected: no change"
+      ],
+      "dependencies": [],
+      "assumptionIds": [],
+      "unresolvedDecisionIds": [],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "revision": 1,
+      "status": "proposed",
+      "confirmedBehavior": false,
+      "stale": false
+    },
+    {
+      "id": "US-NAS-002",
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "actor": "Repository owner",
+      "narrative": "As a repository owner, I want the AI agent to be unable to approve its own requests or bypass the service, so that an approval means a person decided.",
+      "objective": "The agent can only ask and read status; forged, replayed or machine approvals, unknown operations and an absent or unverified service never result in a protected operation.",
+      "userValue": "The approval is meaningful even when the agent is hostile or confused.",
+      "preconditions": [
+        "The agent can write to the repository and connect to the service socket"
+      ],
+      "happyPath": [
+        "The agent sends approve, sign, enroll and configuration messages",
+        "The service refuses each as an unknown operation",
+        "The agent plants a token signed by another key or with a machine channel",
+        "Execution is refused and nothing changes"
+      ],
+      "alternatives": [],
+      "negative": [
+        "A service that is missing, speaks another protocol or cannot show isolation makes the client refuse",
+        "A production service whose isolation checks fail does not start"
+      ],
+      "edgeCases": [
+        "An agent-owned process claims production isolation on its own socket"
+      ],
+      "businessRules": [
+        "Isolation is judged from ownership evidence, never from what the service says about itself"
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "US-NAS-002-AC-01",
+          "given": "the IPC contract",
+          "when": "any message other than submit, status, execute or health is sent",
+          "then": "it is refused as UNKNOWN_OPERATION and extra fields are refused"
+        },
+        {
+          "id": "US-NAS-002-AC-02",
+          "given": "a pending request",
+          "when": "a token signed by another key or on the machine channel is planted",
+          "then": "execution is refused and the repository is unchanged"
+        },
+        {
+          "id": "US-NAS-002-AC-03",
+          "given": "an absent, impostor or unverified service or a missing trust anchor",
+          "when": "a protected operation is attempted",
+          "then": "it fails closed with nothing changed"
+        }
+      ],
+      "expectedResults": [
+        "No path from the agent to an approval"
+      ],
+      "dependencies": [],
+      "assumptionIds": [],
+      "unresolvedDecisionIds": [],
+      "serviceIds": [
+        "approval-service-core",
+        "runtime-client"
+      ],
+      "revision": 1,
+      "status": "proposed",
+      "confirmedBehavior": false,
+      "stale": false
+    },
+    {
+      "id": "US-NAS-003",
+      "requirementIds": [
+        "REQ-NAS-003"
+      ],
+      "actor": "AI agent acting for the repository owner",
+      "narrative": "As a requesting agent, I want to ask again for an operation that already completed and get the recorded result, so that a retry never repeats a commit, push or review request.",
+      "objective": "One execution id is bound to one request and one set of parameters; asking again returns what happened even after the repository and remote moved on.",
+      "userValue": "Retries after a timeout or restart are safe, and a changed request cannot ride on an old approval.",
+      "preconditions": [
+        "A commit, a push and a merge request were each approved and executed"
+      ],
+      "happyPath": [
+        "The repository HEAD and the remote branch have moved on",
+        "The agent asks again with the same execution id",
+        "The service returns the recorded result and runs nothing"
+      ],
+      "alternatives": [],
+      "negative": [
+        "The same execution id with a different message, path, branch or remote is refused as a changed plan"
+      ],
+      "edgeCases": [
+        "The file changes between approval and execution: the approval is refused before it is consumed"
+      ],
+      "businessRules": [
+        "A failed execution that changed nothing may be asked for again with a fresh approval; an uncertain one may not"
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "US-NAS-003-AC-01",
+          "given": "completed commit, push and merge request",
+          "when": "each is requested again with its execution id after HEAD and the remote moved",
+          "then": "each returns its recorded result and nothing runs a second time"
+        },
+        {
+          "id": "US-NAS-003-AC-02",
+          "given": "a bound execution id",
+          "when": "the request differs in any bound parameter or the content changes after approval",
+          "then": "it is refused and nothing changes"
+        }
+      ],
+      "expectedResults": [
+        "Idempotent replay",
+        "Changed plans rejected"
+      ],
+      "dependencies": [],
+      "assumptionIds": [],
+      "unresolvedDecisionIds": [],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "revision": 1,
+      "status": "proposed",
+      "confirmedBehavior": false,
+      "stale": false
+    },
+    {
+      "id": "US-NAS-004",
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-003"
+      ],
+      "actor": "Repository owner",
+      "narrative": "As a repository owner, I want approval keys and credentials and the ledger and configuration to stay out of the agent's reach and out of my repositories, so that the agent cannot forge or reuse an approval or leak a credential.",
+      "objective": "Secrets never appear in replies, logs or repositories; no approval branches or files are created; protected data is unreadable and unwritable by the agent's OS identity.",
+      "userValue": "Approval material cannot be stolen or planted by the agent.",
+      "preconditions": [
+        "The service runs as its own OS principal (needs installation)"
+      ],
+      "happyPath": [
+        "A full commit flow runs",
+        "No token, key or credential appears in any reply or log",
+        "No branch, ref or file for approvals appears in the repository"
+      ],
+      "alternatives": [],
+      "negative": [
+        "As the agent's OS user, reading the key, listing state, appending the audit log, writing the ledger or configuration, replacing the code or socket, signalling or reading the service process are all denied"
+      ],
+      "edgeCases": [],
+      "businessRules": [
+        "Independence from the agent is a property of the OS identity, not of the code; it is proven only where the service actually ran as another principal"
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "US-NAS-004-AC-01",
+          "given": "a full approved commit flow",
+          "when": "replies, audit log and the repository are inspected",
+          "then": "no token or key appears and the repository gained no approval refs or files"
+        },
+        {
+          "id": "US-NAS-004-AC-02",
+          "given": "the service running as its own OS principal",
+          "when": "the agent's user attempts to read or modify protected data or the service",
+          "then": "every attempt is denied (verified on Linux in a container; macOS and Windows need the owner)"
+        }
+      ],
+      "expectedResults": [
+        "No secrets outside the service",
+        "Protected data unreachable to the agent"
+      ],
+      "dependencies": [],
+      "assumptionIds": [],
+      "unresolvedDecisionIds": [],
+      "serviceIds": [
+        "approval-service-core",
+        "platform-adapters-installers"
+      ],
+      "revision": 1,
+      "status": "proposed",
+      "confirmedBehavior": false,
+      "stale": false
+    },
+    {
+      "id": "US-NAS-005",
+      "requirementIds": [
+        "REQ-NAS-004"
+      ],
+      "actor": "Repository owner",
+      "narrative": "As a repository owner, I want to install and upgrade and roll back and remove the Approval Service on my operating system with checks and backups, so that the service is installed safely and recoverably.",
+      "objective": "Each platform has an installer with compatibility checks, backup, rollback, health and uninstall, and its status is reported as what was actually run.",
+      "userValue": "Installation never surprises the owner and never destroys the record of past approvals.",
+      "preconditions": [
+        "The owner holds administrator rights; Praxis never runs the privileged steps itself"
+      ],
+      "happyPath": [
+        "Check changes nothing",
+        "Install creates a dedicated account and protected directories and starts the service",
+        "Upgrade backs up first and keeps state and configuration",
+        "Rollback restores the previous version",
+        "Uninstall keeps state unless purge is asked and always backs up first"
+      ],
+      "alternatives": [],
+      "negative": [
+        "A package for another architecture, a tampered package or a downgrade is refused"
+      ],
+      "edgeCases": [],
+      "businessRules": [
+        "A platform is not called ready unless the service has run on it"
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "US-NAS-005-AC-01",
+          "given": "the Linux package",
+          "when": "check and install and upgrade and rollback and uninstall are run on a Linux kernel with separate users",
+          "then": "each step behaves as documented and the service is healthy in production mode"
+        },
+        {
+          "id": "US-NAS-005-AC-02",
+          "given": "the macOS package built unprivileged",
+          "when": "its payload and scripts are inspected",
+          "then": "it is a launchd daemon package with preinstall and postinstall and ctl and it is unsigned"
+        },
+        {
+          "id": "US-NAS-005-AC-03",
+          "given": "a macOS installation by the owner",
+          "when": "the installer is run and the service started under its account",
+          "then": "the service reports production mode with verified isolation (needs the owner)"
+        },
+        {
+          "id": "US-NAS-005-AC-04",
+          "given": "a Windows machine",
+          "when": "install.ps1 is run elevated",
+          "then": "the service starts under its virtual account with the pipe DACL applied (needs the owner and Windows)"
+        }
+      ],
+      "expectedResults": [
+        "Linux lifecycle verified in a container",
+        "macOS and Windows pending the owner"
+      ],
+      "dependencies": [],
+      "assumptionIds": [],
+      "unresolvedDecisionIds": [],
+      "serviceIds": [
+        "platform-adapters-installers"
+      ],
+      "revision": 1,
+      "status": "proposed",
+      "confirmedBehavior": false,
+      "stale": false
+    },
+    {
+      "id": "US-NAS-006",
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-003"
+      ],
+      "actor": "Repository owner",
+      "narrative": "As a repository owner, I want the service to detect tampering with its own records and to survive restarts and concurrent requests, so that a rolled-back log or ledger cannot make a consumed approval usable again.",
+      "objective": "Truncated or rolled-back audit and ledger are detected and refused; restarts recover; concurrent requests stay isolated.",
+      "userValue": "The record of what was approved can be trusted after crashes and attacks.",
+      "preconditions": [
+        "Signed anchors of the audit head exist in independent sinks"
+      ],
+      "happyPath": [
+        "After a restart the ledger is intact and a replay returns the recorded result",
+        "Concurrent requests in different repositories each execute once"
+      ],
+      "alternatives": [],
+      "negative": [
+        "A truncated audit tail or a missing ledger makes the service refuse to start",
+        "A mismatch found while running refuses execution"
+      ],
+      "edgeCases": [
+        "An execution interrupted by a crash is marked for reconciliation and never silently retried"
+      ],
+      "businessRules": [
+        "An attacker who rewrites every sink and the key together is outside what pinning can detect; an off-host witness narrows that"
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "US-NAS-006-AC-01",
+          "given": "a used service with anchors in two sinks",
+          "when": "the audit tail is truncated or the ledger removed and the service restarted",
+          "then": "the service refuses to start, and an intact state starts with replay preserved"
+        },
+        {
+          "id": "US-NAS-006-AC-02",
+          "given": "concurrent requests for two repositories and repeated executes of one",
+          "when": "all run at once",
+          "then": "each repository gets exactly one commit and the audit chain stays valid"
+        }
+      ],
+      "expectedResults": [
+        "Tampering detected",
+        "Isolation under concurrency"
+      ],
+      "dependencies": [],
+      "assumptionIds": [],
+      "unresolvedDecisionIds": [],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "revision": 1,
+      "status": "proposed",
+      "confirmedBehavior": false,
+      "stale": false
+    },
+    {
+      "id": "US-NAS-007",
+      "requirementIds": [
+        "REQ-NAS-004"
+      ],
+      "actor": "Repository owner",
+      "narrative": "As a repository owner, I want Claude Desktop and the command line to use the same approval service, so that approvals work the same from every client and a repository file cannot redirect them.",
+      "objective": "The packaged Desktop extension and the CLI delegate protected Git operations to the same service; a repository file cannot change which service is used or the security mode.",
+      "userValue": "One approval path for every client, not bypassable from a repository.",
+      "preconditions": [
+        "A service is reachable"
+      ],
+      "happyPath": [
+        "The packaged Runtime extension submits commit and push and merge request to the service and executes after approval",
+        "The CLI ignores approval and security settings found in a repository .env file"
+      ],
+      "alternatives": [],
+      "negative": [
+        "The production extension refuses a service it cannot establish as isolated"
+      ],
+      "edgeCases": [],
+      "businessRules": [
+        "Installing the extension alone makes no isolation claim"
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "US-NAS-007-AC-01",
+          "given": "the packaged Runtime extension and a real service process",
+          "when": "commit and push and merge request are requested and approved",
+          "then": "each executes in the service, replays return recorded results, and the production extension refuses an unisolated service"
+        },
+        {
+          "id": "US-NAS-007-AC-02",
+          "given": "a repository .env that names another service endpoint and compatibility mode",
+          "when": "the CLI loads configuration",
+          "then": "neither value is applied and both are reported as rejected"
+        }
+      ],
+      "expectedResults": [
+        "Same contract for Desktop and CLI"
+      ],
+      "dependencies": [],
+      "assumptionIds": [],
+      "unresolvedDecisionIds": [],
+      "serviceIds": [
+        "runtime-client"
+      ],
+      "revision": 1,
+      "status": "proposed",
+      "confirmedBehavior": false,
+      "stale": false
+    }
+  ],
   "coverage": [],
   "changes": [],
   "stage": "changes_requested",

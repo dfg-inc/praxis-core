@@ -1,0 +1,434 @@
+{
+  "checks": [
+    {
+      "scenarioId": "US-NAS-001-S1-approved-commit",
+      "storyId": "US-NAS-001",
+      "requirementId": "REQ-NAS-002",
+      "acceptanceCriterionId": "US-NAS-001-AC-01",
+      "kind": "happy",
+      "serviceId": "approval-service-core",
+      "level": "service-integration",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "approvedCommit",
+        "args": []
+      },
+      "expect": {
+        "proposed": "awaiting-operator",
+        "refusedBeforeApproval": "APPROVAL_REQUIRED",
+        "executed": "completed",
+        "newCommits": 1,
+        "author": "Praxis Approval Service",
+        "files": [
+          "f.txt"
+        ]
+      }
+    },
+    {
+      "scenarioId": "US-NAS-001-S2-rejected-commit",
+      "storyId": "US-NAS-001",
+      "requirementId": "REQ-NAS-002",
+      "acceptanceCriterionId": "US-NAS-001-AC-02",
+      "kind": "negative",
+      "serviceId": "approval-service-core",
+      "level": "service-integration",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "rejectedCommit",
+        "args": []
+      },
+      "expect": {
+        "status": "rejected",
+        "execute": "APPROVAL_REJECTED",
+        "headMoved": false,
+        "untracked": "?? f.txt"
+      }
+    },
+    {
+      "scenarioId": "US-NAS-001-S3-human-touch-id",
+      "storyId": "US-NAS-001",
+      "requirementId": "REQ-NAS-002",
+      "acceptanceCriterionId": "US-NAS-001-AC-03",
+      "kind": "happy",
+      "serviceId": "approval-service-core",
+      "level": "e2e",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "approvedCommit",
+        "args": []
+      },
+      "expect": {},
+      "critical": true
+    },
+    {
+      "scenarioId": "US-NAS-002-S1-no-approve-path",
+      "storyId": "US-NAS-002",
+      "requirementId": "REQ-NAS-001",
+      "acceptanceCriterionId": "US-NAS-002-AC-01",
+      "kind": "security",
+      "serviceId": "runtime-client",
+      "level": "contract",
+      "module": "quality-checks.mjs",
+      "call": {
+        "function": "protocolHasNoApprovePath",
+        "args": []
+      },
+      "expect": {
+        "refused": [
+          "UNKNOWN_OPERATION"
+        ],
+        "strictExtraFieldRefused": "BAD_REQUEST",
+        "allowed": [
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "scenarioId": "US-NAS-002-S2-forged-approvals",
+      "storyId": "US-NAS-002",
+      "requirementId": "REQ-NAS-001",
+      "acceptanceCriterionId": "US-NAS-002-AC-02",
+      "kind": "security",
+      "serviceId": "approval-service-core",
+      "level": "service-integration",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "agentCannotApproveOrForge",
+        "args": []
+      },
+      "expect": {
+        "unknownOperations": {
+          "approve": "UNKNOWN_OPERATION",
+          "reject": "UNKNOWN_OPERATION",
+          "sign": "UNKNOWN_OPERATION",
+          "enroll": "UNKNOWN_OPERATION",
+          "set-config": "UNKNOWN_OPERATION",
+          "exec": "UNKNOWN_OPERATION"
+        },
+        "forged": {
+          "otherKey": false,
+          "machineChannel": false
+        },
+        "headMoved": false
+      }
+    },
+    {
+      "scenarioId": "US-NAS-002-S3-impostor-and-dead-service",
+      "storyId": "US-NAS-002",
+      "requirementId": "REQ-NAS-001",
+      "acceptanceCriterionId": "US-NAS-002-AC-03",
+      "kind": "security",
+      "serviceId": "runtime-client",
+      "level": "service-integration",
+      "module": "quality-checks.mjs",
+      "call": {
+        "function": "impostorAndDeadServiceAreNotTrusted",
+        "args": []
+      },
+      "expect": {
+        "impostorReachable": true,
+        "impostorIsolated": false,
+        "deadReachable": false,
+        "deadIsolated": false,
+        "callToDeadService": "SERVICE_UNAVAILABLE"
+      }
+    },
+    {
+      "scenarioId": "US-NAS-002-S4-fails-closed",
+      "storyId": "US-NAS-002",
+      "requirementId": "REQ-NAS-001",
+      "acceptanceCriterionId": "US-NAS-002-AC-03",
+      "kind": "edge",
+      "serviceId": "approval-service-core",
+      "level": "service-integration",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "failsClosedWhenSecurityDependencyMissing",
+        "args": []
+      },
+      "expect": {
+        "executeOk": false,
+        "headMoved": false
+      }
+    },
+    {
+      "scenarioId": "US-NAS-002-S5-production-refuses-unverified",
+      "storyId": "US-NAS-002",
+      "requirementId": "REQ-NAS-001",
+      "acceptanceCriterionId": "US-NAS-002-AC-03",
+      "kind": "security",
+      "serviceId": "approval-service-core",
+      "level": "service-integration",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "productionRefusesUnverifiedIsolation",
+        "args": []
+      },
+      "expect": {
+        "productionWithFailingProbe": "refused"
+      }
+    },
+    {
+      "scenarioId": "US-NAS-003-S1-replay-commit-push-mr",
+      "storyId": "US-NAS-003",
+      "requirementId": "REQ-NAS-003",
+      "acceptanceCriterionId": "US-NAS-003-AC-01",
+      "kind": "contract",
+      "serviceId": "approval-service-core",
+      "level": "service-integration",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "replayAfterStateMoved",
+        "args": []
+      },
+      "expect": {
+        "commit": {
+          "state": "completed",
+          "sameResult": true
+        },
+        "push": {
+          "state": "completed",
+          "sameResult": true
+        },
+        "mergeRequest": {
+          "state": "completed",
+          "sameResult": true,
+          "requestsCreated": 1
+        },
+        "nothingRanAgain": true
+      }
+    },
+    {
+      "scenarioId": "US-NAS-003-S2-changed-plan",
+      "storyId": "US-NAS-003",
+      "requirementId": "REQ-NAS-003",
+      "acceptanceCriterionId": "US-NAS-003-AC-02",
+      "kind": "negative",
+      "serviceId": "approval-service-core",
+      "level": "service-integration",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "changedPlanRefused",
+        "args": []
+      },
+      "expect": {
+        "sameIdDifferentMessage": "CHANGED_PLAN",
+        "sameIdDifferentPath": "CHANGED_PLAN",
+        "changedAfterApproval": "APPROVAL_SCOPE_MISMATCH",
+        "headMoved": false
+      }
+    },
+    {
+      "scenarioId": "US-NAS-004-S1-no-secrets-no-artifacts",
+      "storyId": "US-NAS-004",
+      "requirementId": "REQ-NAS-003",
+      "acceptanceCriterionId": "US-NAS-004-AC-01",
+      "kind": "security",
+      "serviceId": "approval-service-core",
+      "level": "service-integration",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "secretsAndArtifactsStayOut",
+        "args": []
+      },
+      "expect": {
+        "tokenOrKeyInReplyOrLog": false,
+        "newRefs": [],
+        "approvalFilesInRepo": 0,
+        "cleanWorktree": true
+      }
+    },
+    {
+      "scenarioId": "US-NAS-004-S2-os-identity-linux",
+      "storyId": "US-NAS-004",
+      "requirementId": "REQ-NAS-001",
+      "acceptanceCriterionId": "US-NAS-004-AC-02",
+      "kind": "security",
+      "serviceId": "platform-adapters-installers",
+      "level": "service-integration",
+      "module": "quality-checks.mjs",
+      "call": {
+        "function": "linuxContainerLifecycle",
+        "args": []
+      },
+      "expect": {
+        "summary": "LINUX-CONTAINER PASS",
+        "failedChecks": 0,
+        "exit": 0
+      }
+    },
+    {
+      "scenarioId": "US-NAS-004-S3-os-identity-macos-windows",
+      "storyId": "US-NAS-004",
+      "requirementId": "REQ-NAS-001",
+      "acceptanceCriterionId": "US-NAS-004-AC-02",
+      "kind": "security",
+      "serviceId": "platform-adapters-installers",
+      "level": "e2e",
+      "module": "quality-checks.mjs",
+      "call": {
+        "function": "platformStatusesAreHonest",
+        "args": []
+      },
+      "expect": {},
+      "critical": true
+    },
+    {
+      "scenarioId": "US-NAS-005-S1-linux-lifecycle",
+      "storyId": "US-NAS-005",
+      "requirementId": "REQ-NAS-004",
+      "acceptanceCriterionId": "US-NAS-005-AC-01",
+      "kind": "happy",
+      "serviceId": "platform-adapters-installers",
+      "level": "service-integration",
+      "module": "quality-checks.mjs",
+      "call": {
+        "function": "linuxContainerLifecycle",
+        "args": []
+      },
+      "expect": {
+        "summary": "LINUX-CONTAINER PASS",
+        "failedChecks": 0,
+        "exit": 0
+      }
+    },
+    {
+      "scenarioId": "US-NAS-005-S2-macos-package",
+      "storyId": "US-NAS-005",
+      "requirementId": "REQ-NAS-004",
+      "acceptanceCriterionId": "US-NAS-005-AC-02",
+      "kind": "contract",
+      "serviceId": "platform-adapters-installers",
+      "level": "service-integration",
+      "module": "quality-checks.mjs",
+      "call": {
+        "function": "macosPackageBuiltAndInspected",
+        "args": []
+      },
+      "expect": {
+        "daemonPlist": true,
+        "agentPlist": false,
+        "ctl": true,
+        "signed": false
+      }
+    },
+    {
+      "scenarioId": "US-NAS-005-S3-macos-install",
+      "storyId": "US-NAS-005",
+      "requirementId": "REQ-NAS-004",
+      "acceptanceCriterionId": "US-NAS-005-AC-03",
+      "kind": "happy",
+      "serviceId": "platform-adapters-installers",
+      "level": "e2e",
+      "module": "quality-checks.mjs",
+      "call": {
+        "function": "platformStatusesAreHonest",
+        "args": []
+      },
+      "expect": {},
+      "critical": true
+    },
+    {
+      "scenarioId": "US-NAS-005-S4-windows-install",
+      "storyId": "US-NAS-005",
+      "requirementId": "REQ-NAS-004",
+      "acceptanceCriterionId": "US-NAS-005-AC-04",
+      "kind": "happy",
+      "serviceId": "platform-adapters-installers",
+      "level": "e2e",
+      "module": "quality-checks.mjs",
+      "call": {
+        "function": "platformStatusesAreHonest",
+        "args": []
+      },
+      "expect": {},
+      "critical": true
+    },
+    {
+      "scenarioId": "US-NAS-006-S1-audit-ledger-integrity",
+      "storyId": "US-NAS-006",
+      "requirementId": "REQ-NAS-001",
+      "acceptanceCriterionId": "US-NAS-006-AC-01",
+      "kind": "security",
+      "serviceId": "approval-service-core",
+      "level": "service-integration",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "auditAndLedgerIntegrity",
+        "args": []
+      },
+      "expect": {
+        "truncatedTail": "refused",
+        "ledgerRemoved": "refused",
+        "intactStateStarts": true,
+        "replayAfterRestart": true
+      }
+    },
+    {
+      "scenarioId": "US-NAS-006-S2-concurrency",
+      "storyId": "US-NAS-006",
+      "requirementId": "REQ-NAS-003",
+      "acceptanceCriterionId": "US-NAS-006-AC-02",
+      "kind": "edge",
+      "serviceId": "approval-service-core",
+      "level": "service-integration",
+      "module": "acceptance/quality-checks.mjs",
+      "call": {
+        "function": "concurrentRequestsIsolated",
+        "args": []
+      },
+      "expect": {
+        "allOk": true,
+        "commitsInA": 1,
+        "commitsInB": 1,
+        "subjects": [
+          "A",
+          "B"
+        ],
+        "auditIntact": true
+      }
+    },
+    {
+      "scenarioId": "US-NAS-007-S1-desktop-mcpb",
+      "storyId": "US-NAS-007",
+      "requirementId": "REQ-NAS-004",
+      "acceptanceCriterionId": "US-NAS-007-AC-01",
+      "kind": "happy",
+      "serviceId": "runtime-client",
+      "level": "service-integration",
+      "module": "quality-checks.mjs",
+      "call": {
+        "function": "desktopMcpbDelegation",
+        "args": []
+      },
+      "expect": {
+        "result": "PASS service-delegation",
+        "steps": 10
+      }
+    },
+    {
+      "scenarioId": "US-NAS-007-S2-cli-dotenv",
+      "storyId": "US-NAS-007",
+      "requirementId": "REQ-NAS-004",
+      "acceptanceCriterionId": "US-NAS-007-AC-02",
+      "kind": "security",
+      "serviceId": "runtime-client",
+      "level": "service-integration",
+      "module": "quality-checks.mjs",
+      "call": {
+        "function": "cliCannotBeRedirectedByRepositoryFile",
+        "args": []
+      },
+      "expect": {
+        "endpointFromRepoFile": null,
+        "securityModeFromRepoFile": null,
+        "rejected": [
+          "PRAXIS_APPROVAL_SERVICE_ENDPOINT",
+          "PRAXIS_SECURITY_MODE"
+        ]
+      }
+    }
+  ]
+}
