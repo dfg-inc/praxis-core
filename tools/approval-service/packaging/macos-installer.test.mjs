@@ -57,7 +57,14 @@ case "$op" in
   -read)
     [ -d "$db/$kind/$name" ] || { echo "<dscl_cmd> DS Error: -14136 (eDSRecordNotFound)"; exit 56; }
     [ -n "$attr" ] || exit 0
-    if [ -f "$db/$kind/$name/$attr" ]; then echo "$attr: $(cat "$db/$kind/$name/$attr")"; else echo "No such key: $attr"; fi
+    if [ -f "$db/$kind/$name/$attr" ]; then
+      v="$(cat "$db/$kind/$name/$attr")"
+      case "$attr" in
+        IsHidden|AuthenticationAuthority) echo "dsAttrTypeNative:$attr: $v" ;;      # native attributes, as real dscl prints them
+        RealName) printf '%s:\n %s\n' "$attr" "$v" ;;                                # value on the next line, as real dscl prints it
+        *) echo "$attr: $v" ;;
+      esac
+    else echo "No such key: $attr"; fi
     exit 0 ;;
   -list)
     for d in "$db/$kind"/*; do [ -d "$d" ] || continue; [ -f "$d/$attr" ] && echo "$(basename "$d") $(cat "$d/$attr")"; done
@@ -374,6 +381,69 @@ describe("preinstall: the service account is validated before anything is instal
       } finally {
         s.cleanup();
       }
+    }
+  });
+});
+
+describe("dget parses every real dscl output format", darwin, () => {
+  const lib = join(here, "macos-lib.sh");
+  const get = (output, key) => {
+    const dir = mkdtempSync("/tmp/pas-dget-");
+    writeFileSync(join(dir, "out"), output);
+    const r = spawnSync("/bin/sh", ["-c", `. "${lib}"; dscl() { cat "${dir}/out"; }; dget /Users/x ${key}`], { encoding: "utf8" });
+    rmSync(dir, { recursive: true, force: true });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  test("standard, native and prefixed names, multi-line values, missing keys", () => {
+    assert.equal(get("UniqueID: 206\n", "UniqueID"), "206");
+    assert.equal(get("dsAttrTypeNative:IsHidden: 1\n", "IsHidden"), "1", "the case from the first real installation");
+    assert.equal(get("dsAttrTypeStandard:UniqueID: 206\n", "UniqueID"), "206");
+    assert.equal(get("dsAttrTypeStandard:UserShell: /usr/bin/false\n", "UserShell"), "/usr/bin/false");
+    assert.equal(get("NFSHomeDirectory: /var/empty\n", "NFSHomeDirectory"), "/var/empty");
+    assert.equal(get("Password: *\n", "Password"), "*");
+    assert.equal(get("RealName:\n Praxis Approval Service\n", "RealName"), "Praxis Approval Service");
+    assert.equal(get("RealName: Praxis Approval Service\n", "RealName"), "Praxis Approval Service");
+    assert.equal(get("dsAttrTypeStandard:RealName:\n Praxis Approval Service\n", "RealName"), "Praxis Approval Service");
+    assert.equal(get("dsAttrTypeNative:GroupMembership: a b\n", "GroupMembership"), "a b");
+    assert.equal(get("GroupMembership: _praxisapproval mallory\n", "GroupMembership"), "_praxisapproval mallory");
+    assert.equal(get("AuthenticationAuthority:\n ;ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2>\n ;Kerberosv5;\n", "AuthenticationAuthority"), ";ShadowHash;HASHLIST:<SALTED-SHA512-PBKDF2> ;Kerberosv5;");
+    assert.equal(get("No such key: IsHidden\n", "IsHidden"), "");
+    assert.equal(get("", "IsHidden"), "");
+  });
+  test("the checks are not weakened: wrong or present-but-bad values are still refused in the real formats", () => {
+    for (const [attr, bad, expect] of [["IsHidden", 0, /not hidden/], ["UserShell", "/bin/zsh", /login shell/], ["NFSHomeDirectory", "/Users/x", /home directory/], ["Password", "x", /password/], ["AuthenticationAuthority", ";ShadowHash;", /authentication authority/]]) {
+      const s = sandbox();
+      try {
+        s.goodUser({ [attr]: bad });
+        s.goodGroup();
+        const r = s.pre();
+        assert.notEqual(r.status, 0, attr);
+        assert.match(r.stderr, expect, attr);
+      } finally {
+        s.cleanup();
+      }
+    }
+  });
+  test("resuming after the first real failure: account complete (IsHidden in the native format), payload extracted, daemon not registered -> completes and registers, creating nothing again", () => {
+    const s = sandbox();
+    try {
+      seedCode(s);
+      s.goodUser({ UniqueID: 206, PrimaryGroupID: 206 });
+      s.goodGroup({ PrimaryGroupID: 206 });
+      mkdirSync(join(s.base, "state"));
+      chmodSync(join(s.base, "state"), 0o700);
+      s.owner(join(s.base, "state"), "_praxisapproval");
+      const before = s.pre();
+      assert.equal(before.status, 0, "the interrupted state is accepted by preinstall: " + before.stderr);
+      const r = s.post();
+      assert.equal(r.status, 0, r.stderr);
+      const calls = s.calls();
+      assert.ok(!calls.some((c) => /^dscl \. -create/.test(c) || c.startsWith("dseditgroup")), "an existing complete account is not touched");
+      assert.ok(calls.some((c) => c.startsWith("launchctl bootstrap")), "the daemon is registered");
+      assert.equal(readFileSync(join(s.sb, "db/Users/_praxisapproval/UniqueID"), "utf8"), "206", "the id stays");
+    } finally {
+      s.cleanup();
     }
   });
 });

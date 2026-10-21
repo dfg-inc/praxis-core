@@ -72,11 +72,25 @@ psec_assert_tree() {
 ACCT="_praxisapproval"
 ACCT_REALNAME="Praxis Approval Service"
 
-# One attribute of a directory record, or nothing. `dscl -read` prints "No such key: X" with status 0 for a missing attribute, and a multi-line value after the key.
+# One attribute of a directory record, or nothing. Real `dscl -read` formats (all seen on macOS):
+#   UniqueID: 206                               standard attribute, value on the key line
+#   dsAttrTypeNative:IsHidden: 1                native attribute: the key carries a dsAttrTypeNative: prefix
+#   dsAttrTypeStandard:RealName: X              the same prefix form for standard attributes
+#   RealName:\n Praxis Approval Service         value on the following line(s), one leading space each
+#   No such key: X                              missing attribute (exit status 0)
 dget() {
   out="$(dscl . -read "$1" "$2" 2>/dev/null)" || return 0
   case "$out" in ''|'No such key'*) return 0 ;; esac
-  printf '%s\n' "$out" | awk -v k="$2:" 'NR == 1 { sub("^" k " *", ""); v = $0 } NR > 1 { v = v $0 } END { print v }' | sed 's/^ *//; s/ *$//'
+  printf '%s\n' "$out" | awk -v k="$2" '
+    NR == 1 {
+      line = $0
+      sub(/^dsAttrType(Native|Standard):/, "", line)
+      if (index(line, k ":") == 1) line = substr(line, length(k) + 2)
+      else { exit }            # the first line is not this attribute: no value
+      v = line
+    }
+    NR > 1 { v = v " " $0 }
+    END { print v }' | sed 's/^ *//; s/ *$//; s/  */ /g'
 }
 acct_user_exists() { dscl . -read "/Users/$ACCT" >/dev/null 2>&1; }
 acct_group_exists() { dscl . -read "/Groups/$ACCT" >/dev/null 2>&1; }
