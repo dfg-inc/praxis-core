@@ -38,7 +38,7 @@ MCP defines elicitation; whether a particular host implements it is only known f
 | --- | --- | --- |
 | Claude Code CLI 2.1.304 | **VERIFIED**, both protocol eras | declares `elicitation: {form, url}` (read from the binary and by `praxis_doctor`); driven end to end against the packed Runtime: Approve ran the action, Reject, Decline and Cancel ran nothing (the user's answer was played by an `Elicitation` hook, so it proves the protocol and the client, not that a person answered) |
 | Official MCP SDK 2.0 client | **VERIFIED**, both protocol eras | `npm run accept:approval-ux` |
-| Claude Desktop 3.1623.1, Chat | **UNTESTED** | the main process declares URL-mode elicitation only for the servers it connects itself; local extensions are connected by the chat window, whose declaration is not in the app bundle. Check with the Desktop Chat prompt in `desktop-install/INSTALL.md` |
+| Claude Desktop 3.1623.1, Chat | **NO DIALOG** (real Chat test, client `claude-ai`, protocol 2026-07-28) | `praxis_doctor` reported `elicitation.declared: null`, `dialog: false`. A protected apply was not answered by Praxis at all: Desktop's own log shows `tool_approval_gate … approvalRequired:true` for it and the Praxis server never received the call (its log has only the four earlier calls). The call waited at Desktop's tool-permission prompt, not in Praxis |
 | Other MCP clients | UNTESTED | `praxis_doctor` tells you |
 
 ## A client that cannot show the dialog: nothing protected runs
@@ -50,6 +50,10 @@ There is **no fallback by default**: an agent saying "the user said yes", `confi
 - `praxis_doctor` reports `approval.mode: "no-dialog"` and the reason.
 - `confirmation=NO` is the one thing text can still do: it records that you declined and runs nothing (text can only make Praxis do less).
 - The `praxis` CLI has its own dialog: in an interactive terminal it prints the action and asks you to type `approve`. With no terminal it refuses.
+
+Praxis answers such a call at once: no wait, no round trip, no unsupported request to the client. If a Chat seems to hang on an apply, the call is held by the host before it reaches Praxis: look for the host's permission prompt. `~/.praxis/diagnostics/mcp.jsonl` (path in `praxis_doctor` → `approval.diagnosticsLog`) records `tool_enter`, `tool_finished` (with `ms` and the result `code`) and `input_required` per call, with names, durations and the client's declared capability keys, never arguments or plan text; a call that is missing there never reached Praxis.
+
+A dialog that is declared but never answered ends with `APPROVAL_TIMED_OUT` (nothing executed; ask again). That is neither a rejection nor an approval.
 
 ### Opt-in: `PRAXIS_APPROVAL_MODE=host-permission`
 
