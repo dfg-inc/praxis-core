@@ -37,7 +37,9 @@ describe("a protected action runs only after the user approves it", () => {
     expect(existsSync(join(root, ".project"))).toBe(true);
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ action: "praxis_project_init_apply", kind: "development_action" });
-    expect(seen[0]!.description).toContain("praxis_project_init_apply");
+    // the user is shown the exact file that will be written, not a label
+    expect(seen[0]!.description).toContain(`Creates ${join(root, ".project")} with exactly this content`);
+    expect(seen[0]!.description).toMatch(/npm test/);
     expect(log(root).at(-1)).toMatchObject({ decision: "approved", channel: "client-elicitation" });
   });
 

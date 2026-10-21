@@ -726,6 +726,17 @@ export async function projectInitApplyOp(ctx: OpContext) {
     provider: "local",
     repository: repo,
     requireYes: true,
+    // what the user approves is the file this will write, in full
+    describe: () => ({
+      summary: inferred.existing.status === "loaded" ? "Project config already exists: nothing will be written" : `Write ${join(repo, ".project")}`,
+      description: [
+        inferred.existing.status === "loaded" ? `${inferred.existing.path} already exists; applying changes nothing.` : `Creates ${join(repo, ".project")} with exactly this content:`,
+        "",
+        inferred.yaml,
+      ].join("\n"),
+      previewFingerprint: previewFingerprint({ yaml: inferred.yaml, existing: inferred.existing.status }),
+      targets: [join(repo, ".project")],
+    }),
   }, async () => {
     if (inferred.existing.status === "loaded") {
       return {
@@ -1119,6 +1130,10 @@ export async function developerClaimOp(ctx: OpContext) {
     repository: repo,
     workItemId: ctx.wp,
     requireYes: false,
+    describe: () => ({
+      summary: `Claim work package ${ctx.wp}`,
+      description: [`Jira work package: ${ctx.wp}`, `Claimed by: ${ctx.actor ?? "the current Jira user"}`, "Effect: records the claim on the work package (idempotent for the same actor). Does not start Quality and does not change any code."].join("\n"),
+    }),
   }, () => withProvider({ ...ctx, repo }, async (p) => {
     const user = await p.getCurrentUser();
     return claimWorkPackage({
@@ -1144,6 +1159,10 @@ export async function developerReleaseOp(ctx: OpContext) {
     repository: repo,
     workItemId: ctx.wp,
     requireYes: true,
+    describe: () => ({
+      summary: `Force-release the claim on ${ctx.wp}`,
+      description: [`Jira work package: ${ctx.wp}`, "Effect: removes the current claim so another developer can claim it."].join("\n"),
+    }),
   }, () => withProvider({ ...ctx, repo }, async (p) => {
     await releaseWorkPackage({
       provider: p,
@@ -1169,6 +1188,10 @@ export async function developerCompleteOp(ctx: OpContext): Promise<DeveloperComp
     repository: repo,
     workItemId: wp,
     requireYes: true,
+    describe: () => ({
+      summary: `Complete development of ${wp}`,
+      description: [`Jira work package: ${wp}`, "Effect: runs the required verification, persists the evidence and the Developer to Quality handoff. Keeps Jira In Progress; does not start Quality and does not mark the issue Done."].join("\n"),
+    }),
   }, () => withProvider({ ...ctx, repo }, (p) =>
     developerCompleteWp({
       provider: p,
@@ -1433,6 +1456,24 @@ export async function qualityApplyOp(ctx: OpContext): Promise<QualityApplyResult
     repository: repo,
     workItemId: workPackageId,
     requireYes: true,
+    // what the user approves is the plan this dry run produces: every Jira change, in full
+    describe: () => withProvider({ ...ctx, repo }, async (p) => {
+      try {
+        const dry = await previewQualityApply({ provider: p, repo, workPackageId, reviewId: ctx.reviewId });
+        return {
+          summary: `Apply Quality review ${dry.plan.reviewId} (${dry.plan.verdict}) to ${dry.plan.jiraWorkPackageKey}`,
+          description: [
+            `Work package: ${dry.plan.jiraWorkPackageKey} (currently ${dry.plan.currentStatus ?? "unknown"})`,
+            `Verdict: ${dry.plan.verdict}; bugs proposed: ${dry.plan.bugsProposed}`,
+            "Changes, in order:",
+            ...dry.plan.actions.map((a) => `- ${a.kind} ${a.issueKey}: ${a.operation}${a.toStatus ? ` -> ${a.toStatus}` : ""}${a.bugSummary ? ` (${a.bugSummary})` : ""}${a.alreadySatisfied ? " [already done]" : ""}`),
+          ].join("\n"),
+          previewFingerprint: dry.previewFingerprint,
+        };
+      } catch (err) {
+        mapQualityReviewError(err);
+      }
+    }),
   }, () => withProvider({ ...ctx, repo }, async (p) => {
     try {
       const { markQualityReviewApplied } = await import("./quality-lifecycle.js");
