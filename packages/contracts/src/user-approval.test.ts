@@ -73,6 +73,16 @@ describe("asking the user through the client", () => {
     expect(result.code).toBe("APPROVAL_REJECTED");
   });
 
+  it("a dialog that is unavailable for this connection is handled as no dialog, never as a yes", async () => {
+    const result = await withApprovalChannel(channel({ answer: "unavailable" }), () => obtainUserApproval(request())).catch((e) => e);
+    expect(result.code).toBe("APPROVAL_REQUIRED");
+    const relayed = await withApprovalChannel(channel({ answer: "unavailable" }), () => obtainUserApproval(request(), { confirmation: "YES" }));
+    expect(relayed.assurance).toBe("unverified");
+    process.env.PRAXIS_APPROVAL_STRICT = "1";
+    const strictResult = await withApprovalChannel(channel({ answer: "unavailable" }), () => obtainUserApproval(request(), { confirmation: "YES" })).catch((e) => e);
+    expect(strictResult.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+  });
+
   it("confirmation=NO is a rejection even without a dialog", async () => {
     const result = await obtainUserApproval(request(), { confirmation: "NO" }).catch((e) => e);
     expect(result.code).toBe("APPROVAL_REJECTED");

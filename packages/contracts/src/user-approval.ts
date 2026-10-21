@@ -47,7 +47,12 @@ export type ApprovalRequest = {
   risks?: string[];
 };
 
-export type AskAnswer = { answer: "approve" | "reject" | "dismiss"; reason?: string };
+/**
+ * approve / reject / dismiss: the user's answer in the client's dialog.
+ * unavailable: the client could not show the dialog for this connection (a protocol revision without it); the
+ * request is then handled as a client with no dialog, never as a yes.
+ */
+export type AskAnswer = { answer: "approve" | "reject" | "dismiss" | "unavailable"; reason?: string };
 
 /** A way to put an ApprovalRequest in front of the person. Supplied by the MCP client integration. */
 export interface UserApprovalChannel {
@@ -189,14 +194,16 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
     throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected. Nothing was changed.`, { rejected: true });
   }
   const channel = currentApprovalChannel();
+  let answer: AskAnswer | undefined;
   if (channel) {
-    let answer: AskAnswer;
     try {
       answer = await channel.ask(request);
     } catch (error) {
       logDecision(options.repo, { ...base, decision: "refused", channel: "client-elicitation", assurance: "client-ui", reason: error instanceof Error ? error.message : String(error) });
       throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`);
     }
+  }
+  if (answer && answer.answer !== "unavailable") {
     if (answer.answer === "approve") {
       const approval = createUserApproval({ request, channel: "client-elicitation", reason: answer.reason });
       logDecision(options.repo, { ...base, decision: "approved", channel: "client-elicitation", assurance: "client-ui", ...(answer.reason ? { reason: answer.reason } : {}) });
