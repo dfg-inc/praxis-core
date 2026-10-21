@@ -48,11 +48,11 @@ export const stage = (repo, file, text) => {
   git(repo, "add", file);
 };
 
-export async function startService({ root, repos, mode = "development", probe, providersConfig, extraConfig = {}, state } = {}) {
+export async function startService({ root, repos, mode = "development", probe, providersConfig, extraConfig = {}, state, fixedPort } = {}) {
   const base = root ?? mkdtempSync("/tmp/pas-");
   const stateDir = state ?? join(base, "state");
   const endpoint = join(base, "s.sock");
-  const port = await freePort();
+  const port = fixedPort ?? (await freePort());
   const origin = `http://localhost:${port}`;
   const config = {
     mode,

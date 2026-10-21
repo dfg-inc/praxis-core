@@ -670,6 +670,8 @@ export {
 
 export {
   approvalServiceDelegate,
+  executionIdFor,
+  recordedExecution,
   gitExecutorDelegate,
   withGitExecutorDelegate,
   type DelegatedCommit,

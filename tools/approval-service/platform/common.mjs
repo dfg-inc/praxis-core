@@ -50,8 +50,15 @@ export function posixIsolationChecks({ paths, config, env = process.env, execArg
     /* keep default */
   }
   out.push(check("state-private", stateOk, stateDetail));
-  const code = chainProblems(paths.codeDir, uid);
-  out.push(check("code-protected", code.length === 0, code.length ? code.slice(0, 3).join("; ") : `${paths.codeDir} and its parents are not writable by other principals`));
+  // What is actually executing (resolved through any "current" link) and the install directory must both be unwritable by others.
+  let running = process.argv[1] ?? paths.codeDir;
+  try {
+    running = realpathSync(running);
+  } catch {
+    /* keep the given path */
+  }
+  const code = [...chainProblems(paths.codeDir, uid), ...chainProblems(running, uid), ...(process.execPath ? chainProblems(realpathSync(process.execPath), uid) : [])];
+  out.push(check("code-protected", code.length === 0, code.length ? [...new Set(code)].slice(0, 3).join("; ") : `${running}, ${paths.codeDir} and the Node runtime are not writable by other principals`));
   const cfg = chainProblems(paths.configFile, uid);
   out.push(check("config-protected", cfg.length === 0, cfg.length ? cfg.slice(0, 3).join("; ") : `${paths.configFile} and its parents are not writable by other principals`));
   const socketDir = dirname(paths.endpoint);

@@ -26,7 +26,8 @@ const Ref = z
   .regex(/^[A-Za-z0-9._\/-]+$/, "unsupported characters in a ref name")
   .refine((ref) => !ref.startsWith("-") && !ref.startsWith("/") && !ref.endsWith("/") && !ref.endsWith(".lock") && !ref.endsWith(".") && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{"), "not a valid branch name");
 const RelPath = z.string().min(1).max(1024);
-const RemoteName = z.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/);
+const RemoteName = z.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/).refine((n) => !["__proto__", "constructor", "prototype"].includes(n), "reserved name");
+const WorkItem = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/, "work item ids use letters, digits and . _ : / -");
 
 const CommitParams = z.object({ message: z.string().min(1).max(8000), branch: Ref.optional(), paths: z.array(RelPath).min(1).max(500).optional() }).strict();
 const PushParams = z.object({ remote: RemoteName, branch: Ref }).strict();
@@ -40,18 +41,28 @@ const MergeRequestParams = z
   })
   .strict();
 
+const Id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 const Common = {
   protocol: z.literal(APPROVAL_SERVICE_PROTOCOL),
+  /**
+   * Chosen by the caller, stable for one logical operation. The service binds it to the first request it was used for:
+   * the same id returns that request's recorded state or result (even after the repository has moved on), and the same
+   * id with different parameters is refused as a changed plan.
+   */
+  executionId: Id.optional(),
   /** Opaque correlation id echoed in the reply; never trusted for anything. */
   id: z.string().max(64).optional(),
 };
 
 export const SubmitRequestSchema = z.discriminatedUnion("operation", [
-  z.object({ ...Common, op: z.literal("submit"), operation: z.literal("git_commit"), repository: RepoPath, workItemId: z.string().min(1).max(200), params: CommitParams }).strict(),
-  z.object({ ...Common, op: z.literal("submit"), operation: z.literal("git_push"), repository: RepoPath, workItemId: z.string().min(1).max(200), params: PushParams }).strict(),
-  z.object({ ...Common, op: z.literal("submit"), operation: z.literal("merge_request"), repository: RepoPath, workItemId: z.string().min(1).max(200), params: MergeRequestParams }).strict(),
+  z.object({ ...Common, op: z.literal("submit"), operation: z.literal("git_commit"), repository: RepoPath, workItemId: WorkItem, params: CommitParams }).strict(),
+  z.object({ ...Common, op: z.literal("submit"), operation: z.literal("git_push"), repository: RepoPath, workItemId: WorkItem, params: PushParams }).strict(),
+  z.object({ ...Common, op: z.literal("submit"), operation: z.literal("merge_request"), repository: RepoPath, workItemId: WorkItem, params: MergeRequestParams }).strict(),
 ]);
-export const StatusRequestSchema = z.object({ ...Common, op: z.literal("status"), requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/) }).strict();
+export const StatusRequestSchema = z
+  .object({ ...Common, op: z.literal("status"), requestId: Id.optional() })
+  .strict()
+  .refine((r) => Boolean(r.requestId) !== Boolean(r.executionId), "give exactly one of requestId or executionId");
 export const ExecuteRequestSchema = z.object({ ...Common, op: z.literal("execute"), requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/) }).strict();
 export const HealthRequestSchema = z.object({ ...Common, op: z.literal("health") }).strict();
 
@@ -88,7 +99,9 @@ export type ServiceHealth = {
   isolation: { verified: boolean; principal: string; checks: { id: string; ok: boolean; detail: string }[] };
   operatorChannel: { url: string; enrolledAuthenticators: number };
   pending: number;
-  auditChain: { ok: boolean; entries: number };
+  auditChain: { ok: boolean; entries: number; head?: string | null };
+  /** The chain and the ledger compared with their independent anchors. ok=false means truncation, rollback or a deleted sink. */
+  integrity?: { ok: boolean; problems: string[]; anchored: number };
   ledgerEntries: number;
 };
 

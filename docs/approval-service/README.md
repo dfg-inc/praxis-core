@@ -11,14 +11,14 @@ plan binding check (`assertTokenBindsPlan`), the replay ledger, and the producti
 
 ## Status per platform (stated separately, on purpose)
 
-| Platform | Code and artifacts | Tested here | Isolation boundary proven |
+| Platform | Installer artifacts | What has actually been run | OS isolation boundary |
 |---|---|---|---|
-| macOS (Apple Silicon, Intel) | service, launchd daemon plist, `.pkg` builder, install/uninstall/migration plans | service logic, protocol, executor, WebAuthn verification, installer artifacts: yes, unprivileged, on Apple Silicon | **No.** Needs the owner's one-time administrator install. BLOCKED pending operator. |
-| Linux (systemd) | unit and install plan generated | static only | **UNTESTED.** Not built or run on Linux. |
-| Windows 10/11 | registration script and plan generated; no isolation probe, no service wrapper, no pipe ACL | none | **UNTESTED.** Interfaces and text only; see "Windows" below. |
+| macOS (Apple Silicon, Intel) | launchd daemon plist, `.pkg` with preinstall/postinstall/ctl (install, upgrade, backup, rollback, uninstall, health), unsigned | service logic, protocol, executor, WebAuthn verification, package build and static checks, on Apple Silicon. **No launchd daemon has been started under a separate macOS account.** | **OS-ISOLATION BLOCKED pending operator** (needs your one-time administrator install) |
+| Linux (systemd) | self-contained `.tar.gz` (official Node bundled), `install.sh` (check, install, upgrade, backup, rollback, health, uninstall), hardened systemd unit | the installer, upgrade, rollback, uninstall and the full approve/reject/replay flow **in a Linux container** with separate uids (`npm run accept:approval-service-linux`: LINUX-CONTAINER PASS 44/44), production mode, isolation verified, agent-side client judging the service isolated | **LINUX-CONTAINER PASS**: uid separation on a real Linux kernel. **systemd itself (unit sandboxing, `RuntimeDirectory`, restart) was not run: UNTESTED on a systemd host.** |
+| Windows 10/11 | zip with `install.ps1`, a C# service host (compiled at install time), pipe DACL code, ACL-based probe | **Only the `icacls` parsing logic is unit-tested.** The installer, the service host and the pipe DACL have never run on Windows. | **UNTESTED. Not supported.** |
 
-A platform is not called secure until its trust boundary has been exercised on that OS. Nothing in this repository
-does that for Linux or Windows, and the macOS boundary test has not run yet because it needs the installed service.
+A platform is not called ready unless the service has actually run on it. Read the table as the whole truth: macOS is built but
+not installed; Linux has run in a container; Windows has not run at all.
 
 ## Components
 
@@ -64,8 +64,11 @@ property rather than an accident: any process that can connect (including the ag
   repository, revision, path set or message cannot be used for another.
 * **A changed plan is not executed.** At execution the service re-derives the live state and compares it with the
   approved content and the approved plan text. A mismatch is refused before the approval is consumed.
-* **Replay is idempotent.** A completed approval returns the recorded result; concurrent executes make one change.
-  A failed or interrupted execution consumes the approval and reports whether anything changed; it is never silently retried.
+* **Replay is idempotent, by execution id.** The caller names one logical operation with an `executionId`. The service binds it to
+  the first request it was used for: asking again returns that request's recorded result **even after the repository has moved on**
+  (a commit changes HEAD, a push changes the remote), and the same id with different parameters is refused as `CHANGED_PLAN`.
+  Concurrent executes make one change. A failed execution that changed nothing may be asked for again (a fresh approval); one that
+  ended in uncertainty (`requires_reconciliation`) may not, until the owner has looked.
 * **No machine approval.** The service signs only `webauthn:*` channels and verifies the channel again at execution.
   There is no test or machine approval path in it. (The test suite approves through the real WebAuthn page with a
   software authenticator, which is labelled test-only.)
@@ -104,8 +107,9 @@ Stated limits (residual risks), none hidden:
 * **Enrollment is a trust root.** Whoever can open an enrollment window (write to the service's state, i.e. the
   service principal or an administrator) can add an authenticator that approves everything. An administrator or kernel
   compromise is out of scope. A virtual authenticator is blocked only while enrollment is closed and its code unknown.
-* **The audit chain detects edits and removals in the middle, not truncation of its tail,** unless its head hash (shown in `health`) is recorded elsewhere. No external anchor exists yet (finding F-NAS-006).
-* **Review coverage is partial.** The independent review stopped early; packaging, providers and the operator page's XSS/CSRF/DNS-rebinding behaviour were not independently reviewed (finding F-NAS-005). Do not install on the strength of this document alone.
+* **Audit pinning has limits.** Signed head records go to independent sinks (`auditAnchorDirs`) and an off-host witness can be exported; an attacker who can rewrite the chain, every sink and the signing key together still wins. See SECURITY-REVIEW.md.
+* **Review coverage.** Two independent read-only reviews and the regression tests are in SECURITY-REVIEW.md; neither is a human security review, and the Windows pieces were never run.
+* **The service shares a repository's `.git` with the agent.** It needs an inheritable write ACL there (per repository, by the owner); files and directories each side creates must stay writable by the other. A repository with unusual Git settings (LFS, worktree configs) is refused.
 * **Repositories with other Git settings are refused** (Git LFS, worktree configs): only an explicit list of settings is accepted.
 * **UV is not attestation.** The page requires user verification, but enrollment accepts `attestation: none`. Praxis
   does not claim the authenticator is hardware-backed.
@@ -128,11 +132,13 @@ Test categories, kept apart so a simulation is never mistaken for proof:
 | Category | Where | Proves |
 |---|---|---|
 | Unit / simulated | `service.test.mjs`, in-process service, software authenticator | logic, protocol, executor, WebAuthn verification, fail-closed behaviour |
+| Operator page review | `operator-ui.test.mjs` | XSS, CSRF, Host/Origin, challenge binding, replay, enrollment limits |
 | Real service process | `cli.test.mjs` | the service as its own process, its CLI, socket, operator page, honest unisolated report |
 | Built artifacts | `packaging/artifact.test.mjs` | production bundle refuses to start on an unverified host and has no dev mode; pkg contents |
 | Real Runtime (MCPB) | `praxis-runtime` `accept:service-delegation` | the Runtime's own tools delegate to the service and never hold authority |
-| Independent OS identity | [ISOLATION-ACCEPTANCE.md](ISOLATION-ACCEPTANCE.md) | **BLOCKED pending operator** |
-| Human Touch ID / security key | [ISOLATION-ACCEPTANCE.md](ISOLATION-ACCEPTANCE.md) | **BLOCKED pending operator** |
+| Linux container, separate uids | `npm run accept:approval-service-linux` (needs Docker and the `node:22-bookworm` image) | installer lifecycle and the uid boundary on Linux: PASS 44/44; **not** systemd, **not** a person |
+| Independent OS identity (macOS, Windows) | [ISOLATION-ACCEPTANCE.md](ISOLATION-ACCEPTANCE.md) | **OS-ISOLATION BLOCKED pending operator** |
+| Human Touch ID / security key | [ISOLATION-ACCEPTANCE.md](ISOLATION-ACCEPTANCE.md) | **HUMAN-APPROVAL BLOCKED pending operator** |
 
 ## Windows
 

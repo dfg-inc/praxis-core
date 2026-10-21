@@ -5,8 +5,9 @@
  * names refer to the 18 required scenarios of the Native Approval Service milestone.
  */
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { get as httpGet } from "node:http";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { assessApprovalService, callApprovalService } from "../../packages/contracts/dist/index.js";
@@ -54,7 +55,7 @@ describe("1-4: submit, reject, approve, execute one commit", () => {
     assert.equal(plan.workItemIds[0], "WI-1");
     assert.equal(plan.repositories[0], realpathSync(a.dir));
     assert.ok(plan.actions[0].targets.some((t) => t.startsWith("tree:")));
-    assert.ok(plan.actions[0].targets.some((t) => t.startsWith("feature.txt@")));
+    assert.ok(plan.actions[0].targets.some((t) => t.startsWith('"feature.txt"@')));
     assert.ok(plan.actions[0].targets.includes("branch:main"));
     assert.equal(head(a.dir), before, "submitting changes nothing");
     // not approved: execute is refused and changes nothing
@@ -272,8 +273,10 @@ describe("14-16: concurrency, restart, fail closed", () => {
     stage(b.dir, "b.txt", "b\n");
     const [sa, sb] = await Promise.all([h.call(commitRequest(a.dir, "A")), h.call(commitRequest(b.dir, "B"))]);
     // one authenticator signs one assertion at a time (its counter must advance in order); execution below is concurrent
-    assert.equal((await h.decide(sa.requestId)).status, 200);
-    assert.equal((await h.decide(sb.requestId)).status, 200);
+    const da = await h.decide(sa.requestId);
+    assert.equal(da.status, 200, JSON.stringify([sa, da]));
+    const db = await h.decide(sb.requestId);
+    assert.equal(db.status, 200, JSON.stringify([sb, db]));
     const [ra, rb] = await Promise.all([h.call({ op: "execute", requestId: sa.requestId }), h.call({ op: "execute", requestId: sb.requestId })]);
     assert.equal(ra.ok && rb.ok, true, JSON.stringify([ra, rb]));
     assert.equal(git(a.dir, "log", "-1", "--format=%s"), "A");
@@ -508,6 +511,264 @@ describe("providers", () => {
     for (const [kind, code] of [["jira", "PROVIDER_BLOCKED"], ["unknown", "PROVIDER_NOT_AUTHORIZED"], ["fixture", "PROVIDER_NOT_AUTHORIZED"]]) {
       h.config.repositories[0].provider = { kind, instanceId: "fixture/demo" };
       assert.equal((await mr()).code, code, kind);
+    }
+  });
+});
+
+describe("idempotency by execution id (commit, push, merge request)", () => {
+  test("the same execution id returns the recorded result after HEAD and the remote moved on; a changed plan is refused", async () => {
+    const { a, h } = await world({ providersConfig: { fixture: { instances: { "fixture/demo": { actions: ["create_merge_request"] } } } } });
+    h.config.repositories[0].provider = { kind: "fixture", instanceId: "fixture/demo" };
+    git(a.dir, "checkout", "-q", "-b", "feature/idem");
+    stage(a.dir, "i.txt", "i\n");
+    const run = async (message, extra, executionId) => {
+      const submitted = await h.call({ ...message, ...(executionId ? { executionId } : {}) });
+      assert.equal(submitted.ok, true, JSON.stringify(submitted));
+      await h.decide(submitted.requestId);
+      const done = await h.call({ op: "execute", requestId: submitted.requestId });
+      assert.equal(done.ok, true, JSON.stringify(done));
+      return { submitted, done, extra };
+    };
+    // commit
+    const commitMsg = { ...commitRequest(a.dir, "idem commit"), params: { message: "idem commit", paths: ["i.txt"] } };
+    const c = await run(commitMsg, null, "ex-commit-1");
+    const headAfter = head(a.dir);
+    assert.equal(c.done.result.commit, headAfter);
+    // HEAD has moved: the same execution id still returns the recorded commit and creates nothing
+    const again = await h.call({ ...commitMsg, executionId: "ex-commit-1" });
+    assert.equal(again.state, "completed");
+    assert.equal(again.result.commit, headAfter);
+    assert.equal(head(a.dir), headAfter);
+    assert.equal(git(a.dir, "rev-list", "--count", "HEAD"), "2");
+    const byStatus = await h.call({ op: "status", executionId: "ex-commit-1" });
+    assert.equal(byStatus.result.commit, headAfter);
+    // a changed plan under the same id is refused, and nothing is proposed
+    const changed = await h.call({ ...commitMsg, params: { message: "a different message", paths: ["i.txt"] }, executionId: "ex-commit-1" });
+    assert.equal(changed.code, "CHANGED_PLAN");
+    const changedRepo = await h.call({ ...commitMsg, repository: join(a.dir, "."), params: { ...commitMsg.params, branch: "feature/other" }, executionId: "ex-commit-1" });
+    assert.equal(changedRepo.code, "CHANGED_PLAN");
+    // push
+    const pushMsg = { op: "submit", operation: "git_push", repository: a.dir, workItemId: "WI-1", params: { remote: "origin", branch: "feature/idem" } };
+    const p = await run(pushMsg, null, "ex-push-1");
+    const remoteBefore = git(a.remote, "rev-parse", "refs/heads/feature/idem");
+    git(a.dir, "commit", "-q", "--allow-empty", "-m", "local follow-up");
+    const pushAgain = await h.call({ ...pushMsg, executionId: "ex-push-1" });
+    assert.equal(pushAgain.state, "completed");
+    assert.equal(pushAgain.result.pushed, p.done.result.pushed);
+    assert.equal(git(a.remote, "rev-parse", "refs/heads/feature/idem"), remoteBefore, "nothing was pushed a second time");
+    assert.equal((await h.call({ ...pushMsg, params: { remote: "origin", branch: "main" }, executionId: "ex-push-1" })).code, "CHANGED_PLAN");
+    // merge request: the source branch has moved since, the recorded result is still returned and no second request is made
+    git(a.dir, "push", "-q", a.remote, "HEAD:refs/heads/feature/idem");
+    const mrMsg = { op: "submit", operation: "merge_request", repository: a.dir, workItemId: "WI-1", params: { remote: "origin", sourceBranch: "feature/idem", targetBranch: "main", title: "T" } };
+    const m = await run(mrMsg, null, "ex-mr-1");
+    git(a.dir, "commit", "-q", "--allow-empty", "-m", "moves HEAD again");
+    const mrAgain = await h.call({ ...mrMsg, executionId: "ex-mr-1" });
+    assert.equal(mrAgain.state, "completed");
+    assert.equal(mrAgain.result.url, m.done.result.url);
+    assert.equal(readdirSync(join(h.stateDir, "providers")).filter((f) => f.startsWith("mr-")).length, 1, "one merge request in total");
+    // no approval branches or refs were ever created in the repository
+    assert.ok(!/approv/i.test(git(a.dir, "for-each-ref", "--format=%(refname)")));
+  });
+
+  test("an unknown execution id has no recorded state; a rejected request stays rejected under its id", async () => {
+    const { a, h } = await world();
+    assert.equal((await h.call({ op: "status", executionId: "ex-nothing" })).code, "REQUEST_NOT_FOUND");
+    stage(a.dir, "r.txt", "r\n");
+    const s = await h.call({ ...commitRequest(a.dir), executionId: "ex-rej" });
+    await h.decide(s.requestId, "reject");
+    const again = await h.call({ ...commitRequest(a.dir), executionId: "ex-rej" });
+    assert.equal(again.state, "rejected");
+    assert.equal((await h.call({ op: "status", requestId: s.requestId, executionId: "ex-rej" })).code, "BAD_REQUEST");
+  });
+});
+
+describe("audit and ledger integrity: truncation, rollback, concurrent writers", () => {
+  const settle = async (h) => {
+    await h.close();
+  };
+  const restart = (h, extra = {}) => startService({ root: mkdtempSync("/tmp/pas-"), state: h.stateDir, repos: h.config.repositories, extraConfig: { operator: { port: h.port, origin: h.origin }, ...extra } });
+
+  async function usedService(extraConfig = {}) {
+    const w = await world({ extraConfig });
+    stage(w.a.dir, "n.txt", "n\n");
+    const s = await w.h.call(commitRequest(w.a.dir));
+    await w.h.decide(s.requestId);
+    assert.equal((await w.h.call({ op: "execute", requestId: s.requestId })).ok, true);
+    return { ...w, s };
+  }
+
+  test("a truncated audit tail is detected at start and the service does not serve", async () => {
+    const { h } = await usedService();
+    const file = h.service.audit.file;
+    const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
+    assert.ok(lines.length >= 5);
+    await settle(h);
+    writeFileSync(file, `${lines.slice(0, -2).join("\n")}\n`); // the chain is still internally consistent
+    await assert.rejects(() => restart(h), /INTEGRITY_FAILED|truncated or rolled back/);
+  });
+
+  test("rolling the whole state directory back is caught by an independent sink", async () => {
+    const sink = mkdtempSync("/tmp/pas-sink-");
+    const { h } = await usedService({ auditAnchorDirs: [sink] });
+    const snapshotFile = readFileSync(h.service.audit.file, "utf8").split("\n").filter(Boolean).slice(0, 3).join("\n") + "\n";
+    await settle(h);
+    // an attacker restores an older audit chain AND the matching older state/anchors, but cannot reach the other sink
+    writeFileSync(h.service.audit.file, snapshotFile);
+    rmSync(join(h.stateDir, "anchors"), { recursive: true, force: true });
+    await assert.rejects(() => restart(h, { auditAnchorDirs: [sink] }), /truncated or rolled back/);
+  });
+
+  test("a deleted anchor sink, a forged anchor and a rolled-back ledger are all detected", async () => {
+    const sink = mkdtempSync("/tmp/pas-sink-");
+    const { h, s } = await usedService({ auditAnchorDirs: [sink] });
+    await settle(h);
+    rmSync(join(sink, "latest.json"));
+    await assert.rejects(() => restart(h, { auditAnchorDirs: [sink] }), /sink was deleted|INTEGRITY_FAILED/);
+    // restore the sink with a forged anchor
+    writeFileSync(join(sink, "latest.json"), JSON.stringify({ seq: 1, hash: "sha256:" + "0".repeat(64), ledgerCount: 0, at: new Date().toISOString(), signature: "AAAA" }));
+    await assert.rejects(() => restart(h, { auditAnchorDirs: [sink] }), /invalid signature|INTEGRITY_FAILED/);
+    // an honest sink from the state dir, but the consumed approval is erased from the ledger (a replay attempt)
+    rmSync(sink, { recursive: true, force: true });
+    for (const f of readdirSync(join(h.stateDir, "ledger"))) rmSync(join(h.stateDir, "ledger", f));
+    await assert.rejects(() => restart(h), /INTEGRITY_FAILED|ledger/);
+    assert.ok(s);
+  });
+
+  test("an anchor mismatch found while running refuses execution", async () => {
+    const { a, h } = await world();
+    stage(a.dir, "m.txt", "m\n");
+    const s = await h.call(commitRequest(a.dir));
+    await h.decide(s.requestId);
+    const file = h.service.audit.file;
+    const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
+    writeFileSync(file, `${lines.slice(0, -1).join("\n")}\n`);
+    const run = await h.call({ op: "execute", requestId: s.requestId });
+    assert.equal(run.code, "APPROVAL_INTEGRITY_FAILED");
+    assert.equal(git(a.dir, "rev-list", "--count", "HEAD"), "1");
+    assert.equal((await h.call({ op: "health" })).health.integrity.ok, false);
+  });
+
+  test("concurrent writers (many requests at once plus a second process appending) keep one valid chain", async () => {
+    const { a, h } = await world();
+    stage(a.dir, "c.txt", "c\n");
+    const { openEnrollmentWindow } = await import("./lib/enroll.mjs");
+    await Promise.all([
+      ...Array.from({ length: 25 }, () => h.call({ op: "approve" })),
+      ...Array.from({ length: 5 }, (_, i) => h.call({ ...commitRequest(a.dir, `m${i}`), executionId: `ex-c-${i}` })),
+      (async () => {
+        for (let i = 0; i < 5; i += 1) openEnrollmentWindow(h.stateDir, h.origin);
+      })(),
+    ]);
+    assert.equal(h.service.audit.verify().ok, true);
+    assert.equal(h.service.anchors.check().ok, true);
+    const seqs = h.service.audit.entries().map((e) => e.seq);
+    assert.deepEqual(seqs, seqs.map((_, i) => i + 1));
+  });
+
+  test("a witness the owner stored elsewhere catches a rollback that rewrote every sink", async () => {
+    const { verifyWitness } = await import("./lib/anchor.mjs");
+    const { h } = await usedService();
+    const witness = h.service.anchors.exportWitness();
+    const entries = h.service.audit.entries();
+    assert.equal(verifyWitness(witness, entries).ok, true);
+    assert.equal(verifyWitness(witness, entries.slice(0, witness.seq - 2)).ok, false);
+    assert.equal(verifyWitness({ ...witness, hash: "sha256:" + "1".repeat(64) }, entries).ok, false);
+    assert.equal(verifyWitness({ ...witness, seq: witness.seq + 1 }, entries).ok, false);
+  });
+});
+
+describe("review regressions: retry after expiry or failure, crash recovery, queue limits, nested links, loopback", () => {
+  test("an approval that expired unused can be proposed and approved again (it used to block the plan for good)", async () => {
+    const { a, h } = await world();
+    stage(a.dir, "x.txt", "x\n");
+    process.env.PRAXIS_APPROVAL_PLAN_TTL_MS = "1000";
+    const first = await h.call(commitRequest(a.dir));
+    process.env.PRAXIS_APPROVAL_PLAN_TTL_MS = "60000";
+    assert.equal((await h.decide(first.requestId)).status, 200);
+    await new Promise((r) => setTimeout(r, 1300));
+    assert.equal((await h.call({ op: "status", requestId: first.requestId })).state, "expired");
+    const again = await h.call(commitRequest(a.dir));
+    assert.equal(again.requestId, first.requestId);
+    assert.equal(again.state, "awaiting-operator");
+    assert.equal((await h.decide(again.requestId)).status, 200, "the second approval must not collide with the expired one");
+    assert.equal((await h.call({ op: "execute", requestId: again.requestId })).ok, true);
+    assert.ok(readdirSync(join(h.stateDir, "archive")).some((f) => f.endsWith(".token")), "the spent token was archived, with an audit entry");
+  });
+
+  test("a push that failed with nothing changed can be asked for again; one that ended uncertain cannot", async () => {
+    const { a, h } = await world();
+    git(a.dir, "checkout", "-q", "-b", "feature/retry");
+    const push = { op: "submit", operation: "git_push", repository: a.dir, workItemId: "WI-1", params: { remote: "origin", branch: "feature/retry" } };
+    const s = await h.call(push);
+    await h.decide(s.requestId);
+    // the remote disappears: the push fails and nothing changed
+    const moved = `${a.remote}.away`;
+    renameSync(a.remote, moved);
+    const failed = await h.call({ op: "execute", requestId: s.requestId });
+    assert.equal(failed.ok, false);
+    assert.equal((await h.call({ op: "status", requestId: s.requestId })).state, "failed");
+    renameSync(moved, a.remote);
+    const retry = await h.call(push);
+    assert.equal(retry.state, "awaiting-operator", JSON.stringify(retry));
+    await h.decide(retry.requestId);
+    assert.equal((await h.call({ op: "execute", requestId: retry.requestId })).ok, true);
+  });
+
+  test("a crash between moving the plan and writing the token puts the plan back for a new decision", async () => {
+    const { a, h } = await world();
+    stage(a.dir, "c.txt", "c\n");
+    const s = await h.call(commitRequest(a.dir));
+    await h.decide(s.requestId);
+    await h.close();
+    rmSync(join(h.stateDir, "shared", "authorizations", `${s.requestId}.token`));
+    const h2 = await startService({ root: mkdtempSync("/tmp/pas-"), state: h.stateDir, repos: h.config.repositories, extraConfig: { operator: { port: h.port, origin: h.origin } } });
+    cleanups.push(() => h2.close());
+    const status = await h2.call({ op: "status", requestId: s.requestId });
+    assert.equal(status.state, "awaiting-operator");
+    assert.ok(h2.service.audit.entries().some((e) => e.event === "recovered-approval-without-token"));
+  });
+
+  test("the queue the owner must read is bounded", async () => {
+    const { a, h } = await world();
+    stage(a.dir, "q.txt", "q\n");
+    let refused;
+    for (let i = 0; i < 55 && !refused; i += 1) {
+      const reply = await h.call({ ...commitRequest(a.dir, `message ${i}`) });
+      if (!reply.ok) refused = reply;
+    }
+    assert.equal(refused?.code, "TOO_MANY_PENDING");
+  });
+
+  test("a symbolic link nested under .git (a branch ref, a reflog) is refused", async () => {
+    const { root, a, h } = await world();
+    stage(a.dir, "n.txt", "n\n");
+    const target = join(root, "elsewhere");
+    mkdirSync(target);
+    symlinkSync(target, join(a.dir, ".git", "refs", "heads", "evil"));
+    assert.equal((await h.call(commitRequest(a.dir))).code, "REPOSITORY_UNSAFE");
+    rmSync(join(a.dir, ".git", "refs", "heads", "evil"));
+    mkdirSync(join(a.dir, ".git", "logs", "refs", "heads"), { recursive: true });
+    symlinkSync(join(h.stateDir, "audit", "chain.jsonl"), join(a.dir, ".git", "logs", "refs", "heads", "feature"));
+    assert.equal((await h.call(commitRequest(a.dir))).code, "REPOSITORY_UNSAFE");
+  });
+
+  test("the operator page is held on both loopback addresses, and the service will not start if another process holds the port on ::1", async () => {
+    const { h } = await world();
+    for (const host of ["127.0.0.1", "::1"]) {
+      const answered = await new Promise((resolve) => {
+        const req = httpGet({ host, port: h.port, path: "/", headers: { host: `localhost:${h.port}` } }, (res) => resolve(res.statusCode));
+        req.on("error", (e) => resolve(e.code));
+      });
+      assert.ok(answered === 200 || (host === "::1" && ["ECONNREFUSED", "EADDRNOTAVAIL", "ENETUNREACH"].includes(answered)), `${host}: ${answered}`);
+    }
+    const squat = createServer();
+    const squatPort = await new Promise((resolve, reject) => {
+      squat.once("error", reject);
+      squat.listen(0, "::1", () => resolve(squat.address().port));
+    }).catch(() => undefined);
+    if (squatPort) {
+      await assert.rejects(() => startService({ fixedPort: squatPort }), /OPERATOR_PORT_TAKEN|EADDRINUSE|another process/);
+      squat.close();
     }
   });
 });

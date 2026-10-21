@@ -1,0 +1,54 @@
+# Approval Service checks per platform. NOT EXECUTED by the author (no CI service was reachable from the development
+# session): treat every job here as unverified until it has run green. The platform-independent logic is the same on all three.
+name: approval-service
+on:
+  pull_request:
+    paths: ["tools/approval-service/**", "tools/broker/**", "packages/contracts/**", ".github/workflows/approval-service.yml"]
+  workflow_dispatch: {}
+
+jobs:
+  logic-linux-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npm run build -w @praxis/contracts
+      - run: npm run test:approval-service
+
+  linux-isolation-acceptance:
+    # A real Linux kernel with separate uids: installer, upgrade, rollback, uninstall, production-mode isolation, approve/reject/replay.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npm run build
+      - run: docker pull node:22-bookworm
+      - run: npm run accept:approval-service-linux
+
+  windows:
+    # EXPERIMENTAL. Runs the portable unit tests and the installer's non-destructive checks. The service-start and pipe-DACL
+    # acceptance (windows-acceptance.ps1) is not written yet: Windows is UNTESTED until it exists and passes.
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npm run build -w @praxis/contracts
+      - run: node --test tools/approval-service/units.test.mjs
+      - shell: pwsh
+        run: |
+          $null = [System.Management.Automation.Language.Parser]::ParseFile("tools/approval-service/packaging/windows/install.ps1", [ref]$null, [ref]$errors)
+          if ($errors.Count -gt 0) { $errors | Out-String | Write-Error; exit 1 }
+      - shell: pwsh
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe /out:$env:RUNNER_TEMP\host.exe /reference:System.ServiceProcess.dll tools/approval-service/packaging/windows/ServiceHost.cs

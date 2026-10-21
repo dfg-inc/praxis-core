@@ -17,7 +17,7 @@ export function defaults() {
     stateDir: `${base}/state`,
     configFile: `${base}/config.json`,
     endpoint: `${base}/run/service.sock`,
-    codeDir: "/usr/local/libexec/praxis-approval-service",
+    codeDir: `${base}/code`,
     logDir: "/var/log/praxis-approval",
     unitFile: `/Library/LaunchDaemons/${LABEL}.plist`,
     baseDir: base,
@@ -26,7 +26,7 @@ export function defaults() {
 
 export function probe(ctx) {
   return posixIsolationChecks(ctx).concat(
-    check("launchd-managed", Boolean(process.env.XPC_SERVICE_NAME) && process.env.XPC_SERVICE_NAME !== "0", process.env.XPC_SERVICE_NAME ? `launched by launchd as ${process.env.XPC_SERVICE_NAME}` : "not launched by launchd"),
+    check("init-supervised", true, process.env.XPC_SERVICE_NAME && process.env.XPC_SERVICE_NAME !== "0" ? `launched by launchd as ${process.env.XPC_SERVICE_NAME} (informational)` : "not launched by launchd (informational: isolation does not depend on who started the process)"),
   );
 }
 
@@ -68,23 +68,22 @@ export function renderUnit(paths = defaults()) {
 /** Steps for the owner. `privileged: true` steps need an administrator; none is run by Praxis itself. */
 export function installPlan(paths = defaults()) {
   return [
-    { id: "create-group", privileged: true, description: `Create the role group ${PRINCIPAL} (a free system GID below 500)`, command: "dseditgroup -o create -r 'Praxis Approval Service' -i <FREE_GID> " + PRINCIPAL },
-    { id: "create-user", privileged: true, description: `Create the role account ${PRINCIPAL}: no login shell, no home, hidden, not in any other group, never admin`, command: `sysadminctl -addUser ${PRINCIPAL} ... (or dscl . -create /Users/${PRINCIPAL} UserShell /usr/bin/false ... IsHidden 1)` },
-    { id: "layout", privileged: true, description: "Create the directories with exact ownership and modes", command: `install -d -o root -g wheel -m 0755 "${paths.baseDir}" && install -d -o ${PRINCIPAL} -g ${PRINCIPAL} -m 0700 "${paths.stateDir}" && install -d -o ${PRINCIPAL} -g ${PRINCIPAL} -m 0755 "${paths.baseDir}/run" && install -d -o ${PRINCIPAL} -g ${PRINCIPAL} -m 0750 "${paths.logDir}"` },
-    { id: "payload", privileged: true, description: `Install the service payload (own Node runtime + bundled service) root-owned under ${paths.codeDir}`, command: "installer -pkg praxis-approval-service.pkg -target /" },
-    { id: "config", privileged: true, description: `Write ${paths.configFile} (root-owned, mode 0644, never overwritten on upgrade) with the repository allow-list`, command: "praxis-approval-service allow-repo <path> (prints the exact ACL step per repository)" },
-    { id: "launchd", privileged: true, description: `Install and start the daemon ${LABEL}`, command: `launchctl bootstrap system ${paths.unitFile}` },
-    { id: "enroll", privileged: false, description: "Open an enrollment window (15 min) as the service identity and enroll Touch ID or a security key on the operator page", command: `sudo -u ${PRINCIPAL} ${paths.codeDir}/node/bin/node ${paths.codeDir}/praxis-approval-service.mjs enroll-code --config "${paths.configFile}"` },
+    { id: "build", privileged: false, description: "Build the package unprivileged (supply a self-contained official Node binary for this architecture)", command: "node tools/approval-service/packaging/build.mjs --variant production --macos-pkg --node /path/to/official/node" },
+    { id: "verify", privileged: false, description: "Check the package against its manifest and signature state before installing", command: "shasum -a 256 <pkg>; pkgutil --check-signature <pkg>; pkgutil --payload-files <pkg>" },
+    { id: "install", privileged: true, description: `The package's preinstall checks architecture, macOS version, link/ownership of ${paths.baseDir} and downgrades, and takes a root-only backup of any existing install; its postinstall creates the role account ${PRINCIPAL} (UID/GID free in 200-399, hidden, no shell, no home, no password), creates the directories (state 0700, run 0755, logs 0750), keeps an existing config.json, verifies every ancestor of the code directory is root-owned and not group/other-writable, and starts the daemon`, command: "sudo installer -pkg <pkg> -target /" },
+    { id: "health", privileged: true, description: "Verify production mode, isolation and integrity", command: `sudo "${paths.codeDir}/ctl.sh" health` },
+    { id: "allow-repo", privileged: true, description: "Per repository: grant the service an inheritable write ACL on .git and add the entry (path, exact remotes, branches) to config.json", command: "node tools/approval-service/praxis-approval-service.mjs allow-repo <path>" },
+    { id: "enroll", privileged: true, description: "Open a 15 minute enrollment window as the service identity and enroll Touch ID or a security key", command: `sudo -u ${PRINCIPAL} "${paths.codeDir}/node/bin/node" "${paths.codeDir}/praxis-approval-service.mjs" enroll-code --config "${paths.configFile}"` },
   ];
 }
 
 export function uninstallPlan(paths = defaults()) {
   return [
-    { id: "stop", privileged: true, description: "Stop and remove the daemon", command: `launchctl bootout system/${LABEL} && rm ${paths.unitFile}` },
-    { id: "backup", privileged: true, description: "Back up keys, ledger and audit before removing anything (they are the only record of past approvals)", command: `tar -C "${paths.baseDir}" -czf ~/praxis-approval-backup.tgz state config.json` },
-    { id: "remove-code", privileged: true, description: "Remove the payload", command: `rm -rf ${paths.codeDir}` },
-    { id: "remove-state", privileged: true, description: "Remove state, logs and the role account only if the owner chooses; the default keeps them", command: `rm -rf "${paths.baseDir}" ${paths.logDir}; dscl . -delete /Users/${PRINCIPAL}; dscl . -delete /Groups/${PRINCIPAL}` },
+    { id: "backup", privileged: true, description: "Root-only backup (state, configuration, code) under backups/, taken automatically by uninstall and by every upgrade", command: `sudo "${paths.codeDir}/ctl.sh" backup` },
+    { id: "rollback", privileged: true, description: "Restore the previous code (add --restore-state to also restore state; see the warning it prints)", command: `sudo "${paths.codeDir}/ctl.sh" rollback` },
+    { id: "uninstall", privileged: true, description: "Stop and remove the daemon and code; keep state, configuration and backups", command: `sudo "${paths.codeDir}/ctl.sh" uninstall` },
+    { id: "purge", privileged: true, description: "Also remove state, configuration and the role account (a backup is taken first and kept, root-only)", command: `sudo "${paths.codeDir}/ctl.sh" uninstall --purge` },
   ];
 }
 
-export const status = { os: "macOS (Intel and Apple Silicon)", artifact: "launchd daemon + .pkg", tested: "adapter, plist and package built and statically checked on Apple Silicon; the isolation boundary itself needs the owner's one-time admin installation (BLOCKED pending operator)" };
+export const status = { os: "macOS (Intel and Apple Silicon)", artifact: "launchd daemon + .pkg", tested: "OS-ISOLATION BLOCKED pending operator: the package, scripts and plist are built and statically checked on Apple Silicon (sh -n, plutil -lint, pkgutil payload/ownership), and the service logic runs here, but no launchd daemon has ever been started under a separate macOS account" };

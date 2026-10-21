@@ -1,6 +1,6 @@
 # Isolation acceptance — tests that need the installed service
 
-Everything here is **BLOCKED pending operator**: it needs the owner to install the service (one-time administrator
+Linux has already run an equivalent of sections A and B (and the approve/reject/replay flow) in a container with real uid separation: `npm run accept:approval-service-linux`, LINUX-CONTAINER PASS 44/44. That is not a substitute for running them on the installed macOS service or on Windows. Everything below is **OS-ISOLATION BLOCKED / HUMAN-APPROVAL BLOCKED pending operator**: it needs the owner to install the service (one-time administrator
 authorization) and, for the last section, to be present with an authenticator. None of it ran in the development
 session, and no simulated test substitutes for it. Run these as the agent's own user (the one Claude runs as), on the
 machine where the service is installed.
@@ -15,7 +15,7 @@ Record the outcome of each in `ISOLATION-RESULTS.md` next to this file (date, ma
 | A2 | `ls "/Library/Application Support/Praxis/ApprovalService/state"` | `Permission denied` |
 | A3 | `echo x >> "/Library/Application Support/Praxis/ApprovalService/state/audit/chain.jsonl"` | `Permission denied` |
 | A4 | `echo x > "/Library/Application Support/Praxis/ApprovalService/config.json"` | `Permission denied` |
-| A5 | `echo x > /usr/local/libexec/praxis-approval-service/praxis-approval-service.mjs` | `Permission denied` |
+| A5 | `echo x > "/Library/Application Support/Praxis/ApprovalService/code/praxis-approval-service.mjs"` | `Permission denied` |
 | A6 | `echo x > "/Library/Application Support/Praxis/ApprovalService/run/service.sock"`; `rm "/Library/Application Support/Praxis/ApprovalService/run/service.sock"` | cannot remove or replace the socket (directory is not writable by you) |
 | A7 | `ps -o user= -p $(pgrep -f praxis-approval-service.mjs)` | `_praxisapproval` |
 | A8 | `kill $(pgrep -f praxis-approval-service.mjs)` | `Operation not permitted` |
@@ -47,3 +47,9 @@ Record the outcome of each in `ISOLATION-RESULTS.md` next to this file (date, ma
    with `attestation: none`, so hardware backing is **not** verified; record only what you observed.
 
 Windows Hello and Linux passkeys/FIDO2 are not exercised by any of this.
+
+## D. Windows (UNTESTED; needs the owner and a Windows machine)
+
+Run `install.ps1 -Check`, `-Install`, `-Health`. Then as an ordinary (non-administrator) user: read `C:\ProgramData\Praxis\ApprovalService\state\trusted\private.pem`
+(expect access denied), write to the code directory and to `config.json` (denied), `Get-Acl \\.\pipe\praxis-approval-service` (expect a DENY for
+NT AUTHORITY\NETWORK and no write-DAC for you), stop the service (denied), and connect to the pipe from a second user. Record the real result of each.

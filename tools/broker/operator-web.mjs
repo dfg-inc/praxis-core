@@ -57,7 +57,7 @@ function writeJsonAtomic(path, value, mode = 0o600) {
   chmodSync(path, mode);
 }
 
-export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, signApproved, rejectPlan, enrollSecret, multiEnroll = false, onEnrolled, now = () => Date.now() }) {
+export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, signApproved, rejectPlan, enrollSecret, multiEnroll = false, onEnrolled, onEvent, now = () => Date.now() }) {
   const base = new URL(origin);
   const rpId = base.hostname;
   const operatorsPath = join(resolve(trustedDir), "operators.json");
@@ -65,6 +65,20 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
   const challenges = new Map();
   // enrollSecret may be a function so a long-running service can open enrollment for a short window and close it again.
   let secret = typeof enrollSecret === "function" ? undefined : enrollSecret;
+  // Wrong enrollment secrets are counted per secret value: five wrong guesses lock that secret until it is replaced.
+  const enrollFailures = new Map();
+  const MAX_ENROLL_FAILURES = 5;
+  function checkEnrollSecret(given) {
+    const expected = currentSecret();
+    if (!expected) throw httpError(403, "ENROLLMENT_CLOSED", "enrollment is not open on this broker");
+    const failures = enrollFailures.get(expected) ?? 0;
+    if (failures >= MAX_ENROLL_FAILURES) throw httpError(429, "ENROLLMENT_LOCKED", "too many wrong enrollment secrets; open a new enrollment window");
+    if (!equalSecret(given, expected)) {
+      enrollFailures.set(expected, failures + 1);
+      onEvent?.("operator-enrollment-refused", { code: "ENROLLMENT_SECRET", failures: failures + 1 });
+      throw httpError(403, "ENROLLMENT_SECRET", "wrong enrollment secret");
+    }
+  }
   const currentSecret = () => (typeof enrollSecret === "function" ? enrollSecret() : secret);
 
   const readOperators = () =>
@@ -105,8 +119,16 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
     for (const [id, record] of challenges) if (record.expires <= now()) challenges.delete(id);
   }
 
+  // The endpoints are reachable by any local process, including the agent, and issuing a challenge needs no credential.
+  // So a plan may hold only a few open decisions (the oldest is dropped): spamming one plan cannot crowd out the owner's
+  // decision, and the total stays bounded by the number of pending plans.
+  const MAX_OPEN_PER_PLAN = 4;
   function issue(record) {
     sweep();
+    if (record.planId) {
+      const open = [...challenges].filter(([, r]) => r.planId === record.planId);
+      for (const [id] of open.slice(0, Math.max(0, open.length - (MAX_OPEN_PER_PLAN - 1)))) challenges.delete(id);
+    }
     if (challenges.size >= MAX_CHALLENGES) throw httpError(429, "TOO_MANY_CHALLENGES", "too many open decisions; try again shortly");
     const id = newNonce();
     challenges.set(id, { ...record, expires: now() + CHALLENGE_TTL_MS });
@@ -176,6 +198,7 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
           storedSignCount: credential.signCount ?? 0,
         });
       } catch (error) {
+        onEvent?.("operator-decision-refused", { planId: record.planId, code: error instanceof WebAuthnError ? error.code : "WEBAUTHN_MALFORMED" });
         if (error instanceof WebAuthnError) throw httpError(403, error.code, error.message);
         throw httpError(400, "WEBAUTHN_MALFORMED", "the assertion could not be read");
       }
@@ -193,8 +216,7 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
     },
 
     "POST /api/enroll/challenge": (body) => {
-      if (!currentSecret()) throw httpError(403, "ENROLLMENT_CLOSED", "enrollment is not open on this broker");
-      if (!equalSecret(body.secret, currentSecret())) throw httpError(403, "ENROLLMENT_SECRET", "wrong enrollment secret");
+      checkEnrollSecret(body.secret);
       const label = String(body.label ?? "operator").slice(0, 40).replace(/[^\w .@-]/g, "") || "operator";
       const challenge = newNonce();
       const challengeId = issue({ type: "enroll", challenge, label });
@@ -215,8 +237,7 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
     },
 
     "POST /api/enroll/finish": (body) => {
-      if (!currentSecret()) throw httpError(403, "ENROLLMENT_CLOSED", "enrollment is not open on this broker");
-      if (!equalSecret(body.secret, currentSecret())) throw httpError(403, "ENROLLMENT_SECRET", "wrong enrollment secret");
+      checkEnrollSecret(body.secret);
       const record = consume(body.challengeId);
       if (record.type !== "enroll") throw httpError(409, "WRONG_CEREMONY", "that challenge was not issued for enrollment");
       let registered;
@@ -353,7 +374,7 @@ if(enroll)enroll.addEventListener('click',async()=>{
     res.end(body);
   };
 
-  const server = createServer((req, res) => {
+  const handler = (req, res) => {
     const finish = (error) => {
       const status = error.status ?? 500;
       send(res, status, JSON.stringify({ ok: false, code: error.code ?? "ERROR", error: status === 500 ? "internal error" : error.message }), "application/json");
@@ -407,9 +428,10 @@ if(enroll)enroll.addEventListener('click',async()=>{
     } catch (error) {
       finish(error);
     }
-  });
+  };
+  const server = createServer(handler);
 
-  return { server, rpId, operatorsPath, openChallenges: () => challenges.size, closeEnrollment: () => (secret = undefined) };
+  return { server, handler, rpId, operatorsPath, openChallenges: () => challenges.size, closeEnrollment: () => (secret = undefined) };
 }
 
 /** Approve at most once per plan, even under a race: the token file is created exclusively. */

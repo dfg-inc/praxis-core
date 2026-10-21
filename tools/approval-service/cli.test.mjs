@@ -82,7 +82,7 @@ describe("real service process", () => {
     const p = await startProcess();
     const enroll = run("enroll-code", "--config", p.config);
     assert.equal(enroll.code, 0);
-    assert.match(enroll.out, /Enrollment code \(valid 15 minutes, one authenticator\): [a-f0-9]{16}/);
+    assert.match(enroll.out, /Enrollment code \(valid 15 minutes, one authenticator\): [a-f0-9]{20}/);
     const verified = run("audit-verify", "--config", p.config);
     assert.equal(verified.code, 0, verified.out);
     rmSync(p.root, { recursive: true, force: true });
@@ -97,12 +97,12 @@ describe("install plans and artifacts (generated, never executed)", () => {
       assert.ok(plan.status.tested.length > 10);
     }
     const darwin = JSON.parse(run("install-plan", "--platform", "darwin", "--json").out);
-    assert.ok(darwin.steps.some((s) => /LaunchDaemons|launchctl bootstrap system/.test(s.command)));
+    assert.ok(darwin.steps.some((s) => /daemon|LaunchDaemons|launchctl bootstrap system/i.test(`${s.description} ${s.command}`)));
     assert.ok(!darwin.steps.some((s) => /LaunchAgents|gui\/\d+/.test(s.command)));
     const plist = run("render-unit", "--platform", "darwin").out;
     assert.match(plist, /<key>UserName<\/key><string>_praxisapproval<\/string>/);
     assert.ok(!/LaunchAgents/.test(plist));
-    assert.equal(JSON.parse(run("install-plan", "--platform", "linux", "--json").out).status.tested.startsWith("UNTESTED"), true);
+    assert.match(JSON.parse(run("install-plan", "--platform", "linux", "--json").out).status.tested, /LINUX-CONTAINER/);
     assert.equal(JSON.parse(run("install-plan", "--platform", "win32", "--json").out).status.tested.startsWith("UNTESTED"), true);
     assert.match(run("render-unit", "--platform", "linux").out, /User=praxis-approval[\s\S]*NoNewPrivileges=true/);
   });

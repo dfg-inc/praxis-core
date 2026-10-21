@@ -42,6 +42,8 @@ import {
   APPROVAL_SERVICE_PROTOCOL,
   SERVICE_OPERATIONS,
   approvalServiceDelegate,
+  executionIdFor,
+  recordedExecution,
   assessApprovalService,
   authorizeGitOperation,
   GitApprovalRequired,
@@ -543,8 +545,15 @@ async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => P
     // owner, and runs the commit / push / merge request itself under its own OS identity. This process only prepares,
     // verifies and keeps its delivery journal; the journal write below runs under the workflow-record lease because
     // it records what the service did, it does not authorize anything.
+    const executionId = executionIdFor({ operation: spec.operation, repository: repo, workItemId: spec.workItemId ?? "", previewFingerprint: ctx.previewFingerprint ?? "" });
+    // The same logical operation, asked again after it completed, returns what the service recorded. It does not matter
+    // that the repository has moved on (a commit changes HEAD): nothing runs a second time.
+    const recorded = await recordedExecution(executionId);
+    if (recorded) {
+      return { ok: true, writeSucceeded: false, verificationStatus: "ok", partial: false, completed: true, replayed: true, executedBy: "approval-service", executionId, serviceResult: recorded } as unknown as T;
+    }
     try {
-      return await runWorkflowRecordWrite(() => withGitExecutorDelegate(approvalServiceDelegate(), write));
+      return await runWorkflowRecordWrite(() => withGitExecutorDelegate(approvalServiceDelegate(undefined, executionId), write));
     } catch (err) {
       if (err instanceof GitApprovalRequired) {
         throw new PraxisOpError(err.code as OpCode, err.message, { details: err.details });

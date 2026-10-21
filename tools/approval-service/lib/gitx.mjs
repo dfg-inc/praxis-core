@@ -36,7 +36,7 @@ const SAFE_LOCAL_KEYS = [
 /** Service-owned git environment. `home` holds the service's own gitconfig and credential helper; nothing is inherited. */
 export function gitEnvironment({ home, pathEnv, extra = {} }) {
   return {
-    PATH: pathEnv || "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+    PATH: pathEnv || "/usr/bin:/bin",
     HOME: home,
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: join(home, "gitconfig"),
@@ -63,17 +63,32 @@ export function hardeningArgs(repo, emptyHooksDir) {
     "-c", "protocol.file.allow=always",
     "-c", "protocol.https.allow=always",
     "-c", "protocol.ssh.allow=always",
+    "-c", "core.sshCommand=",
+    "-c", "core.gitProxy=",
+    "-c", "core.askPass=",
+    "-c", "core.logAllRefUpdates=false",
+    "-c", "core.untrackedCache=false",
+    "-c", "http.proxy=",
+    "-c", "http.extraHeader=",
+    "-c", "http.followRedirects=false",
+    "-c", "diff.external=",
     "-c", "gc.auto=0",
     "-c", "maintenance.auto=false",
   ];
 }
 
-export function runGit({ repo, args, env, emptyHooksDir, input, timeoutMs = 60_000, allowFail = false }) {
+/**
+ * `repo` runs Git inside the agent-writable repository (its .git/config is read). `gitDir` runs against a
+ * service-owned bare "shadow" repository instead, and `neutral` runs outside any repository: in both cases nothing the
+ * agent can edit in the repository's configuration is read, which is what network operations need.
+ */
+export function runGit({ repo, gitDir, neutral, cwd, args, env, emptyHooksDir, input, timeoutMs = 60_000, allowFail = false, extraConfig = [] }) {
   return new Promise((resolvePromise, reject) => {
+    const where = gitDir ? ["--git-dir", gitDir] : neutral ? [] : ["-C", repo];
     const child = execFile(
       "git",
-      [...hardeningArgs(repo, emptyHooksDir), "-C", repo, ...args],
-      { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: "buffer" },
+      [...hardeningArgs(repo ?? gitDir ?? "/nonexistent", emptyHooksDir), ...extraConfig.flatMap((c) => ["-c", c]), ...where, ...args],
+      { env: neutral || gitDir ? { ...env, GIT_CEILING_DIRECTORIES: "/" } : env, cwd: neutral || gitDir ? cwd : undefined, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: "buffer" },
       (error, stdout, stderr) => {
         const out = stdout.toString("utf8");
         const err = stderr.toString("utf8");
@@ -146,17 +161,34 @@ export function assertRepositorySafe(repoPath, { allowed }) {
   }
   // No link anywhere directly under .git: a symlinked refs/, objects/, hooks/, HEAD, config or index would let the
   // service write outside the repository.
-  for (const name of readdirSync(gitDir)) {
-    if (lstatSync(join(gitDir, name)).isSymbolicLink()) throw new GitxError("REPOSITORY_UNSAFE", `.git/${name} is a symbolic link`);
-  }
-  for (const sub of ["refs", "refs/heads", "objects", "info"]) {
-    const st = lstatSync(join(gitDir, sub), { throwIfNoEntry: false });
-    if (st?.isSymbolicLink()) throw new GitxError("REPOSITORY_UNSAFE", `.git/${sub} is a symbolic link`);
-  }
+  assertNoLinksUnder(gitDir);
   if (existsSync(join(gitDir, "info", "attributes")) && readFileSync(join(gitDir, "info", "attributes"), "utf8").trim()) {
     throw new GitxError("REPOSITORY_UNSAFE", ".git/info/attributes is not accepted");
   }
   return { real, entry, gitDir, identity: `${stat.dev}:${stat.ino}` };
+}
+
+/**
+ * Walks .git (not the object payload) and refuses any symbolic link anywhere: git follows links in refs/, logs/ and
+ * objects/ fan-out directories, which would let a service-owned write land outside the repository.
+ */
+export function assertNoLinksUnder(gitDir, { limit = 200_000 } = {}) {
+  let seen = 0;
+  const walk = (dir, rel) => {
+    for (const name of readdirSync(dir)) {
+      if (++seen > limit) throw new GitxError("REPOSITORY_UNSAFE", ".git has too many entries to verify");
+      const path = join(dir, name);
+      const st = lstatSync(path);
+      const here = rel ? `${rel}/${name}` : name;
+      if (st.isSymbolicLink()) throw new GitxError("REPOSITORY_UNSAFE", `.git/${here} is a symbolic link`);
+      // object payloads (loose objects, packs) are data addressed by hash; their directories are still checked above
+      if (st.isDirectory()) {
+        if (rel === "objects" && name !== "info") continue; // fan-out directories were just checked as links; their files are hash-addressed data
+        walk(path, here);
+      }
+    }
+  };
+  walk(gitDir, "");
 }
 
 export async function readLocalConfigProblems({ real, env, emptyHooksDir, remoteUrls = [] }) {

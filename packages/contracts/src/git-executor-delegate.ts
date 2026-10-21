@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { GitApprovalRequired } from "./git-authorization.js";
 import { APPROVAL_SERVICE_PROTOCOL, ApprovalServiceError, assessApprovalService, callApprovalService, type ServiceReply } from "./approval-service.js";
@@ -74,18 +75,34 @@ async function run(what: string, submit: Record<string, unknown>, endpoint: stri
   return (executed.result ?? {}) as Record<string, unknown>;
 }
 
-export function approvalServiceDelegate(endpoint?: string): GitExecutorDelegate {
+/** Stable id of one logical operation: the same request (same preview) always maps to the same id, whatever the repository looks like later. */
+export function executionIdFor(parts: { operation: string; repository: string; workItemId: string; previewFingerprint: string }): string {
+  return `ex-${createHash("sha256").update(JSON.stringify([parts.operation, resolve(parts.repository), parts.workItemId, parts.previewFingerprint])).digest("hex").slice(0, 40)}`;
+}
+
+/** What the service recorded for this execution id, if it ran to completion. Never throws: an unreachable service simply has nothing to replay. */
+export async function recordedExecution(executionId: string, endpoint?: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const reply = await callApprovalService({ op: "status", executionId }, { endpoint, timeoutMs: 5000 });
+    if (reply.ok && reply.state === "completed") return (reply.result ?? {}) as Record<string, unknown>;
+  } catch {
+    /* nothing to replay */
+  }
+  return undefined;
+}
+
+export function approvalServiceDelegate(endpoint?: string, executionId?: string): GitExecutorDelegate {
   return {
     async commit(i) {
-      const result = await run("git commit", { op: "submit", operation: "git_commit", repository: resolve(i.repo), workItemId: i.workItemId, params: { message: i.message, branch: i.branch, paths: i.paths } }, endpoint);
+      const result = await run("git commit", { op: "submit", operation: "git_commit", repository: resolve(i.repo), workItemId: i.workItemId, params: { message: i.message, branch: i.branch, paths: i.paths }, ...(executionId ? { executionId } : {}) }, endpoint);
       return { commitSha: String(result.commit), treeSha: String(result.tree) };
     },
     async push(i) {
-      const result = await run("git push", { op: "submit", operation: "git_push", repository: resolve(i.repo), workItemId: i.workItemId, params: { remote: i.remoteName, branch: i.branch } }, endpoint);
+      const result = await run("git push", { op: "submit", operation: "git_push", repository: resolve(i.repo), workItemId: i.workItemId, params: { remote: i.remoteName, branch: i.branch }, ...(executionId ? { executionId } : {}) }, endpoint);
       return { pushedSha: String(result.pushed) };
     },
     async mergeRequest(i) {
-      const result = await run("opening the merge request", { op: "submit", operation: "merge_request", repository: resolve(i.repo), workItemId: i.workItemId, params: { remote: i.remoteName, sourceBranch: i.sourceBranch, targetBranch: i.targetBranch, title: i.title, body: i.body } }, endpoint);
+      const result = await run("opening the merge request", { op: "submit", operation: "merge_request", repository: resolve(i.repo), workItemId: i.workItemId, params: { remote: i.remoteName, sourceBranch: i.sourceBranch, targetBranch: i.targetBranch, title: i.title, body: i.body }, ...(executionId ? { executionId } : {}) }, endpoint);
       return { id: String(result.id), url: String(result.url) };
     },
   };

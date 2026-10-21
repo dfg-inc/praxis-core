@@ -1,6 +1,6 @@
 /** Focused unit tests of the pure parts: Git configuration screening, remote identity, audit scrubbing, probe logic. */
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import { scrub } from "./lib/audit.mjs";
@@ -98,5 +98,104 @@ describe("posix isolation probe", () => {
     assert.equal(flagged.find((c) => c.id === "clean-environment").ok, false);
     const clean = posixIsolationChecks({ paths: l.paths, config: {}, dockerSockets: [], env: { PATH: "/usr/bin" }, execArgv: [] });
     assert.equal(clean.find((c) => c.id === "clean-environment").ok, true);
+  });
+});
+
+import { remoteUrlProblem, loadConfig } from "./lib/config.mjs";
+
+describe("configuration validation", () => {
+  const bad = ["--upload-pack=evil", "-oProxyCommand=x", "ext::sh -c evil", "fd::3", "ftp://x/y", "git://x/y", "https://token@github.com/o/r.git", "https://u:p@github.com/o/r.git", "ssh://git:secret@host/r", "relative/path", "", "http://x/y", "file:///ok\nbad", "git@host:r so"];
+  for (const url of bad) test(`refuses remote ${JSON.stringify(url)}`, () => assert.ok(remoteUrlProblem(url), url));
+  for (const url of ["https://github.com/o/r.git", "ssh://git@github.com/o/r.git", "git@github.com:o/r.git", "/srv/git/r.git", "file:///srv/git/r.git"]) test(`accepts remote ${url}`, () => assert.equal(remoteUrlProblem(url), undefined));
+
+  const write = (doc) => {
+    const dir = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "pas-cfg-"));
+    const file = join(dir, "config.json");
+    writeFileSync(file, JSON.stringify(doc));
+    return file;
+  };
+  test("a repository without branches, with a reserved remote name or a bad URL is refused", () => {
+    assert.throws(() => loadConfig(write({ mode: "production", repositories: [{ path: "/r", remotes: {} }] }), "linux"), /branches/);
+    assert.throws(() => loadConfig(write({ mode: "production", repositories: [{ path: "/r", branches: ["*"], remotes: { ["__proto__"]: "/x" } }] }), "linux"));
+    assert.throws(() => loadConfig(write({ mode: "production", repositories: [{ path: "/r", branches: ["*"], remotes: { origin: "--upload-pack=x" } }] }), "linux"), /must not start with/);
+    assert.throws(() => loadConfig(write({ mode: "production", providers: { github: { instances: { a: { apiBase: "http://x" } } } } }), "linux"), /https/);
+  });
+  test("in production the document cannot move the state directory, the endpoint or the expected principal; in development it can", () => {
+    const doc = { mode: "production", principal: "someone", paths: { stateDir: "/tmp/x", endpoint: "/tmp/x.sock" }, repositories: [] };
+    const prod = loadConfig(write(doc), "linux");
+    assert.equal(prod.paths.stateDir, "/var/lib/praxis-approval");
+    assert.equal(prod.config.principal, "praxis-approval");
+    const dev = loadConfig(write({ ...doc, mode: "development" }), "linux");
+    assert.equal(dev.paths.stateDir, "/tmp/x");
+    assert.ok(prod.paths.configFile.endsWith("config.json"), "the probe looks at the file that was actually loaded");
+  });
+});
+
+import { existsSync, mkdirSync as mk } from "node:fs";
+import { runGit, prepareHome, assertNoLinksUnder, gitEnvironment } from "./lib/gitx.mjs";
+
+describe("git runs that must not read repository configuration", () => {
+  test("a hostile .git in a parent of the working directory is never consulted by network-style runs", async () => {
+    const root = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "pas-neutral-"));
+    const marker = join(root, "marker");
+    mk(join(root, ".git"), { recursive: true });
+    writeFileSync(join(root, ".git", "config"), `[core]\n\tsshCommand = touch ${marker}\n\trepositoryformatversion = 0\n`);
+    writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+    mk(join(root, ".git", "objects"), { recursive: true });
+    mk(join(root, ".git", "refs"), { recursive: true });
+    const home = join(root, "home");
+    const { emptyHooksDir } = prepareHome(home);
+    const neutral = join(home, "neutral.git");
+    await runGit({ neutral: true, cwd: home, args: ["init", "--bare", "-q", neutral], env: gitEnvironment({ home }), emptyHooksDir });
+    const out = await runGit({ gitDir: neutral, cwd: home, args: ["config", "--list"], env: gitEnvironment({ home }), emptyHooksDir });
+    assert.ok(!/touch/.test(out.stdout), "the parent repository configuration was read");
+    await runGit({ gitDir: neutral, cwd: home, args: ["ls-remote", "--", "ssh://localhost:1/x"], env: gitEnvironment({ home }), emptyHooksDir, allowFail: true, timeoutMs: 5000 });
+    assert.ok(!existsSync(marker), "a configured ssh command ran");
+  });
+
+  test("a symbolic link anywhere under .git is found (refs, logs, nested)", () => {
+    const root = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "pas-links-"));
+    for (const dir of ["refs/heads", "logs/refs/heads", "objects/info", "objects/pack"]) mk(join(root, dir), { recursive: true });
+    assert.doesNotThrow(() => assertNoLinksUnder(root));
+    for (const link of ["refs/heads/x", "logs/refs/heads/y", "objects/info/z", "HEAD2"]) {
+      symlinkSync("/tmp", join(root, link));
+      assert.throws(() => assertNoLinksUnder(root), /symbolic link/, link);
+      rmSync(join(root, link));
+    }
+    mk(join(root, "objects", "ab"), { recursive: true });
+    rmSync(join(root, "objects", "ab"), { recursive: true });
+    symlinkSync("/tmp", join(root, "objects", "ab"));
+    assert.throws(() => assertNoLinksUnder(root), /symbolic link/, "a symlinked object fan-out directory");
+  });
+});
+
+import { parseIcacls, aclProblems, ACCOUNT } from "./platform/win32.mjs";
+
+describe("windows ACL parsing (recorded icacls output; the only part of the Windows adapter that has been run)", () => {
+  const stateGood = `C:\\ProgramData\\Praxis\\ApprovalService\\state NT SERVICE\\PraxisApproval:(OI)(CI)(M)
+                                          NT AUTHORITY\\SYSTEM:(OI)(CI)(F)
+                                          BUILTIN\\Administrators:(OI)(CI)(F)
+
+Successfully processed 1 files; Failed processing 0 files
+`;
+  const codeBad = `C:\\Program Files\\Praxis\\ApprovalService BUILTIN\\Users:(OI)(CI)(M)
+                                       NT AUTHORITY\\SYSTEM:(OI)(CI)(F)
+                                       BUILTIN\\Administrators:(OI)(CI)(F)
+
+Successfully processed 1 files; Failed processing 0 files
+`;
+  test("a private state directory with the service account, SYSTEM and Administrators is accepted", () => {
+    const entries = parseIcacls(stateGood, "C:\\ProgramData\\Praxis\\ApprovalService\\state");
+    assert.deepEqual(entries.map((e) => e.principal), [ACCOUNT, "NT AUTHORITY\\SYSTEM", "BUILTIN\\Administrators"]);
+    assert.deepEqual(aclProblems(entries, { kind: "state" }), []);
+  });
+  test("Users with modify on the code directory (a path with spaces) is a problem", () => {
+    const entries = parseIcacls(codeBad, "C:\\Program Files\\Praxis\\ApprovalService");
+    assert.ok(aclProblems(entries, { kind: "code" }).some((p) => /BUILTIN\\Users/.test(p)));
+  });
+  test("any broad principal on the state directory, and write access by an ordinary account, are problems", () => {
+    assert.ok(aclProblems(parseIcacls("X:\\s Everyone:(OI)(CI)(RX)\n", "X:\\s"), { kind: "state" }).length > 0);
+    assert.ok(aclProblems(parseIcacls("X:\\c CONTOSO\\alice:(OI)(CI)(M)\n", "X:\\c"), { kind: "code" }).length > 0);
+    assert.deepEqual(aclProblems(parseIcacls("X:\\c BUILTIN\\Users:(OI)(CI)(RX)\n", "X:\\c"), { kind: "code" }), []);
   });
 });

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createAudit } from "./audit.mjs";
@@ -11,7 +11,7 @@ import { createAudit } from "./audit.mjs";
 export function openEnrollmentWindow(stateDir, origin, minutes = 15) {
   const trusted = join(stateDir, "trusted");
   mkdirSync(trusted, { recursive: true, mode: 0o700 });
-  const code = randomUUID().replaceAll("-", "").slice(0, 16);
+  const code = randomBytes(10).toString("hex"); // 80 bits
   const file = join(trusted, "enroll.json");
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, `${JSON.stringify({ code, expiresAt: new Date(Date.now() + minutes * 60_000).toISOString() })}\n`, { mode: 0o600 });

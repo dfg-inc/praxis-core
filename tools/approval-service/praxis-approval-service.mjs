@@ -62,11 +62,26 @@ async function main() {
     print(`Enrollment code (valid ${minutes} minutes, one authenticator): ${code}\nOpen ${origin}/enroll on the machine whose authenticator you will enroll, and type the code there.`);
     return process.exit(0);
   }
-  if (cmd === "audit-verify") {
-    const { paths } = loadConfig(flag("--config"), os);
+  if (cmd === "audit-verify" || cmd === "audit-witness") {
+    const { paths, config } = loadConfig(flag("--config"), os);
     const { createAudit } = await import("./lib/audit.mjs");
-    const result = createAudit(`${paths.stateDir}/audit/chain.jsonl`).verify();
-    print(result);
+    const { createAnchors, verifyWitness } = await import("./lib/anchor.mjs");
+    const { readFileSync } = await import("node:fs");
+    const audit = createAudit(`${paths.stateDir}/audit/chain.jsonl`);
+    const anchors = createAnchors({ sinks: [`${paths.stateDir}/anchors`, ...(config.auditAnchorDirs ?? [])], privateKeyPem: readFileSync(`${paths.stateDir}/trusted/private.pem`, "utf8"), publicKeyPem: readFileSync(`${paths.stateDir}/trusted/public.pem`, "utf8"), audit, ledgerDir: `${paths.stateDir}/ledger` });
+    if (cmd === "audit-witness") {
+      // A signed statement of the current head. Store it OFF this machine (or where the service identity cannot write): it is the pin an attacker holding the whole state directory cannot rewrite.
+      print(anchors.exportWitness());
+      return;
+    }
+    const result = anchors.check();
+    const witnessFile = flag("--witness");
+    if (witnessFile) {
+      const witness = verifyWitness(JSON.parse(readFileSync(witnessFile, "utf8")), audit.entries());
+      if (!witness.ok) result.problems.push(...witness.problems.map((p) => `witness: ${p}`));
+      result.ok = result.ok && witness.ok;
+    }
+    print({ ...result, entries: audit.entries().length });
     process.exit(result.ok ? 0 : 1);
   }
   if (cmd === "install-plan" || cmd === "uninstall-plan") {
@@ -90,7 +105,7 @@ async function main() {
       `   (ref ${id}) This grants write access to .git only; the service also refuses repositories whose Git configuration can run code.`);
     return;
   }
-  console.error("usage: praxis-approval-service.mjs run|health|verify-isolation|enroll-code|audit-verify|install-plan|uninstall-plan|render-unit|allow-repo");
+  console.error("usage: praxis-approval-service.mjs run|health|verify-isolation|enroll-code|audit-verify|audit-witness|install-plan|uninstall-plan|render-unit|allow-repo");
   process.exit(2);
 }
 

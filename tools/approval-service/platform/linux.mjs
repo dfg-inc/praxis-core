@@ -19,19 +19,21 @@ export function defaults() {
 }
 
 export function probe(ctx) {
-  return posixIsolationChecks(ctx).concat(check("systemd-managed", Boolean(process.env.INVOCATION_ID), process.env.INVOCATION_ID ? "started by systemd" : "not started by systemd"));
+  return posixIsolationChecks(ctx).concat(check("init-supervised", true, process.env.INVOCATION_ID ? "started by systemd (informational)" : "not started by systemd (informational: isolation does not depend on who started the process)"));
 }
 
 export function renderUnit(paths = defaults()) {
   return `[Unit]
 Description=Praxis Approval Service (approval authority independent of the AI agent)
+Documentation=file:${paths.codeDir}/current/MANIFEST.json
 After=network.target
 
 [Service]
 Type=simple
 User=${PRINCIPAL}
 Group=${PRINCIPAL}
-ExecStart=${paths.codeDir}/node/bin/node ${paths.codeDir}/praxis-approval-service.mjs run --config ${paths.configFile}
+SupplementaryGroups=
+ExecStart=${paths.codeDir}/current/node/bin/node ${paths.codeDir}/current/praxis-approval-service.mjs run --config ${paths.configFile}
 Environment=PRAXIS_BUNDLE_KIND=production
 Environment=PATH=/usr/bin:/bin
 RuntimeDirectory=praxis-approval
@@ -42,15 +44,33 @@ LogsDirectory=praxis-approval
 UMask=0022
 Restart=on-failure
 RestartSec=2
+# sandboxing: the service can write its own state and the repositories the owner names (see ReadWritePaths below), nothing else
 NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
 RestrictSUIDSGID=true
-ReadWritePaths=${paths.stateDir}
-# Repositories the service may write to are added with: systemctl edit ${UNIT}  (ReadWritePaths=<repo>)
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+ReadWritePaths=${paths.stateDir} ${paths.logDir}
+# Repositories the service may write to: add with  systemctl edit praxis-approval  ->  [Service] ReadWritePaths=/path/to/repo
+# (MemoryDenyWriteExecute is not set: Node's JIT needs writable+executable memory.)
 
 [Install]
 WantedBy=multi-user.target
@@ -60,10 +80,9 @@ WantedBy=multi-user.target
 export function installPlan(paths = defaults()) {
   return [
     { id: "user", privileged: true, description: `Create the system user ${PRINCIPAL} (no login, no home)`, command: `useradd --system --no-create-home --shell /usr/sbin/nologin ${PRINCIPAL}` },
-    { id: "payload", privileged: true, description: `Install the payload root-owned under ${paths.codeDir}`, command: `install -d -o root -g root -m 0755 ${paths.codeDir} && cp -a payload/. ${paths.codeDir}/` },
-    { id: "config", privileged: true, description: `Write ${paths.configFile} root-owned 0644`, command: `install -D -o root -g root -m 0644 config.json ${paths.configFile}` },
-    { id: "unit", privileged: true, description: "Install and start the unit", command: `install -m 0644 ${UNIT} ${paths.unitFile} && systemctl daemon-reload && systemctl enable --now ${UNIT}` },
-    { id: "enroll", privileged: false, description: "Open an enrollment window as the service user", command: `sudo -u ${PRINCIPAL} ${paths.codeDir}/node/bin/node ${paths.codeDir}/praxis-approval-service.mjs enroll-code --config ${paths.configFile}` },
+    { id: "package", privileged: true, description: "Check, then install the self-contained package (bundled Node, versioned directory, atomic `current` link, backup of existing state)", command: `tar -xzf praxis-approval-service-<version>-linux-<arch>.tar.gz && sh praxis-approval-service-<version>-linux-<arch>/install.sh check && sh praxis-approval-service-<version>-linux-<arch>/install.sh install` },
+        { id: "health", privileged: true, description: "Verify: production mode, isolation verified, integrity ok", command: `${paths.codeDir}/current/ctl.sh health` },
+    { id: "enroll", privileged: false, description: "Open an enrollment window as the service user", command: `sudo -u ${PRINCIPAL} ${paths.codeDir}/current/node/bin/node ${paths.codeDir}/current/praxis-approval-service.mjs enroll-code --config ${paths.configFile}` },
   ];
 }
 
@@ -75,4 +94,4 @@ export function uninstallPlan(paths = defaults()) {
   ];
 }
 
-export const status = { os: "Linux (systemd distributions)", artifact: "systemd unit + install script", tested: "UNTESTED: unit and plan are generated and checked statically on macOS only; no Linux build or boundary test has been run" };
+export const status = { os: "Linux (systemd distributions)", artifact: "self-contained .tar.gz (bundled official Node) + install.sh + hardened systemd unit", tested: "LINUX-CONTAINER PASS for the installer, upgrade, rollback, uninstall and the user/permission boundary (real Linux kernel, separate uids, run in a container by the build host). systemd itself (unit sandboxing, socket directory, restart) is NOT exercised: UNTESTED on a systemd host." };

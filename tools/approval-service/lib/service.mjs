@@ -10,7 +10,8 @@
  *     audit/chain.jsonl        hash-chained audit log
  */
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, rmSync, writeSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { createServer, createConnection } from "node:net";
 import { join, resolve } from "node:path";
 import {
@@ -40,6 +41,7 @@ import {
 } from "../../../packages/contracts/dist/index.js";
 import { createOperatorWeb, writeTokenOnce } from "../../broker/operator-web.mjs";
 import { createAudit } from "./audit.mjs";
+import { createAnchors } from "./anchor.mjs";
 import { createExecutor } from "./executor.mjs";
 import { GitxError } from "./gitx.mjs";
 import { createProviders } from "./providers.mjs";
@@ -77,13 +79,10 @@ export async function createService({ paths, config, mode, version, platformId, 
     trusted: join(state, "trusted"),
     shared: join(state, "shared"),
     requests: join(state, "requests"),
+    executions: join(state, "executions"),
     ledger: join(state, "ledger"),
     audit: join(state, "audit"),
   };
-  for (const dir of [state, dirs.trusted, dirs.requests, dirs.ledger, dirs.audit, ...["pending", "approved", "rejected", "authorizations"].map((d) => join(dirs.shared, d))]) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-  }
-
   const isolationNow = () => {
     const checks = probe({ paths, config });
     return { verified: mode === "production" && checks.every((c) => c.ok), principal: config.principal ?? "unknown", checks };
@@ -95,6 +94,10 @@ export async function createService({ paths, config, mode, version, platformId, 
     throw new ServiceError("ISOLATION_UNAVAILABLE", `refusing to start in production: ${initial.checks.filter((c) => !c.ok).map((c) => c.detail).join("; ")}`, { checks: initial.checks });
   }
 
+  for (const dir of [state, dirs.trusted, dirs.requests, dirs.executions, dirs.ledger, dirs.audit, ...["pending", "approved", "rejected", "authorizations"].map((d) => join(dirs.shared, d))]) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+
   const audit = createAudit(join(dirs.audit, "chain.jsonl"));
   const privatePath = join(dirs.trusted, "private.pem");
   const publicPath = join(dirs.trusted, "public.pem");
@@ -104,6 +107,23 @@ export async function createService({ paths, config, mode, version, platformId, 
     writeFileSync(publicPath, pair.publicKeyPem, { mode: 0o644 });
     audit.append("key-generated", {});
   }
+  const anchors = createAnchors({
+    sinks: [join(state, "anchors"), ...(config.auditAnchorDirs ?? [])],
+    privateKeyPem: readFileSync(privatePath, "utf8"),
+    publicKeyPem: readFileSync(publicPath, "utf8"),
+    audit,
+    ledgerDir: dirs.ledger,
+  });
+  // Every audit append is pinned in the independent sinks; the pin is written inside the append's lock scope so head and anchor agree.
+  const appendRaw = audit.append.bind(audit);
+  audit.append = (event, data) => {
+    const record = appendRaw(event, data);
+    anchors.write();
+    return record;
+  };
+  // Start only on a state that matches its anchors: a truncated or rolled-back audit chain or ledger is not served.
+  const startupIntegrity = anchors.check();
+  if (!startupIntegrity.ok) throw new ServiceError("INTEGRITY_FAILED", `refusing to start: ${startupIntegrity.problems.join("; ")}`, { problems: startupIntegrity.problems });
   const startedAt = Date.now();
 
   // Restart recovery: anything that was mid-execution when the process stopped is unknown, never assumed done or undone.
@@ -113,6 +133,15 @@ export async function createService({ paths, config, mode, version, platformId, 
     if (entry?.status === "started") {
       failLedgerEntry(dirs.ledger, id, entry.requestFingerprint, "the service stopped while this operation was executing; verify the repository before asking again", "requires_reconciliation");
       audit.append("recovered-in-flight", { consumptionId: id });
+    }
+  }
+
+  // A crash between "approve" steps can leave an approved plan with no token: put it back where the owner can decide again.
+  for (const file of readdirSync(join(dirs.shared, "approved")).filter((f) => f.endsWith(".json"))) {
+    const id = file.slice(0, -5);
+    if (!existsSync(join(dirs.shared, "authorizations", `${id}.token`)) && !existsSync(join(dirs.shared, "pending", file))) {
+      renameSync(join(dirs.shared, "approved", file), join(dirs.shared, "pending", file));
+      audit.append("recovered-approval-without-token", { planId: id });
     }
   }
 
@@ -169,8 +198,9 @@ export async function createService({ paths, config, mode, version, platformId, 
       consumptionId: `c-${sha256(`${plan.planId}:${randomUUID()}`).slice(0, 24)}`,
     };
     const token = encodeAuthorization(signAuthorization(body, readFileSync(privatePath, "utf8")));
-    writeTokenOnce(tokenPath(plan.planId), token);
+    // approved plan first, then the token: a crash in between leaves an approved plan without a token, which start-up recovery puts back in pending
     if (existsSync(pendingPath(plan.planId))) renameSync(pendingPath(plan.planId), approvedPath(plan.planId));
+    writeTokenOnce(tokenPath(plan.planId), token);
     audit.append("approved", { planId: plan.planId, fingerprint: plan.fingerprint, approver, channel, consumptionId: body.consumptionId });
     return { ok: true, planId: plan.planId, consumptionId: body.consumptionId, channel };
   }
@@ -180,6 +210,13 @@ export async function createService({ paths, config, mode, version, platformId, 
     audit.append("rejected", { planId: plan.planId, fingerprint: plan.fingerprint, approver, channel });
   }
 
+  // Failures on the operator page are reachable by any local client, so they are counted and sampled (first, then every 100th), not logged one by one.
+  const eventCounts = new Map();
+  function countedAudit(event, data) {
+    const n = (eventCounts.get(event) ?? 0) + 1;
+    eventCounts.set(event, n);
+    if (n === 1 || n % 100 === 0) audit.append(event, { ...data, total: n });
+  }
   const enrollFile = join(dirs.trusted, "enroll.json");
   const readEnrollment = () => {
     const doc = readJson(enrollFile);
@@ -195,6 +232,7 @@ export async function createService({ paths, config, mode, version, platformId, 
     signApproved,
     rejectPlan,
     enrollSecret: readEnrollment,
+    onEvent: (event, data) => countedAudit(event, data),
     onEnrolled: () => {
       try {
         unlinkSync(enrollFile);
@@ -254,7 +292,73 @@ export async function createService({ paths, config, mode, version, platformId, 
     return { ...out, state: "awaiting-operator", operatorUrl: operatorUrl(planId), fingerprint: plan.fingerprint, expiresAt: plan.expiresAt };
   }
 
+  /** Moves a spent approval (token and approved plan) aside, with an audit entry, so the same plan can be proposed and approved again. */
+  function archiveApproval(planId, why) {
+    mkdirSync(join(state, "archive"), { recursive: true, mode: 0o700 });
+    const stamp = now().toISOString().replace(/[:.]/g, "-");
+    for (const [from, ext] of [[tokenPath(planId), "token"], [approvedPath(planId), "plan.json"], [pendingPath(planId), "pending.json"]]) {
+      if (existsSync(from)) renameSync(from, join(state, "archive", `${planId}.${stamp}.${ext}`));
+    }
+    audit.append("approval-archived", { planId, why });
+  }
+
+  const MAX_PENDING_PER_REPOSITORY = 50;
+  const MAX_PENDING_TOTAL = 500;
+  /** The agent can submit freely, so the queue the owner has to read is bounded. */
+  function enforceQueueLimits(repository) {
+    const files = readdirSync(join(dirs.shared, "pending")).filter((f) => f.endsWith(".json"));
+    if (files.length >= MAX_PENDING_TOTAL) throw new ServiceError("TOO_MANY_PENDING", "too many requests are waiting for the owner; decide or let some expire first");
+    let forRepo = 0;
+    for (const file of files) if (readJson(join(dirs.shared, "pending", file))?.repositories?.[0] === repository) forRepo += 1;
+    if (forRepo >= MAX_PENDING_PER_REPOSITORY) throw new ServiceError("TOO_MANY_PENDING", `${forRepo} requests for this repository are already waiting for the owner`);
+  }
+
+  const executionPath = (id) => join(dirs.executions, `${id}.json`);
+  const canon = (v) => (Array.isArray(v) ? `[${v.map(canon).join(",")}]` : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(",")}}` : JSON.stringify(v));
+  const paramsDigest = (rq) => `sha256:${sha256(canon([rq.operation, resolve(rq.repository), rq.workItemId, rq.params]))}`;
+
+  /** First writer wins: an execution id is bound to one request and one set of parameters for good. */
+  function bindExecution(executionId, requestId, digest) {
+    const path = executionPath(executionId);
+    try {
+      const fd = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+      try {
+        writeSync(fd, `${JSON.stringify({ requestId, paramsDigest: digest, boundAt: now().toISOString() })}\n`);
+      } finally {
+        closeSync(fd);
+      }
+      return { created: true };
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      return { created: false, existing: readJson(path) };
+    }
+  }
+
   async function submit(request) {
+    const rq0 = { operation: request.operation, repository: request.repository, workItemId: request.workItemId, params: request.params };
+    if (request.executionId) {
+      const bound = readJson(executionPath(request.executionId));
+      if (bound) {
+        if (bound.paramsDigest !== paramsDigest(rq0)) {
+          audit.append("refused", { code: "CHANGED_PLAN", executionId: request.executionId });
+          throw new ServiceError("CHANGED_PLAN", "this execution id was first used for a different request; a changed plan needs a new execution id and its own approval");
+        }
+        const known = stateOf(bound.requestId);
+        // An expired request may be proposed afresh under the same id (same parameters); anything else is simply reported.
+        if (known.state !== "expired" && !(known.state === "failed" && known.status === "failed")) return { ...known, executionId: request.executionId, resubmitted: true };
+        rmSync(executionPath(request.executionId), { force: true });
+      }
+    }
+    const reply = await submitFresh(request);
+    if (request.executionId) {
+      const made = bindExecution(request.executionId, reply.requestId, paramsDigest(rq0));
+      if (!made.created && made.existing?.paramsDigest !== paramsDigest(rq0)) throw new ServiceError("CHANGED_PLAN", "this execution id was bound concurrently to a different request");
+      return { ...reply, executionId: request.executionId };
+    }
+    return reply;
+  }
+
+  async function submitFresh(request) {
     const rq = { operation: request.operation, repository: request.repository, workItemId: request.workItemId, params: request.params };
     const { described, real } = await executor.describe(rq);
     const key = { operation: rq.operation, action: ACTIONS[rq.operation], repository: real, workItemId: rq.workItemId, previewFingerprint: described.previewFingerprint };
@@ -263,9 +367,13 @@ export async function createService({ paths, config, mode, version, platformId, 
       atomicWrite(requestPath(planId), `${JSON.stringify({ ...rq, repository: real, key, submittedAt: now().toISOString() }, null, 2)}\n`);
     }
     const existing = stateOf(planId);
-    const retryable = existing.state === "expired";
+    // An approval that expired unused, or whose execution failed with nothing changed, can be asked for again. One that
+    // ended in uncertainty (requires_reconciliation) cannot: the owner must look at the repository first.
+    const retryable = existing.state === "expired" || (existing.state === "failed" && existing.status === "failed");
+    if (retryable) archiveApproval(planId, existing.state);
     if (existing.state !== "awaiting-operator" && existing.state !== "failed" && !retryable) return { ...existing, resubmitted: true };
-    if (existing.state === "failed" && existing.detail !== "the plan is not in the inbox") return { ...existing, resubmitted: true };
+    if (existing.state === "failed" && !retryable && existing.detail !== "the plan is not in the inbox") return { ...existing, resubmitted: true };
+    enforceQueueLimits(real);
     const plan = buildGitPlan(key, described, now(), planTtlMs());
     const pending = readJson(pendingPath(planId));
     const keep = pending && Date.parse(pending.expiresAt) > now().getTime() && rebuildWithTimes(key, described, pending).fingerprint === pending.fingerprint;
@@ -296,6 +404,8 @@ export async function createService({ paths, config, mode, version, platformId, 
       const probeNow = isolationNow();
       if (!probeNow.verified) throw new ServiceError("APPROVAL_ISOLATION_UNAVAILABLE", `isolation is no longer verified: ${probeNow.checks.filter((c) => !c.ok).map((c) => c.detail).join("; ")}`);
     }
+    const integrity = anchors.check();
+    if (!integrity.ok) throw new ServiceError("APPROVAL_INTEGRITY_FAILED", `the service's own records no longer match their anchors; refusing to execute: ${integrity.problems.join("; ")}`);
     const token = existsSync(tokenPath(planId)) ? readFileSync(tokenPath(planId), "utf8").trim() : undefined;
     if (!token) {
       const current = stateOf(planId);
@@ -344,10 +454,15 @@ export async function createService({ paths, config, mode, version, platformId, 
       try {
         const result = await executor.execute(stored, live.facts);
         completeLedgerEntry(dirs.ledger, body.consumptionId, fingerprint, result);
-        audit.append("execution-completed", { planId, consumptionId: body.consumptionId, operation: stored.operation, result });
+        try {
+          audit.append("execution-completed", { planId, consumptionId: body.consumptionId, operation: stored.operation, result });
+        } catch {
+          // the operation is done and recorded in the ledger; a failing audit write must not turn it into a reported failure (the health check will show the audit problem)
+        }
         return { requestId: planId, state: "completed", replayed: false, result };
       } catch (error) {
         const status = failureStatus(error);
+        if (readLedgerEntry(dirs.ledger, body.consumptionId)?.status === "completed") throw error;
         failLedgerEntry(dirs.ledger, body.consumptionId, fingerprint, error.message, status);
         audit.append("execution-failed", { planId, consumptionId: body.consumptionId, status, code: error.code, message: error.message });
         throw new ServiceError(error.code ?? "EXECUTION_FAILED", `${error.message}. The approval is consumed (${status}).`, { status, ...(error.details ?? {}), changed: error.details?.changed ?? (status === "failed" ? "nothing" : "unknown: verify the repository and remote"), rollback: error.details?.rollback ?? (status === "failed" ? "none needed" : "inspect, then request a new approval") });
@@ -370,6 +485,7 @@ export async function createService({ paths, config, mode, version, platformId, 
       operatorChannel: { url: origin, enrolledAuthenticators: operators?.credentials?.length ?? 0 },
       pending,
       auditChain: { ...audit.verify(), head: audit.entries().at(-1)?.hash ?? null },
+      integrity: anchors.check(),
       ledgerEntries: readdirSync(dirs.ledger).filter((f) => f.endsWith(".json")).length,
     };
   }
@@ -387,7 +503,14 @@ export async function createService({ paths, config, mode, version, platformId, 
     try {
       if (request.op === "health") return { ok: true, ...base, health: health() };
       if (request.op === "submit") return { ok: true, ...base, ...(await submit(request)) };
-      if (request.op === "status") return { ok: true, ...base, ...stateOf(request.requestId) };
+      if (request.op === "status") {
+        if (request.executionId) {
+          const bound = readJson(executionPath(request.executionId));
+          if (!bound) throw new ServiceError("REQUEST_NOT_FOUND", "no request is bound to that execution id");
+          return { ok: true, ...base, ...stateOf(bound.requestId), executionId: request.executionId };
+        }
+        return { ok: true, ...base, ...stateOf(request.requestId) };
+      }
       if (request.op === "execute") return { ok: true, ...base, ...(await execute(request)) };
     } catch (error) {
       const code = error.code ?? "SERVICE_ERROR";
@@ -427,7 +550,20 @@ export async function createService({ paths, config, mode, version, platformId, 
   });
   ipc.maxConnections = 128;
 
+  let webV6;
   async function listen() {
+    try {
+      await listenAll();
+    } catch (error) {
+      // a half-started service must not keep sockets open
+      ipc.close();
+      web.server.close();
+      webV6?.close();
+      throw error;
+    }
+  }
+
+  async function listenAll() {
     if (process.platform !== "win32") {
       // A leftover socket file is removed only when nothing answers on it; a live instance is never displaced.
       if (existsSync(paths.endpoint)) {
@@ -451,15 +587,23 @@ export async function createService({ paths, config, mode, version, platformId, 
       web.server.once("error", fail);
       web.server.listen(operatorPort, "127.0.0.1", () => done());
     });
+    // "localhost" resolves to ::1 as well as 127.0.0.1. Hold both, so no other local process can stand in for the operator page
+    // on the address a browser may prefer. If the port is taken on ::1 the service refuses to start; a host without IPv6 is fine.
+    webV6 = createHttpServer(web.handler);
+    await new Promise((done, fail) => {
+      webV6.once("error", (error) => (["EADDRNOTAVAIL", "EAFNOSUPPORT"].includes(error.code) ? ((webV6 = undefined), done()) : fail(new ServiceError("OPERATOR_PORT_TAKEN", `cannot hold ::1:${operatorPort} (${error.code}); another process may be impersonating the operator page`))));
+      webV6.listen(operatorPort, "::1", () => done());
+    });
     audit.append("service-started", { version, mode, platform: platformId, isolationVerified: initial.verified });
   }
 
   async function close() {
     await new Promise((done) => ipc.close(() => done()));
     await new Promise((done) => web.server.close(() => done()));
+    if (webV6) await new Promise((done) => webV6.close(() => done()));
     ipc.closeAllConnections?.();
     audit.append("service-stopped", {});
   }
 
-  return { handle, listen, close, health, audit, dirs, web, paths, operatorPort: () => web.server.address()?.port };
+  return { handle, listen, close, health, audit, anchors, dirs, web, paths, operatorPort: () => web.server.address()?.port };
 }
