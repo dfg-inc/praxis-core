@@ -73,9 +73,8 @@ otherwise untouched.
 and the recorded commit must still be returned for execution id `ex-accept-2` (ledger and audit survived).
 
 ## J. Rollback and removal
-`$ACC j-rollback` prints the steps: `ctl.sh backup`, `rollback` (needs a previous version: install the package twice or run backup
-first), `health`, `uninstall` (state kept), `uninstall --purge` (account gone: `dscl . -read /Users/_praxisapproval` must fail).
-Backups live in `/Library/Application Support/Praxis/ApprovalService/backups` (root only) and remain after a purge.
+`$ACC j-rollback` prints the steps: `ctl.sh verify` (every line PASS), `backup`, `rollback` (CODE only; afterwards `g-replay 1` must still return the recorded commit), `health`, `uninstall` (state kept), `uninstall --remove-data` (account gone: `dscl . -read /Users/_praxisapproval` must fail), and, only if you want it, `uninstall --delete-everything praxis-delete-all-data`.
+Backups live in `/Library/Application Support/Praxis/ApprovalService/backups` (root only) and remain after `--remove-data`.
 
 ## Result
 The installation is accepted only if A, B, D, E, F, G, H pass and C was observed and recorded. I and J complete the lifecycle.

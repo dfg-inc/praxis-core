@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { ADAPTERS } from "../platform/index.mjs";
+import { renderMacScript } from "./render-macos.mjs";
 import { SERVICE_VERSION } from "../lib/version.mjs";
 import { APPROVAL_SERVICE_PROTOCOL } from "../../../packages/contracts/dist/index.js";
 
@@ -64,7 +65,7 @@ for (const os of ["darwin", "linux", "win32"]) {
   const adapter = ADAPTERS[os];
   write(`${adapter.defaults().id}/INSTALL-PLAN.json`, `${JSON.stringify({ platform: adapter.defaults().id, status: adapter.status, install: adapter.installPlan(), uninstall: adapter.uninstallPlan() }, null, 2)}\n`);
 }
-for (const [rel, src] of [["macos/preinstall", "macos-preinstall.sh"], ["macos/postinstall", "macos-postinstall.sh"], ["macos/ctl.sh", "macos-ctl.sh"]]) write(rel, readFileSync(join(here, src), "utf8"), 0o755);
+for (const [rel, src] of [["macos/preinstall", "macos-preinstall.sh"], ["macos/postinstall", "macos-postinstall.sh"], ["macos/ctl.sh", "macos-ctl.sh"]]) write(rel, renderMacScript(src), 0o755);
 for (const path of ["macos/preinstall", "macos/postinstall", "macos/ctl.sh", "linux/install.sh"].filter((p) => existsSync(join(out, p)))) execFileSync("sh", ["-n", join(out, path)]);
 execFileSync("sh", ["-n", join(here, "linux/install.sh")]);
 if (process.platform === "darwin") execFileSync("plutil", ["-lint", join(out, "macos/co.praxis.approval-service.plist")], { stdio: "pipe" });
@@ -140,16 +141,14 @@ if (args.includes("--macos-pkg")) {
     manifest.nodeRuntime = { bundled: true, version: reported, arch: pkgArch, sha256: sha(join(code, "node/bin/node")), signedBy: `Developer ID Application: Node.js Foundation (${team})`, linksOnly: "system libraries", ...(provenance ? { provenance } : { provenance: { source: "a binary supplied with --node; not checked against a checksum file" } }) };
     if (tarball) rmSync(join(out, "node-extract"), { recursive: true, force: true });
   }
-  copyFileSync(join(here, "macos-ctl.sh"), join(code, "ctl.sh"));
-  chmodSync(join(code, "ctl.sh"), 0o755);
+  writeFileSync(join(code, "ctl.sh"), renderMacScript("macos-ctl.sh"), { mode: 0o755 });
   writeFileSync(join(code, "MANIFEST.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   mkdirSync(join(stage, "Library/LaunchDaemons"), { recursive: true });
   copyFileSync(join(out, "macos/co.praxis.approval-service.plist"), join(stage, "Library/LaunchDaemons/co.praxis.approval-service.plist"));
   const scripts = join(out, "pkg-scripts");
   mkdirSync(scripts, { recursive: true });
-  const fill = (text) => text.replaceAll("@ARCH@", pkgArch).replaceAll("@VERSION@", versionForArtifacts);
-  writeFileSync(join(scripts, "preinstall"), fill(readFileSync(join(here, "macos-preinstall.sh"), "utf8")), { mode: 0o755 });
-  writeFileSync(join(scripts, "postinstall"), fill(readFileSync(join(here, "macos-postinstall.sh"), "utf8")), { mode: 0o755 });
+  writeFileSync(join(scripts, "preinstall"), renderMacScript("macos-preinstall.sh", { arch: pkgArch, version: versionForArtifacts }), { mode: 0o755 });
+  writeFileSync(join(scripts, "postinstall"), renderMacScript("macos-postinstall.sh", { arch: pkgArch, version: versionForArtifacts }), { mode: 0o755 });
   for (const s of ["preinstall", "postinstall"]) execFileSync("sh", ["-n", join(scripts, s)]);
   const pkg = join(out, `praxis-approval-service-${versionForArtifacts}-macos-${pkgArch}.pkg`);
   execFileSync("xattr", ["-cr", stage, scripts]);

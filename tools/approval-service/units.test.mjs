@@ -129,6 +129,27 @@ describe("configuration validation", () => {
     assert.equal(dev.paths.stateDir, "/tmp/x");
     assert.ok(prod.paths.configFile.endsWith("config.json"), "the probe looks at the file that was actually loaded");
   });
+
+  test("configuration holds no secret: inline tokens/keys, unknown (misspelt) settings are refused; File references are fine", () => {
+    for (const [doc, expect] of [
+      [{ mode: "production", providers: { github: { instances: { a: { apiBase: "https://api.github.com", token: "abc" } } } } }, /inline secret/],
+      [{ mode: "production", apiKey: "k" }, /unknown setting|inline secret/],
+      [{ mode: "production", repositories: [], operatorPasswrod: "x" }, /unknown setting/],
+      [{ mode: "production", note: "ghp_" + "a".repeat(30) }, /unknown setting|secret/],
+      [{ mode: "production", paths: { x: "-----BEGIN PRIVATE KEY-----\nAAA" } }, /secret/],
+    ]) assert.throws(() => loadConfig(write(doc), "linux"), expect, JSON.stringify(doc).slice(0, 80));
+    assert.doesNotThrow(() => loadConfig(write({ mode: "production", repositories: [], providers: { github: { instances: { a: { apiBase: "https://api.github.com", tokenFile: "/var/lib/praxis-approval/secrets/gh.token" } } } } }), "linux"));
+  });
+  test("on macOS production the credentials must be files inside the secrets directory and an external anchor directory is required", () => {
+    const base = "/Library/Application Support/Praxis/ApprovalService";
+    const good = { mode: "production", repositories: [], auditAnchorDirs: [`${base}/anchors`], credentials: { github: `${base}/secrets/gh.token` } };
+    assert.doesNotThrow(() => loadConfig(write(good), "darwin"));
+    assert.throws(() => loadConfig(write({ ...good, auditAnchorDirs: undefined }), "darwin"), /auditAnchorDirs/);
+    assert.throws(() => loadConfig(write({ ...good, auditAnchorDirs: [`${base}/state/anchors`] }), "darwin"), /outside the state directory/);
+    assert.throws(() => loadConfig(write({ ...good, credentials: { github: "/Users/agent/.git-credentials" } }), "darwin"), /inside .*secrets/);
+    assert.throws(() => loadConfig(write({ ...good, credentials: { github: `${base}/secrets/../state/x` } }), "darwin"), /inside .*secrets/);
+    assert.throws(() => loadConfig(write({ ...good, providers: { github: { instances: { a: { apiBase: "https://api.github.com", tokenFile: "/tmp/token" } } } } }), "darwin"), /tokenFile must be a file inside/);
+  });
 });
 
 import { existsSync, mkdirSync as mk } from "node:fs";

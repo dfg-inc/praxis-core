@@ -57,6 +57,12 @@ b-denials)  # B: what the agent (you) must not be able to do
   denied "rename the socket"                           mv "$BASE/run/service.sock" "$BASE/run/service.sock.x"
   denied "signal the service process"                  sh -c "kill \$(pgrep -f 'praxis-approval-service.mjs run' | head -n1)"
   denied "read backups"                                ls "$BASE/backups"
+  denied "read the secrets directory"                  ls "$BASE/secrets"
+  denied "read the independent anchor directory"       ls "$BASE/anchors"
+  denied "write into the anchor directory"             sh -c "echo x > '$BASE/anchors/latest.json'"
+  denied "read the service log directory"              ls /private/var/log/praxis-approval
+  denied "plant a file in the code directory"          sh -c "echo x > '$BASE/code/planted'"
+  denied "replace the code directory with a link"      sh -c "mv '$BASE/code' '$BASE/code.x'"
   denied "read service logs"                           cat /var/log/praxis-approval/service.log
   R="$(client raw '{"protocol":"praxis.approval-service.v1","op":"approve","requestId":"x"}')"; echo "$R" | grep -q UNKNOWN_OPERATION && pass "the IPC has no approve operation" || fail "approve was not refused as an unknown operation: $R"
   echo "--- the user can still do the intended things:"; client health | grep -q '"ok": true' && pass "health is readable" || fail "health" ;;
@@ -123,13 +129,15 @@ i-reboot)
   echo "  acceptance.sh a-identity; acceptance.sh g-replay 1     (the recorded commit result must still be returned: the ledger survived)"
   echo "The service must be running BEFORE you log in a second time (LaunchDaemon, not LaunchAgent): check 'ps' right after boot at the login window if you can." ;;
 j-rollback)
-  echo "As an administrator:"
+  echo "As an administrator (each step is separate: nothing deletes data by itself):"
+  echo "  sudo \"$BASE/code/ctl.sh\" verify              (owner/mode/ACL of everything: every line PASS)"
   echo "  sudo \"$BASE/code/ctl.sh\" backup"
-  echo "  sudo \"$BASE/code/ctl.sh\" rollback            (needs a previous backup; take one by installing the package twice or running backup first)"
+  echo "  sudo \"$BASE/code/ctl.sh\" rollback            (CODE only; needs a backup. Then: acceptance.sh g-replay 1 must still return the recorded commit: the used approval stays used)"
   echo "  sudo \"$BASE/code/ctl.sh\" health"
-  echo "  sudo \"$BASE/code/ctl.sh\" uninstall            (state kept)  then verify: ls \"$BASE\"   dscl . -read /Users/_praxisapproval (still there)"
-  echo "  sudo \"$BASE/code/ctl.sh\" uninstall --purge    (state and account removed) then: dscl . -read /Users/_praxisapproval (must FAIL: account gone), ls /Library/LaunchDaemons | grep praxis (nothing)"
-  echo "Backups stay in $BASE/backups (root only) unless you delete them." ;;
+  echo "  sudo \"$BASE/code/ctl.sh\" uninstall            (daemon and code removed; state, secrets, anchors, backups and the account stay) then: ls \"$BASE\"   dscl . -read /Users/_praxisapproval (still there)"
+  echo "  sudo \"$BASE/code/ctl.sh\" uninstall --remove-data    (only after you are sure: live data and the account are removed after a recovery archive in backups/) then: dscl . -read /Users/_praxisapproval must FAIL"
+  echo "  sudo \"$BASE/code/ctl.sh\" uninstall --delete-everything praxis-delete-all-data    (ALSO deletes backups; irreversible)"
+  echo "Backups stay in $BASE/backups (root only) unless you use --delete-everything." ;;
 *) echo "usage: acceptance.sh setup-repo|a-identity|b-denials|c-docker|d-enroll|submit-commit [N]|execute [N]|g-replay [N]|g-modified|g-expired|h-clean|i-reboot|j-rollback"; exit 2 ;;
 esac
 [ "$FAILED" = 0 ] || { echo "RESULT: FAILED"; exit 1; }

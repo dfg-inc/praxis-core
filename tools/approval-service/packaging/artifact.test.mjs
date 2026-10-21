@@ -20,8 +20,9 @@ const build = (...args) => JSON.parse(execFileSync(process.execPath, [buildScrip
 function config(mode) {
   const dir = mkdtempSync("/tmp/pas-");
   mkdirSync(join(dir, "state"), { mode: 0o700 });
+  mkdirSync(join(dir, "anchors"), { mode: 0o700 });
   const file = join(dir, "config.json");
-  writeFileSync(file, JSON.stringify({ mode, paths: { stateDir: join(dir, "state"), endpoint: join(dir, "s.sock"), codeDir: dir, configFile: file }, repositories: [], operator: { port: 0 } }));
+  writeFileSync(file, JSON.stringify({ mode, paths: { stateDir: join(dir, "state"), endpoint: join(dir, "s.sock"), codeDir: dir, configFile: file }, repositories: [], auditAnchorDirs: [join(dir, "anchors")], operator: { port: 0 } }));
   return file;
 }
 const runBundle = (variant, file) => spawnSync(process.execPath, [dist(variant, "payload/praxis-approval-service.mjs"), "run", "--config", file], { encoding: "utf8", timeout: 10_000 });
@@ -106,8 +107,13 @@ describe("macOS package (built unprivileged, never installed)", { skip: process.
     assert.ok(!/@ARCH@|@VERSION@/.test(pre), "placeholders must be filled");
     assert.match(pre, /uname -m/);
     assert.match(pre, /a failed backup stops the installation/);
-    assert.match(post, /Every ancestor of the code directory/);
-    assert.match(post, /Password '\*'/);
+    assert.match(pre, /psec_assert_chain/);
+    assert.match(pre, /dangling symbolic link/);
+    assert.match(pre, /acct_validate/);
+    assert.match(post, /exactly the payload/);
+    assert.match(post, /setattr Password '\*'/);
+    assert.match(post, /perm_expect/);
+    assert.ok(!/@@LIB@@/.test(pre + post), "the shared library is inlined");
     assert.ok(!/LaunchAgents/.test(post));
     assert.equal(manifest.macosArch, process.arch === "arm64" ? "arm64" : "x64");
     const pkgEntry = Object.entries(manifest.components).find(([name]) => name.endsWith(".pkg"))[1];

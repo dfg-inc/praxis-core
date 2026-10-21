@@ -54,15 +54,24 @@ export function createExecutor({ config, paths, providers }) {
     chmodSync(askpassPath, 0o700);
   }
 
+  /** A credential file must be a regular file (not a link), owned by the service identity and unreadable by anyone else. */
+  function assertSecretFile(path, what) {
+    if (process.platform === "win32") return;
+    const st = lstatSync(path);
+    if (st.isSymbolicLink() || !st.isFile()) throw new GitxError("CREDENTIAL_UNSAFE", `the ${what} file is not a regular file; refusing to use it`);
+    if (st.mode & 0o077) throw new GitxError("CREDENTIAL_UNSAFE", `the ${what} file is readable by group or others; refusing to use it`);
+    if (st.uid !== process.getuid()) throw new GitxError("CREDENTIAL_UNSAFE", `the ${what} file is not owned by the service identity; refusing to use it`);
+  }
+
   function credentialEnv(url) {
     const extra = {};
     const credentials = config.credentials ?? {};
     if (/^https:/i.test(url) && tokenFile && existsSync(tokenFile)) {
-      if (process.platform !== "win32" && (lstatSync(tokenFile).mode & 0o077)) throw new GitxError("CREDENTIAL_UNSAFE", "the HTTPS token file is readable by group or others; refusing to use it");
+      assertSecretFile(tokenFile, "HTTPS token");
       extra.GIT_ASKPASS = askpassPath;
     }
     if (credentials.sshKeyFile && !/^https?:|^file:|^\//i.test(url)) {
-      if (process.platform !== "win32" && (lstatSync(credentials.sshKeyFile).mode & 0o077)) throw new GitxError("CREDENTIAL_UNSAFE", "the SSH key file is readable by group or others; refusing to use it");
+      assertSecretFile(credentials.sshKeyFile, "SSH key");
       extra.GIT_SSH_COMMAND = `ssh -i ${credentials.sshKeyFile} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${join(home, "known_hosts")}`;
     }
     return extra;

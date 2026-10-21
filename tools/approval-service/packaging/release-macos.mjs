@@ -97,9 +97,13 @@ Node.js Foundation; its provenance is in NODE-PROVENANCE.json.
 \`\`\`bash
 pkgutil --expand-full "${P}" /tmp/praxis-pkg-inspect && less /tmp/praxis-pkg-inspect/Scripts/preinstall /tmp/praxis-pkg-inspect/Scripts/postinstall
 \`\`\`
-It creates the hidden role account \`_praxisapproval\` (no shell, no home, no password), the directories under
-\`/Library/Application Support/Praxis/ApprovalService\` (state 0700), \`/var/log/praxis-approval\`, and the LaunchDaemon
-\`/Library/LaunchDaemons/co.praxis.approval-service.plist\`.
+Before anything is extracted the preinstall refuses (changing nothing) if an existing ancestor or location of the installation is a symbolic
+link (a dangling one included), is not owned by root, is group/other-writable or has a write-granting ACL entry, and if \`_praxisapproval\` already
+exists but is not provably this installer's account (UID, GID, shell, home, hidden, password, group memberships). Then it creates (or completes)
+the hidden role account \`_praxisapproval\` (no shell, no home, no password), the directories under
+\`/Library/Application Support/Praxis/ApprovalService\` (state, secrets, anchors 0700; run 0755; backups root-only), \`/private/var/log/praxis-approval\`,
+and the LaunchDaemon \`/Library/LaunchDaemons/co.praxis.approval-service.plist\`. The default \`config.json\` holds public settings only: credentials
+live as files in \`secrets/\` and are only named in the configuration. After install run \`ctl.sh verify\`: every line must be PASS.
 
 ## 3. Install (administrator)
 \`\`\`bash
@@ -136,14 +140,13 @@ sudo ${CTL} rollback
 sudo ${CTL} uninstall
 \`\`\`
 \`\`\`bash
-sudo ${CTL} uninstall --purge
+sudo ${CTL} uninstall --remove-data
 \`\`\`
-\`uninstall\` keeps state, configuration and backups; \`--purge\` also removes state, configuration and the role account after a root-only backup
-(kept in \`/Library/Application Support/Praxis/ApprovalService/backups\`). To remove the Desktop extension, uninstall it in Claude Desktop.
+\`uninstall\` keeps state, configuration, secrets, anchors, backups and the account. \`--remove-data\` also removes live data and the role account, but only after a recovery archive was written to backups. Deleting the backups too is a third, separate command (\`--delete-everything praxis-delete-all-data\`, see ROLLBACK-MACOS.md). Backups are root-only, in \`/Library/Application Support/Praxis/ApprovalService/backups\`. To remove the Desktop extension, uninstall it in Claude Desktop.
 `);
 writeFileSync(join(out, "ROLLBACK-MACOS.md"), `# Rollback and removal (administrator)
 
-Backups are taken automatically before every upgrade and every uninstall, into a root-only folder.
+Backups are taken automatically before every upgrade and every uninstall, into a root-only folder, and are never deleted automatically.
 
 \`\`\`bash
 sudo ${CTL} backup
@@ -151,18 +154,30 @@ sudo ${CTL} backup
 \`\`\`bash
 sudo ${CTL} rollback
 \`\`\`
-Restores the previous version's code (not the ledger unless you add --restore-state, which makes consumed approvals usable again and is refused by the integrity anchors unless the anchors are restored with it).
+Puts the previous version's CODE back. State, ledger, audit chain, anchors and keys are not touched, so an approval that was already used stays used.
+\`\`\`bash
+sudo ${CTL} verify
+\`\`\`
+Reports owner, mode and ACL of everything the installation created (no root needed to read most of it). Any FAIL line means a permission is not as intended.
 \`\`\`bash
 sudo ${CTL} health
 \`\`\`
 \`\`\`bash
+sudo ${CTL} restore-state <backup-name>
+\`\`\`
+Disaster recovery only. Puts an OLD state and secrets back: refused while the service runs and when anything in the current state changed in the last 25 hours; the archive is checked and the current state is saved first. The anchors are not restored. An older ledger makes consumed approvals look unused, so the service refuses to start while an anchor is newer than the restored state. That refusal is the protection working; do not weaken it.
+\`\`\`bash
 sudo ${CTL} uninstall
 \`\`\`
-Keeps state, configuration, backups and the account.
+Removes the daemon and the code. Keeps state, configuration, secrets, anchors, backups and the account.
 \`\`\`bash
-sudo ${CTL} uninstall --purge
+sudo ${CTL} uninstall --remove-data
 \`\`\`
-Removes state, configuration and the account. Verify: \`dscl . -read /Users/_praxisapproval\` must fail; \`ls /Library/LaunchDaemons | grep praxis\` must print nothing.
+Also removes state, configuration, secrets, anchors and the account, after a recovery archive is written to backups (which stay). Verify: \`dscl . -read /Users/_praxisapproval\` must fail; \`ls /Library/LaunchDaemons | grep praxis\` must print nothing.
+\`\`\`bash
+sudo ${CTL} uninstall --delete-everything praxis-delete-all-data
+\`\`\`
+Also deletes the backups. Irreversible. Nothing deletes backups otherwise.
 Desktop extension: uninstall it in Claude Desktop (Settings > Extensions); the previous extension file is in \`/Users/serg/work/praxis-split/desktop-install\` history only if you kept it.
 `);
 const roleZips = existsSync(roles) ? readdirSync(roles).filter((f) => /^praxis-.*\.zip$/.test(f)) : [];
