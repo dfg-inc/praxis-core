@@ -231,6 +231,11 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
       answer = await channel.ask(request);
     } catch (error) {
       if (error instanceof ApprovalNeedsInput) throw error;
+      // a channel that refuses with its own explanation (a plan that does not match) is passed through unchanged
+      if (error instanceof ApprovalError) {
+        logDecision(options.repo, { ...base, decision: "refused", channel: channel.kind, reason: error.message.slice(0, 200) });
+        throw error;
+      }
       logDecision(options.repo, { ...base, decision: "refused", channel: channel.kind, reason: error instanceof Error ? error.message : String(error) });
       throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, previewDetails(request));
     }
