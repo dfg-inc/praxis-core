@@ -9,13 +9,12 @@
  */
 import { createServer } from "node:http";
 import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { b64u, decisionChallenge, newNonce, verifyAssertion, verifyRegistration, WebAuthnError } from "./webauthn.mjs";
 
 const PLAN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CHALLENGE_TTL_MS = 120_000;
-const MAX_CHALLENGES = 32;
 const MAX_BODY = 65_536;
 
 const KIND_LABEL = {
@@ -62,7 +61,13 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
   const rpId = base.hostname;
   const operatorsPath = join(resolve(trustedDir), "operators.json");
   const pendingDir = join(resolve(sharedDir), "pending");
-  const challenges = new Map();
+  // Challenges are STATELESS: a challenge id is the record itself plus an HMAC under a per-process key, so issuing one stores
+  // nothing. The endpoint needs no credential (anyone local can call it, including the agent); with nothing stored there is
+  // nothing to fill, evict or exhaust, so no flood can delay or block the owner's decision. Single use is enforced where it
+  // matters: an id is recorded as spent only after a decision whose assertion VERIFIED (only the owner's authenticator can
+  // produce one), so the spent list cannot be grown by an attacker either.
+  const macKey = randomBytes(32);
+  const spent = new Map();
   // enrollSecret may be a function so a long-running service can open enrollment for a short window and close it again.
   let secret = typeof enrollSecret === "function" ? undefined : enrollSecret;
   // Wrong enrollment secrets are counted per secret value: five wrong guesses lock that secret until it is replaced.
@@ -115,33 +120,33 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
     nonce,
   });
 
-  function sweep() {
-    for (const [id, record] of challenges) if (record.expires <= now()) challenges.delete(id);
-  }
+  const mac = (payload) => createHmac("sha256", macKey).update(payload).digest("base64url");
 
-  // The endpoints are reachable by any local process, including the agent, and issuing a challenge needs no credential.
-  // So a plan may hold only a few open decisions (the oldest is dropped): spamming one plan cannot crowd out the owner's
-  // decision, and the total stays bounded by the number of pending plans.
-  const MAX_OPEN_PER_PLAN = 4;
   function issue(record) {
-    sweep();
-    if (record.planId) {
-      const open = [...challenges].filter(([, r]) => r.planId === record.planId);
-      for (const [id] of open.slice(0, Math.max(0, open.length - (MAX_OPEN_PER_PLAN - 1)))) challenges.delete(id);
-    }
-    if (challenges.size >= MAX_CHALLENGES) throw httpError(429, "TOO_MANY_CHALLENGES", "too many open decisions; try again shortly");
-    const id = newNonce();
-    challenges.set(id, { ...record, expires: now() + CHALLENGE_TTL_MS });
-    return id;
+    const payload = b64u.encode(Buffer.from(JSON.stringify({ ...record, expires: now() + CHALLENGE_TTL_MS })));
+    return `${payload}.${mac(payload)}`;
   }
 
-  // The challenge is single use: it is removed the moment a decision is attempted, successful or not.
+  /** Verifies a challenge id (authentic, unexpired, not spent). Does NOT spend it: see spend(). */
   function consume(id) {
-    const record = challenges.get(id);
-    challenges.delete(id);
-    if (!record) throw httpError(409, "CHALLENGE_UNKNOWN", "this decision was already used, expired, or never issued");
+    const [payload, tag] = String(id ?? "").split(".");
+    let record;
+    try {
+      const expected = Buffer.from(mac(payload ?? ""));
+      const given = Buffer.from(tag ?? "");
+      if (!payload || !tag || expected.length !== given.length || !timingSafeEqual(expected, given)) throw new Error("bad mac");
+      record = JSON.parse(b64u.decode(payload).toString("utf8"));
+    } catch {
+      throw httpError(409, "CHALLENGE_UNKNOWN", "this decision was already used, expired, or never issued");
+    }
+    if (spent.has(id)) throw httpError(409, "CHALLENGE_UNKNOWN", "this decision was already used, expired, or never issued");
     if (record.expires <= now()) throw httpError(410, "CHALLENGE_EXPIRED", "the decision expired; start again");
     return record;
+  }
+
+  function spend(id, record) {
+    for (const [key, expires] of spent) if (expires <= now()) spent.delete(key);
+    spent.set(id, record.expires);
   }
 
   function httpError(status, code, message) {
@@ -202,6 +207,7 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
         if (error instanceof WebAuthnError) throw httpError(403, error.code, error.message);
         throw httpError(400, "WEBAUTHN_MALFORMED", "the assertion could not be read");
       }
+      spend(body.challengeId, record);
       credential.signCount = assertion.signCount;
       credential.lastUsedAt = new Date(now()).toISOString();
       writeOperators(operators);
@@ -253,6 +259,7 @@ export function createOperatorWeb({ origin, trustedDir, sharedDir, contracts, si
         if (error instanceof WebAuthnError) throw httpError(403, error.code, error.message);
         throw httpError(400, "WEBAUTHN_MALFORMED", "the registration could not be read");
       }
+      spend(body.challengeId, record);
       const operators = readOperators();
       if (operators.credentials.some((item) => item.id === registered.credentialId)) {
         throw httpError(409, "ALREADY_ENROLLED", "that authenticator is already enrolled");
@@ -431,7 +438,7 @@ if(enroll)enroll.addEventListener('click',async()=>{
   };
   const server = createServer(handler);
 
-  return { server, handler, rpId, operatorsPath, openChallenges: () => challenges.size, closeEnrollment: () => (secret = undefined) };
+  return { server, handler, rpId, operatorsPath, openChallenges: () => 0, spentChallenges: () => spent.size, closeEnrollment: () => (secret = undefined) };
 }
 
 /** Approve at most once per plan, even under a race: the token file is created exclusively. */

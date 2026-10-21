@@ -36,10 +36,16 @@ if [ -f "$CODE/MANIFEST.json" ]; then
   DEST="$BACKUPS/$TS"
   mkdir "$DEST"
   # a failed backup stops the installation: an upgrade must never destroy the only record of past approvals
-  tar -C "$BASE" -czf "$DEST/state-and-config.tgz" state config.json 2>/dev/null || [ ! -d "$BASE/state" ]
+  ITEMS=""
+  [ -d "$BASE/state" ] && ITEMS="state"
+  [ -f "$BASE/config.json" ] && ITEMS="$ITEMS config.json"
+  if [ -n "$ITEMS" ]; then
+    # shellcheck disable=SC2086
+    tar -C "$BASE" -czf "$DEST/state-and-config.tgz" $ITEMS || { echo "praxis-approval-service: backup failed; nothing was changed" >&2; exit 1; }
+  fi
   cp -R "$CODE" "$DEST/code"
   printf '%s\n' "$PREV" > "$DEST/version"
   # keep the five most recent backups
-  ls -1 "$BACKUPS" | sort | head -n -5 2>/dev/null | while read -r old; do rm -rf "${BACKUPS:?}/$old"; done || true
+  ls -1 "$BACKUPS" | sort -r | tail -n +6 | while read -r old; do rm -rf "${BACKUPS:?}/$old"; done
 fi
 exit 0

@@ -1,5 +1,6 @@
 /** Executable Quality checks for the platform adapters and installers. Declared honestly: what ran, and what could not. */
 import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { ADAPTERS } from "./index.mjs";
@@ -56,7 +57,8 @@ export function platformStatusesAreHonest() {
 
 export function macosPackageBuiltAndInspected() {
   if (process.platform !== "darwin") return { skipped: "not macOS" };
-  const out = JSON.parse(execFileSync(nodeBinary(), [join(here, "../packaging/build.mjs"), "--variant", "production", "--macos-pkg"], { encoding: "utf8" }));
+  const scratch = mkdtempSync("/tmp/pas-q-pkg-");
+  const out = JSON.parse(execFileSync(nodeBinary(), [join(here, "../packaging/build.mjs"), "--variant", "production", "--macos-pkg"], { encoding: "utf8", env: { ...process.env, PRAXIS_BUILD_OUT: scratch } })); // scratch directory: never the release package
   const files = execFileSync("pkgutil", ["--payload-files", out.pkg], { encoding: "utf8" }).split("\n").filter((f) => f && !f.includes("._"));
   const signature = spawnSync("pkgutil", ["--check-signature", out.pkg], { encoding: "utf8" }).stdout;
   return { daemonPlist: files.some((f) => f.endsWith("co.praxis.approval-service.plist") && f.includes("LaunchDaemons")), agentPlist: files.some((f) => /LaunchAgents/.test(f)), ctl: files.some((f) => f.endsWith("/code/ctl.sh")), signed: !/no signature/i.test(signature) };

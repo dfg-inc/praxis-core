@@ -9,7 +9,7 @@
  */
 import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -27,7 +27,7 @@ const flag = (name, fallback) => {
 const variant = flag("--variant", "production");
 if (variant !== "production" && variant !== "test") throw new Error("--variant must be production or test");
 const versionForArtifacts = process.env.PRAXIS_BUILD_VERSION_OVERRIDE || SERVICE_VERSION; // test builds of an "upgrade" artifact only; the repository version is untouched
-const out = resolve(root, "dist/approval-service", process.env.PRAXIS_BUILD_VERSION_OVERRIDE ? `${variant}-${versionForArtifacts}` : variant);
+const out = process.env.PRAXIS_BUILD_OUT ? resolve(process.env.PRAXIS_BUILD_OUT) : resolve(root, "dist/approval-service", process.env.PRAXIS_BUILD_VERSION_OVERRIDE ? `${variant}-${versionForArtifacts}` : variant);
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 rmSync(out, { recursive: true, force: true });
@@ -92,19 +92,53 @@ if (args.includes("--macos-pkg")) {
   const code = join(stage, baseDir, "code");
   mkdirSync(join(code, "node/bin"), { recursive: true });
   copyFileSync(join(payload, "praxis-approval-service.mjs"), join(code, "praxis-approval-service.mjs"));
-  // The daemon must not execute code from locations the agent can write, so it ships its own root-owned Node. A Node
-  // that links libraries from elsewhere (Homebrew, nvm) is not self-contained and is refused.
-  const nodeSource = flag("--node");
+  // The daemon must not execute code from locations the agent can write, so it ships its own root-owned Node.
+  // Two ways to supply it, both verified (nothing here can be switched off):
+  //   --node-tarball <node-vX-darwin-ARCH.tar.gz> --node-shasums <SHASUMS256.txt> [--node-source-url <url>]
+  //       the archive's SHA-256 must equal its line in the checksum file; the binary inside is then verified as below.
+  //   --node <binary>   (a binary you extracted yourself; verified as below)
+  // Verified for the binary itself: Mach-O of the requested architecture, links only system libraries (never Homebrew or
+  // nvm), carries a valid Developer ID signature of the Node.js Foundation (team HX7739G8FX), and runs and reports its version.
   const pkgArch = flag("--macos-arch") ?? (process.arch === "arm64" ? "arm64" : "x64");
   manifest.macosArch = pkgArch;
-  manifest.nodeRuntime = { bundled: false, reason: "no --node <self-contained official Node binary> was supplied; the package payload is complete except the runtime, so the daemon cannot start until one is installed at \"/Library/Application Support/Praxis/ApprovalService/code/node/bin/node\"" };
+  manifest.nodeRuntime = { bundled: false, reason: "no Node supplied (--node-tarball/--node-shasums or --node); the package payload is complete except the runtime, so the daemon cannot start until one is installed at \"/Library/Application Support/Praxis/ApprovalService/code/node/bin/node\"" };
+  let nodeSource = flag("--node");
+  let provenance;
+  const tarball = flag("--node-tarball");
+  if (tarball) {
+    const shasums = flag("--node-shasums");
+    if (!shasums) throw new Error("--node-tarball needs --node-shasums <SHASUMS256.txt>");
+    const line = readFileSync(shasums, "utf8").split("\n").find((l) => l.endsWith(`  ${tarball.split("/").pop()}`));
+    if (!line) throw new Error(`${tarball.split("/").pop()} is not listed in ${shasums}`);
+    const expected = line.split(/\s+/)[0];
+    const actual = sha(tarball);
+    if (actual !== expected) throw new Error(`SHA-256 mismatch for ${tarball}: expected ${expected}, got ${actual}`);
+    const extractDir = join(out, "node-extract");
+    mkdirSync(extractDir, { recursive: true });
+    execFileSync("tar", ["-xzf", tarball, "-C", extractDir]);
+    nodeSource = join(extractDir, tarball.split("/").pop().replace(/\.tar\.gz$/, ""), "bin/node");
+    provenance = { source: flag("--node-source-url") ?? "(not recorded)", archive: tarball.split("/").pop(), archiveSha256: actual, checksumFile: { name: shasums.split("/").pop(), sha256: sha(shasums), line }, checksumVerified: true };
+  }
   if (nodeSource) {
+    const need = pkgArch === "arm64" ? "arm64" : "x86_64";
+    const archs = execFileSync("lipo", ["-archs", nodeSource], { encoding: "utf8" }).trim().split(/\s+/);
+    if (!archs.includes(need)) throw new Error(`the Node binary is ${archs.join("+")}, the package is for ${pkgArch}`);
     const deps = execFileSync("otool", ["-L", nodeSource], { encoding: "utf8" }).split("\n").slice(1).map((l) => l.trim().split(" ")[0]).filter(Boolean);
     const foreign = deps.filter((d) => !d.startsWith("/usr/lib/") && !d.startsWith("/System/Library/"));
     if (foreign.length) throw new Error(`--node is not self-contained (it loads ${foreign.slice(0, 3).join(", ")}); use the official nodejs.org binary`);
+    execFileSync("codesign", ["--verify", "--strict", nodeSource], { stdio: "pipe" });
+    const detail = spawnSync("codesign", ["-dv", "--verbose=2", nodeSource], { encoding: "utf8" }).stderr;
+    const team = /TeamIdentifier=(\S+)/.exec(detail)?.[1];
+    if (team !== "HX7739G8FX") throw new Error(`the Node binary is not signed by the Node.js Foundation (team ${team ?? "none"})`);
+    const reported = execFileSync(nodeSource, ["--version"], { encoding: "utf8" }).trim();
+    const runs = execFileSync(nodeSource, ["-p", "process.arch"], { encoding: "utf8" }).trim();
+    if (runs !== (pkgArch === "arm64" ? "arm64" : "x64")) throw new Error(`the Node binary reports architecture ${runs}`);
+    mkdirSync(join(code, "node/bin"), { recursive: true });
     copyFileSync(nodeSource, join(code, "node/bin/node"));
     chmodSync(join(code, "node/bin/node"), 0o755);
-    manifest.nodeRuntime = { bundled: true, sha256: sha(nodeSource), version: execFileSync(nodeSource, ["--version"], { encoding: "utf8" }).trim() };
+    execFileSync("codesign", ["--verify", "--strict", join(code, "node/bin/node")], { stdio: "pipe" });
+    manifest.nodeRuntime = { bundled: true, version: reported, arch: pkgArch, sha256: sha(join(code, "node/bin/node")), signedBy: `Developer ID Application: Node.js Foundation (${team})`, linksOnly: "system libraries", ...(provenance ? { provenance } : { provenance: { source: "a binary supplied with --node; not checked against a checksum file" } }) };
+    if (tarball) rmSync(join(out, "node-extract"), { recursive: true, force: true });
   }
   copyFileSync(join(here, "macos-ctl.sh"), join(code, "ctl.sh"));
   chmodSync(join(code, "ctl.sh"), 0o755);

@@ -98,6 +98,9 @@ export async function createService({ paths, config, mode, version, platformId, 
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
+  // The plan lifetime comes from the root-owned configuration (1 s to 24 h, enforced by planTtlMs()); the agent's environment cannot change it.
+  if (config.planTtlMs !== undefined) process.env.PRAXIS_APPROVAL_PLAN_TTL_MS = String(config.planTtlMs);
+
   const audit = createAudit(join(dirs.audit, "chain.jsonl"));
   const privatePath = join(dirs.trusted, "private.pem");
   const publicPath = join(dirs.trusted, "public.pem");
@@ -109,6 +112,7 @@ export async function createService({ paths, config, mode, version, platformId, 
   }
   const anchors = createAnchors({
     sinks: [join(state, "anchors"), ...(config.auditAnchorDirs ?? [])],
+    requiredSinks: config.auditAnchorDirs ?? [],
     privateKeyPem: readFileSync(privatePath, "utf8"),
     publicKeyPem: readFileSync(publicPath, "utf8"),
     audit,
@@ -306,6 +310,14 @@ export async function createService({ paths, config, mode, version, platformId, 
   const MAX_PENDING_TOTAL = 500;
   /** The agent can submit freely, so the queue the owner has to read is bounded. */
   function enforceQueueLimits(repository) {
+    // requests nobody decided before they expired no longer count and no longer clutter the owner's list
+    for (const file of readdirSync(join(dirs.shared, "pending")).filter((f) => f.endsWith(".json"))) {
+      const plan = readJson(join(dirs.shared, "pending", file));
+      if (plan && Date.parse(plan.expiresAt) <= now().getTime()) {
+        mkdirSync(join(state, "archive"), { recursive: true, mode: 0o700 });
+        renameSync(join(dirs.shared, "pending", file), join(state, "archive", `${file.slice(0, -5)}.${now().toISOString().replace(/[:.]/g, "-")}.expired.json`));
+      }
+    }
     const files = readdirSync(join(dirs.shared, "pending")).filter((f) => f.endsWith(".json"));
     if (files.length >= MAX_PENDING_TOTAL) throw new ServiceError("TOO_MANY_PENDING", "too many requests are waiting for the owner; decide or let some expire first");
     let forRepo = 0;

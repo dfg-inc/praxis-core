@@ -24,12 +24,14 @@ install, upgrade, backup, rollback, health check, uninstall (state kept) and pur
 The account `_praxisapproval` is hidden, has `/usr/bin/false`, no home and no password, and a UID/GID that is free in both
 directories (200–399).
 
-1. **Build** (unprivileged, produces an unsigned package). Supply the **official** self-contained Node binary for the machine's
-   architecture; a Homebrew/nvm Node is refused because it loads libraries from user-writable locations:
-   `node tools/approval-service/packaging/build.mjs --variant production --macos-pkg --node /path/to/official/node`
-   (build once per architecture). Output and `MANIFEST.json` (component hashes, runtime hash, signing state) are in
-   `dist/approval-service/production/`. There was no official Node binary on the build machine, so **no runnable macOS package
-   has been produced yet**; the one built has the complete payload and no runtime.
+1. **Build** (unprivileged, produces an unsigned package) from the **official** Node.js archive for the machine's architecture
+   and its published checksum file (download both from nodejs.org yourself or use the release folder's copies):
+   `node tools/approval-service/packaging/build.mjs --variant production --macos-pkg --node-tarball node-v24.22.1-darwin-arm64.tar.gz --node-shasums SHASUMS256.txt --node-source-url https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-arm64.tar.gz`
+   The build refuses unless the archive's SHA-256 equals its line in the checksum file, the binary is a Mach-O of the package's
+   architecture, links only system libraries (never Homebrew or nvm), carries a valid Developer ID signature of the Node.js
+   Foundation (team HX7739G8FX) and runs. Build once per architecture. `MANIFEST.json` records the version, source, archive and
+   checksum-file hashes and the signer. The release folder (`release/macos-approval-service-<version>/`) contains the finished package, so
+   most owners skip this step and just verify `SHA256SUMS`.
 2. **Review** `dist/approval-service/production/macos/{preinstall,postinstall,ctl.sh}`. preinstall: refuses another architecture,
    macOS older than 12, a linked or non-root base directory, and a downgrade (unless you create `…/allow-downgrade`), then takes a
    root-only backup of any existing code, state and configuration (a failed backup stops the installation).

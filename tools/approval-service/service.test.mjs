@@ -739,6 +739,22 @@ describe("review regressions: retry after expiry or failure, crash recovery, que
     assert.equal(refused?.code, "TOO_MANY_PENDING");
   });
 
+  test("requests that expired undecided stop counting against the queue and leave the owner's list", async () => {
+    const { a, h } = await world();
+    stage(a.dir, "e.txt", "e\n");
+    for (let i = 0; i < 50; i += 1) await h.call(commitRequest(a.dir, `old ${i}`));
+    assert.equal((await h.call(commitRequest(a.dir, "one too many"))).code, "TOO_MANY_PENDING");
+    // time passes: every waiting request is now past its expiry
+    for (const f of readdirSync(join(h.stateDir, "shared", "pending"))) {
+      const file = join(h.stateDir, "shared", "pending", f);
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), expiresAt: new Date(Date.now() - 1000).toISOString() }));
+    }
+    const fresh = await h.call(commitRequest(a.dir, "after expiry"));
+    assert.equal(fresh.state, "awaiting-operator", JSON.stringify(fresh));
+    assert.equal(readdirSync(join(h.stateDir, "shared", "pending")).filter((f) => f.endsWith(".json")).length, 1);
+    assert.ok(readdirSync(join(h.stateDir, "archive")).filter((f) => f.endsWith(".expired.json")).length >= 50);
+  });
+
   test("a symbolic link nested under .git (a branch ref, a reflog) is refused", async () => {
     const { root, a, h } = await world();
     stage(a.dir, "n.txt", "n\n");
@@ -769,6 +785,53 @@ describe("review regressions: retry after expiry or failure, crash recovery, que
     if (squatPort) {
       await assert.rejects(() => startService({ fixedPort: squatPort }), /OPERATOR_PORT_TAKEN|EADDRINUSE|another process/);
       squat.close();
+    }
+  });
+});
+
+describe("audit pinning with a sink on a REAL separate volume (macOS disk image; same OS user)", { skip: process.platform !== "darwin" }, () => {
+  test("rolling the whole state back, and unmounting the sink, are both refused; the sink really is another filesystem", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const image = join(mkdtempSync("/tmp/pas-img-"), "sink.dmg");
+    let mount;
+    try {
+      execFileSync("hdiutil", ["create", "-size", "8m", "-fs", "APFS", "-volname", `PASSINK${process.pid}`, "-quiet", image]);
+      execFileSync("hdiutil", ["attach", "-nobrowse", "-quiet", image]);
+      mount = `/Volumes/PASSINK${process.pid}`;
+    } catch (error) {
+      assert.fail(`cannot create a disk image for the test: ${error.message}`);
+    }
+    try {
+      const sink = join(mount, "anchors");
+      mkdirSync(sink); // external sinks are created by the owner, never by the service
+      const { root, a, h } = await world({ extraConfig: { auditAnchorDirs: [sink] } });
+      assert.notEqual(statSync(sink.replace(/\/anchors$/, "")).dev, statSync(h.stateDir).dev, "the sink is on a different device from the state directory");
+      stage(a.dir, "v.txt", "v\n");
+      const s = await h.call(commitRequest(a.dir));
+      await h.decide(s.requestId);
+      assert.equal((await h.call({ op: "execute", requestId: s.requestId })).ok, true);
+      await h.close();
+      const oldAudit = readFileSync(h.service.audit.file, "utf8").split("\n").filter(Boolean).slice(0, 4).join("\n") + "\n";
+      // an attacker restores an older copy of the WHOLE state directory (audit, ledger, local anchors)...
+      writeFileSync(h.service.audit.file, oldAudit);
+      rmSync(join(h.stateDir, "anchors"), { recursive: true, force: true });
+      rmSync(join(h.stateDir, "ledger"), { recursive: true, force: true });
+      const restart = () => startService({ root: mkdtempSync("/tmp/pas-"), state: h.stateDir, repos: h.config.repositories, extraConfig: { operator: { port: h.port, origin: h.origin }, auditAnchorDirs: [sink] } });
+      await assert.rejects(restart, /truncated or rolled back|ledger/);
+      // ...or removes the independent volume altogether
+      execFileSync("hdiutil", ["detach", "-quiet", mount]);
+      mount = undefined;
+      await assert.rejects(restart, /does not exist \(is its volume mounted\?\)/);
+      // and the same with the volume mounted again but EMPTY (an attacker re-creates the mount point): no anchor anywhere for a chain that has entries
+      execFileSync("hdiutil", ["create", "-size", "8m", "-fs", "APFS", "-volname", `PASSINK${process.pid}`, "-quiet", "-ov", image.replace("sink.dmg", "sink2.dmg")]);
+      execFileSync("hdiutil", ["attach", "-nobrowse", "-quiet", image.replace("sink.dmg", "sink2.dmg")]);
+      mount = `/Volumes/PASSINK${process.pid}`;
+      mkdirSync(sink);
+      await assert.rejects(restart, /no anchor exists in any sink|truncated or rolled back/);
+      void root;
+    } finally {
+      if (mount) execFileSync("hdiutil", ["detach", "-quiet", "-force", mount]);
+      rmSync(image, { force: true });
     }
   });
 });

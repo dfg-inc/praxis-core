@@ -36,7 +36,8 @@ try {
 }
 const build = (env) =>
   JSON.parse(
-    execFileSync(process.execPath, [join(core, "tools/approval-service/packaging/build.mjs"), "--variant", "production", "--linux-tar", "--linux-node", nodeBin, "--linux-arch", arch, "--linux-node-version", nodeVersion], { encoding: "utf8", env: { ...process.env, ...env } }),
+    // built into a scratch directory: this must never replace the release package under dist/approval-service/production
+    execFileSync(process.execPath, [join(core, "tools/approval-service/packaging/build.mjs"), "--variant", "production", "--linux-tar", "--linux-node", nodeBin, "--linux-arch", arch, "--linux-node-version", nodeVersion], { encoding: "utf8", env: { ...process.env, PRAXIS_BUILD_OUT: mkdtempSync(join(work, "out-")), ...env } }),
   );
 const v1 = build({});
 const v2 = build({ PRAXIS_BUILD_VERSION_OVERRIDE: "99.0.0-acceptance" });

@@ -124,21 +124,20 @@ describe("challenge binding and single use", () => {
     return { a, h, one };
   }
 
-  test("an assertion cannot be replayed, and a challenge is consumed even by a failed attempt", async () => {
+  test("an assertion cannot be replayed; a failed attempt does not spend a challenge (only a verified decision does)", async () => {
     const { h, one } = await pending();
+    const baseline = h.service.web.spentChallenges(); // the enrollment already spent one
     const c = await h.post("/api/challenge", { planId: one.requestId, decision: "approve" });
     const a = h.device.assert({ challenge: c.json.publicKey.challenge });
     const cred = { id: a.id, response: { clientDataJSON: a.clientDataJSON, authenticatorData: a.authenticatorData, signature: a.signature } };
     const bad = await h.post("/api/decide", { challengeId: c.json.challengeId, credential: { ...cred, response: { ...cred.response, signature: cred.response.signature.slice(0, -4) + "AAAA" } } });
     assert.notEqual(bad.status, 200);
-    const afterBad = await h.post("/api/decide", { challengeId: c.json.challengeId, credential: cred });
-    assert.equal(afterBad.status, 409, "the challenge was consumed by the failed attempt");
-    const c2 = await h.post("/api/challenge", { planId: one.requestId, decision: "approve" });
-    const a2 = h.device.assert({ challenge: c2.json.publicKey.challenge });
-    const ok = await h.post("/api/decide", { challengeId: c2.json.challengeId, credential: { id: a2.id, response: { clientDataJSON: a2.clientDataJSON, authenticatorData: a2.authenticatorData, signature: a2.signature } } });
-    assert.equal(ok.status, 200);
-    const replay = await h.post("/api/decide", { challengeId: c2.json.challengeId, credential: { id: a2.id, response: { clientDataJSON: a2.clientDataJSON, authenticatorData: a2.authenticatorData, signature: a2.signature } } });
-    assert.equal(replay.status, 409);
+    assert.equal(h.service.web.spentChallenges(), baseline, "a garbage assertion must not be able to grow any state");
+    const ok = await h.post("/api/decide", { challengeId: c.json.challengeId, credential: cred });
+    assert.equal(ok.status, 200, "the owner's genuine assertion for the same challenge still works after someone else's failed attempt");
+    const replay = await h.post("/api/decide", { challengeId: c.json.challengeId, credential: cred });
+    assert.equal(replay.status, 409, "the verified decision spent the challenge");
+    assert.equal(h.service.web.spentChallenges(), baseline + 1);
   });
 
   test("an assertion for one plan or one decision cannot decide another", async () => {
@@ -179,10 +178,40 @@ describe("challenge binding and single use", () => {
     assert.equal((await h.call({ op: "status", requestId: one.requestId })).state, "awaiting-operator");
   });
 
-  test("spamming challenges for one plan cannot crowd out the owner's decision", async () => {
+  test("F-NAS-011: a flood of challenge requests stores nothing, blocks nothing and cannot delay the owner's decision", async () => {
     const { h, one } = await pending();
-    for (let i = 0; i < 400; i += 1) await h.post("/api/challenge", { planId: one.requestId, decision: "approve" });
-    assert.equal((await h.decide(one.requestId)).status, 200);
+    const baseline = h.service.web.spentChallenges();
+    const owner = await h.post("/api/challenge", { planId: one.requestId, decision: "approve" }); // the owner's own challenge, issued before the flood
+    const started = Date.now();
+    await Promise.all(Array.from({ length: 10 }, async () => {
+      for (let i = 0; i < 300; i += 1) await h.post("/api/challenge", { planId: one.requestId, decision: i % 2 ? "approve" : "reject" });
+    }));
+    assert.equal(h.service.web.openChallenges(), 0, "nothing is stored per challenge");
+    assert.equal(h.service.web.spentChallenges(), baseline);
+    const a = h.device.assert({ challenge: owner.json.publicKey.challenge });
+    const decided = await h.post("/api/decide", { challengeId: owner.json.challengeId, credential: { id: a.id, response: { clientDataJSON: a.clientDataJSON, authenticatorData: a.authenticatorData, signature: a.signature } } });
+    assert.equal(decided.status, 200, "the challenge issued BEFORE the flood still decides; nothing evicted it");
+    assert.ok(Date.now() - started < 60_000);
+    assert.equal((await h.call({ op: "health" })).ok, true);
+  });
+
+  test("a challenge id cannot be forged or altered: changing the plan, decision or expiry invalidates it", async () => {
+    const { a, h, one } = await pending();
+    stage(a.dir, "other.txt", "o\n");
+    const two = await h.call({ op: "submit", operation: "git_commit", repository: a.dir, workItemId: "WI-1", params: { message: "two", paths: ["f.txt", "other.txt"] } });
+    const issued = await h.post("/api/challenge", { planId: one.requestId, decision: "reject" });
+    const [payload, tag] = issued.json.challengeId.split(".");
+    const record = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    const assertion = h.device.assert({ challenge: issued.json.publicKey.challenge });
+    const cred = { id: assertion.id, response: { clientDataJSON: assertion.clientDataJSON, authenticatorData: assertion.authenticatorData, signature: assertion.signature } };
+    const forge = (patch) => `${Buffer.from(JSON.stringify({ ...record, ...patch })).toString("base64url")}.${tag}`;
+    for (const patch of [{ planId: two.requestId }, { decision: "approve" }, { expires: record.expires + 3_600_000 }]) {
+      assert.equal((await h.post("/api/decide", { challengeId: forge(patch), credential: cred })).status, 409, JSON.stringify(patch));
+    }
+    assert.equal((await h.post("/api/decide", { challengeId: "x.y", credential: cred })).status, 409);
+    assert.equal((await h.post("/api/decide", { challengeId: undefined, credential: cred })).status, 409);
+    assert.equal((await h.call({ op: "status", requestId: one.requestId })).state, "awaiting-operator");
+    assert.equal((await h.call({ op: "status", requestId: two.requestId })).state, "awaiting-operator");
   });
 });
 

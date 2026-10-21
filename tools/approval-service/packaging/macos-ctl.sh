@@ -16,7 +16,13 @@ backup() {
   mkdir -p "$BACKUPS"; chown root:wheel "$BACKUPS"; chmod 0700 "$BACKUPS"
   DEST="$BACKUPS/$(date +%Y%m%d%H%M%S)"
   mkdir "$DEST"
-  tar -C "$BASE" -czf "$DEST/state-and-config.tgz" state config.json || die "backup failed; nothing was changed"
+  ITEMS=""
+  [ -d "$BASE/state" ] && ITEMS="state"
+  [ -f "$BASE/config.json" ] && ITEMS="$ITEMS config.json"
+  if [ -n "$ITEMS" ]; then
+    # shellcheck disable=SC2086
+    tar -C "$BASE" -czf "$DEST/state-and-config.tgz" $ITEMS || die "backup failed; nothing was changed"
+  fi
   cp -R "$CODE" "$DEST/code"
   echo "backup: $DEST"
 }

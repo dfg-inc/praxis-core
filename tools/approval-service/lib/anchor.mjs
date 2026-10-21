@@ -15,13 +15,13 @@
  * `exportWitness` produces a signed head the owner can keep off the machine, and `verifyWitness` checks a chain against it.
  */
 import { createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const canonical = (value) => JSON.stringify(value, Object.keys(value).sort());
 const body = (a) => Buffer.from(canonical({ seq: a.seq, hash: a.hash, ledgerCount: a.ledgerCount, at: a.at, kind: "praxis.audit.anchor.v1" }));
 
-export function createAnchors({ sinks, privateKeyPem, publicKeyPem, audit, ledgerDir, now = () => new Date() }) {
+export function createAnchors({ sinks, requiredSinks = [], privateKeyPem, publicKeyPem, audit, ledgerDir, now = () => new Date() }) {
   const ledgerCount = () => (existsSync(ledgerDir) ? readdirSync(ledgerDir).filter((f) => f.endsWith(".json")).length : 0);
   const latestPath = (dir) => join(dir, "latest.json");
   const read = (dir) => {
@@ -71,6 +71,20 @@ export function createAnchors({ sinks, privateKeyPem, publicKeyPem, audit, ledge
       if (entries.length < anchor.seq) problems.push(`audit chain has ${entries.length} entries but ${dir} anchors sequence ${anchor.seq}: truncated or rolled back`);
       else if (at.hash !== anchor.hash) problems.push(`audit entry ${anchor.seq} differs from the anchor in ${dir}: rewritten or rolled back`);
       if (ledgerCount() < anchor.ledgerCount) problems.push(`ledger has ${ledgerCount()} consumed approvals but ${dir} anchors ${anchor.ledgerCount}: ledger rolled back`);
+    }
+    // An external sink is created by the owner, never by the service: a path that is not there is an unmounted volume or a removed directory.
+    for (const dir of requiredSinks) {
+      let ok = false;
+      try {
+        ok = statSync(dir).isDirectory();
+      } catch {
+        /* missing */
+      }
+      if (!ok) problems.push(`the audit anchor sink ${dir} does not exist (is its volume mounted?); it must be created by the owner`);
+    }
+    // Anchors are written from the first start on. A chain that has grown beyond its first entry while no anchor exists anywhere means the anchors were removed, or the state was restored without them.
+    if (present.length === 0 && entries.some((e) => e.event !== "key-generated")) {
+      problems.push("the audit chain has entries but no anchor exists in any sink: anchors were removed, or the state was restored without them");
     }
     if (present.length && present.length < anchors.length) {
       problems.push(`anchor missing in ${anchors.filter((a) => !a.anchor).map((a) => a.dir).join(", ")} while others have one: a sink was deleted or restored`);

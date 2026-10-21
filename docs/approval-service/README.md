@@ -107,7 +107,7 @@ Stated limits (residual risks), none hidden:
 * **Enrollment is a trust root.** Whoever can open an enrollment window (write to the service's state, i.e. the
   service principal or an administrator) can add an authenticator that approves everything. An administrator or kernel
   compromise is out of scope. A virtual authenticator is blocked only while enrollment is closed and its code unknown.
-* **Audit pinning has limits.** Signed head records go to independent sinks (`auditAnchorDirs`) and an off-host witness can be exported; an attacker who can rewrite the chain, every sink and the signing key together still wins. See SECURITY-REVIEW.md.
+* **Audit pinning has limits.** Signed head records go to sinks (`auditAnchorDirs`, created by the owner) and an off-host witness can be exported. Tests used a separate volume for one sink, but never a sink the service identity cannot write, and never a witness stored off the machine. An attacker who can rewrite the chain, every sink and the signing key together still wins. See SECURITY-REVIEW.md.
 * **Review coverage.** Two independent read-only reviews and the regression tests are in SECURITY-REVIEW.md; neither is a human security review, and the Windows pieces were never run.
 * **The service shares a repository's `.git` with the agent.** It needs an inheritable write ACL there (per repository, by the owner); files and directories each side creates must stay writable by the other. A repository with unusual Git settings (LFS, worktree configs) is refused.
 * **Repositories with other Git settings are refused** (Git LFS, worktree configs): only an explicit list of settings is accepted.

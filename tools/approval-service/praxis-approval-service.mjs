@@ -68,7 +68,7 @@ async function main() {
     const { createAnchors, verifyWitness } = await import("./lib/anchor.mjs");
     const { readFileSync } = await import("node:fs");
     const audit = createAudit(`${paths.stateDir}/audit/chain.jsonl`);
-    const anchors = createAnchors({ sinks: [`${paths.stateDir}/anchors`, ...(config.auditAnchorDirs ?? [])], privateKeyPem: readFileSync(`${paths.stateDir}/trusted/private.pem`, "utf8"), publicKeyPem: readFileSync(`${paths.stateDir}/trusted/public.pem`, "utf8"), audit, ledgerDir: `${paths.stateDir}/ledger` });
+    const anchors = createAnchors({ sinks: [`${paths.stateDir}/anchors`, ...(config.auditAnchorDirs ?? [])], requiredSinks: config.auditAnchorDirs ?? [], privateKeyPem: readFileSync(`${paths.stateDir}/trusted/private.pem`, "utf8"), publicKeyPem: readFileSync(`${paths.stateDir}/trusted/public.pem`, "utf8"), audit, ledgerDir: `${paths.stateDir}/ledger` });
     if (cmd === "audit-witness") {
       // A signed statement of the current head. Store it OFF this machine (or where the service identity cannot write): it is the pin an attacker holding the whole state directory cannot rewrite.
       print(anchors.exportWitness());
@@ -98,11 +98,25 @@ async function main() {
     if (!repo) throw new Error("allow-repo <path> is required");
     const adapter = adapterFor(os);
     const principal = adapter.defaults().principal;
+    const me = process.env.SUDO_USER || process.env.USER || "<your user>";
+    const remote = flag("--remote");
     const id = createHash("sha256").update(repo).digest("hex").slice(0, 8);
+    const targets = [`${repo}/.git`, ...(remote ? [remote] : [])];
+    let step2;
+    if (os === "darwin") {
+      // Both principals get an INHERITED entry: what the service creates must stay writable by the owner and the other way round.
+      const perms = "list,add_file,search,add_subdirectory,delete_child,read,write,append,execute,delete,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit";
+      step2 = targets.map((t) => `   sudo chmod -R +a "${principal} allow ${perms}" "${t}"\n   sudo chmod -R +a "${me} allow ${perms}" "${t}"`).join("\n");
+    } else if (os === "linux") {
+      step2 = targets.map((t) => `   sudo setfacl -R -m u:${principal}:rwX -m u:${me}:rwX "${t}" && sudo setfacl -R -d -m u:${principal}:rwX -m u:${me}:rwX "${t}"`).join("\n");
+    } else {
+      step2 = targets.map((t) => `   icacls "${t}" /grant "${principal}:(OI)(CI)M"`).join("\n");
+    }
     print(`To let the approval service operate on ${repo} (an administrator runs these; Praxis never does):\n` +
-      `1. Add to the "repositories" array in ${adapter.defaults().configFile}:\n   { "path": ${JSON.stringify(repo)}, "remotes": { "origin": "<exact remote URL>" }, "branches": ["feature/*"], "provider": { "kind": "github", "instanceId": "<host/owner/repo>" } }\n` +
-      (os === "darwin" ? `2. chmod -R +a "${principal} allow list,add_file,search,add_subdirectory,delete_child,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit" "${repo}/.git"\n` : os === "linux" ? `2. setfacl -R -m u:${principal}:rwX -d -m u:${principal}:rwX "${repo}/.git"\n` : `2. icacls "${repo}\\.git" /grant "${principal}:(OI)(CI)M"\n`) +
-      `   (ref ${id}) This grants write access to .git only; the service also refuses repositories whose Git configuration can run code.`);
+      `1. Add to the "repositories" array in ${adapter.defaults().configFile} (root-owned; edit with sudo):\n   { "path": ${JSON.stringify(repo)}, "remotes": { "origin": ${JSON.stringify(remote ?? "<exact remote URL>")} }, "branches": ["feature/*"], "provider": { "kind": "github", "instanceId": "<host/owner/repo>" } }\n` +
+      `   ("branches" must list what the service may touch; an empty list allows none.)\n` +
+      `2. Grant access, with inheritance, on the repository's .git${remote ? " and the local remote" : ""} only:\n${step2}\n` +
+      `   (ref ${id}) The service also refuses repositories whose Git configuration can run code or redirect credentials.`);
     return;
   }
   console.error("usage: praxis-approval-service.mjs run|health|verify-isolation|enroll-code|audit-verify|audit-witness|install-plan|uninstall-plan|render-unit|allow-repo");

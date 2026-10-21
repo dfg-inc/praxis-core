@@ -12,8 +12,10 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
 const buildScript = join(root, "tools/approval-service/packaging/build.mjs");
-const dist = (variant, ...rest) => join(root, "dist/approval-service", variant, ...rest);
-const build = (...args) => JSON.parse(execFileSync(process.execPath, [buildScript, ...args], { encoding: "utf8" }));
+// Tests build into their own directory: they must never overwrite the real release package in dist/approval-service/production.
+const TEST_OUT = mkdtempSync("/tmp/pas-artifact-");
+const dist = (variant, ...rest) => join(TEST_OUT, ...rest);
+const build = (...args) => JSON.parse(execFileSync(process.execPath, [buildScript, ...args], { encoding: "utf8", env: { ...process.env, PRAXIS_BUILD_OUT: TEST_OUT } }));
 
 function config(mode) {
   const dir = mkdtempSync("/tmp/pas-");
@@ -116,7 +118,7 @@ describe("macOS package (built unprivileged, never installed)", { skip: process.
     const nodePath = process.execPath;
     const deps = execFileSync("otool", ["-L", nodePath], { encoding: "utf8" });
     if (!/@rpath|\/opt\/homebrew|\/usr\/local\/(opt|lib)/.test(deps)) return; // this machine's node is self-contained; nothing to refuse
-    const attempt = spawnSync(process.execPath, [buildScript, "--variant", "production", "--macos-pkg", "--node", nodePath], { encoding: "utf8" });
+    const attempt = spawnSync(process.execPath, [buildScript, "--variant", "production", "--macos-pkg", "--node", nodePath], { encoding: "utf8", env: { ...process.env, PRAXIS_BUILD_OUT: TEST_OUT } });
     assert.notEqual(attempt.status, 0);
     assert.match(attempt.stderr, /not self-contained/);
   });

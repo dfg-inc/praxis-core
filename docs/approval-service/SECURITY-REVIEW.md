@@ -17,6 +17,19 @@ review or for the isolation acceptance on an installed service. Nothing here was
 | F-NAS-005 | The independent review was incomplete | Closed by round 2 below, with the limits stated there |
 | F-NAS-006 | Truncation or rollback of the audit chain was not detectable | Fixed, see "Audit pinning" |
 
+## Identifier map and the HIGH findings
+Round 2 used short ids while the Praxis Work Item uses `F-NAS-nnn`. They map as: H1 = F-NAS-008, H2 = F-NAS-007, M6 = F-NAS-011, round 1 as in the table above.
+Every HIGH or CRITICAL finding and its status:
+
+| Finding | Severity | Status | Reproducible test |
+|---|---|---|---|
+| F-NAS-007 / H2 repository config read by network operations | high | closed | `units.test.mjs` "a hostile .git in a parent of the working directory is never consulted"; `service.test.mjs` hostile-config and nested-link tests |
+| F-NAS-008 / H1 operator page impersonation on `::1` | high | closed with a stated residual | `service.test.mjs` "held on both loopback addresses… will not start if another process holds the port on ::1". Residual: the page is not TLS-bound to a service-held key |
+| F-NAS-009 installed-service isolation never run on macOS/Windows, systemd untested | high | **OPEN, needs the owner** | Linux container 44/44 is the only executed boundary test; macOS plan in MACOS-ACCEPTANCE.md |
+| F-NAS-010 no real person has approved anything | high | **OPEN, needs the owner** | MACOS-ACCEPTANCE.md steps D to F |
+
+No critical findings are known. The two open HIGH items cannot be closed by code or by an agent: they are acceptance runs on an installed service with a person present.
+
 ## Round 2 (this milestone)
 | Id | Sev | Finding | Status |
 |---|---|---|---|
@@ -27,7 +40,7 @@ review or for the isolation acceptance on an installed service. Nothing here was
 | M3 | Med | Agent text could forge lines in the approval view (work item id, file names with newlines, bidi characters) | Fixed: strict work item charset, JSON-quoted text with control/bidi characters shown as `\uXXXX`, paths with control characters refused |
 | M4 | Med | A merge-request body was approved by hash only | Fixed: shown quoted, length-limited |
 | M5 | Med | An expired approval permanently blocked re-approval of the same plan | Fixed: spent approvals are archived with an audit entry; failed-with-nothing-changed may be re-proposed; uncertain endings may not |
-| M6 | Med | Any local client can issue challenges, so an agent can crowd out the owner's decision (availability only) | Documented. Per-plan cap and total cap bound memory. The agent can delay a decision; it cannot make one. |
+| M6 / F-NAS-011 | Med | Any local client can issue challenges, so an agent could crowd out or evict the owner's decision | **Fixed.** Challenges are stateless (the id is the record plus an HMAC under a per-process key): issuing one stores nothing, so there is nothing to fill, evict or exhaust, and a challenge issued before a flood still decides after it. A challenge is recorded as spent only after an assertion VERIFIED, which only the owner's authenticator can produce, so the spent list cannot be grown by an attacker either. Forging or altering an id (plan, decision, expiry) fails the HMAC. `operator-ui.test.mjs` (flood of 3000 requests; forgery). Remaining abuse surface, bounded and not an authorization matter: CPU use by a local process, and the submit queue (50 waiting requests per repository, 500 total; requests that expired undecided stop counting). |
 | M7 | Med | Linux install plan produced agent-owned code and overwrote root config | Fixed: replaced by `install.sh` (root-owned install, config create-if-missing) |
 | M8 | Med | The installer did not verify the ancestors of the code directory | Fixed: macOS code lives under `/Library/Application Support/Praxis/…` and postinstall verifies every ancestor |
 | L1 | Low | No limits on queue growth; audit appends re-read the whole file | Fixed: per-repository and total queue caps; audit read cache keyed to the file's size and mtime |
@@ -52,13 +65,23 @@ execution the chain and ledger are compared with all sinks:
 
 * a chain shorter than an anchor, or a different hash at the anchored sequence → truncation or rollback;
 * a ledger with fewer consumptions than an anchor, or an audited consumption missing from the ledger → ledger rollback (replay);
-* one sink anchored and another empty or behind → a sink was deleted or restored; a forged anchor → invalid signature.
+* one sink anchored and another empty or behind → a sink was deleted or restored; a forged anchor → invalid signature;
+* an external sink directory that does not exist (an unmounted volume) → refuse; external sinks are created by the owner, never by the service;
+* a chain with entries but no anchor in any sink → anchors were removed or the state was restored without them.
 
 The service refuses to start on any of these and refuses to execute if one appears while running (`APPROVAL_INTEGRITY_FAILED`).
-`audit-witness` prints a signed head the owner stores **off the machine**; `audit-verify --witness FILE` checks the chain
-against it. Limits: an attacker who can rewrite the chain, every sink and the signing key together defeats the sinks, which is
-why the off-host witness exists; the witness only proves what it was taken at. Tests: truncated tail, whole-state rollback with
-an independent sink, deleted sink, forged anchor, rolled-back ledger, a mismatch while running, concurrent writers, witness.
+`audit-witness` prints a signed head the owner stores **off the machine**; `audit-verify --witness FILE` checks the chain against it.
+
+### What was verified with independent storage, and what was only simulated
+| Property | Verified how | Independent storage? |
+|---|---|---|
+| Truncated tail, whole-state rollback, deleted/forged anchor, rolled-back ledger, mismatch while running, concurrent writers | `service.test.mjs`, sinks in temporary directories | **Simulated**: another directory on the same filesystem, same OS user |
+| Rollback of the whole state directory is caught by a sink that is **not** rolled back; unmounting that sink is refused; an empty re-created mount is refused | `service.test.mjs` "REAL separate volume": a sink on a separate APFS disk image (a different device, checked with `stat.dev`) | **Real separate filesystem**, still the same OS user and still writable by the service |
+| The off-host witness catches a rollback that rewrote every local sink | `service.test.mjs` "witness", the witness held in memory | **Simulated**: no copy was ever stored off the machine |
+| A sink the service identity cannot write to or delete (append-only / another principal) | not tested | **Not verified.** The service must be able to write its sinks, so anchoring cannot protect against a compromised service identity; only the witness (off-host, owner-held) can |
+| Anchors that survive a reboot, restore from Time Machine, or an attacker with administrator rights | not tested | **Not verified** |
+
+An attacker who can rewrite the chain, every sink and the signing key together defeats the sinks. That is why the witness exists, and why it only counts if the owner actually stores it elsewhere.
 
 ## Areas covered and what was not
 Operator page and WebAuthn (XSS, CSRF, Host/Origin, challenge binding and single use, UV, RP ID, replay, enrollment):
