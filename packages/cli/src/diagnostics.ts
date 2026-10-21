@@ -150,7 +150,7 @@ export function doctorNextSteps(input: {
   }
   if (input.approval.mode === "no-dialog") {
     steps.push(
-      "This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them.",
+      "This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them. Some hosts (Claude Desktop) have their own tool-permission prompt instead of a dialog: praxis_doctor approval.client shows what yours declared, and the optional host-permission setting (docs/user-approval.md) uses that prompt with the exact plan in the tool arguments; it is weaker, because Praxis cannot see whether the prompt was shown.",
     );
   }
   if (input.dotenvRejected?.length) {

@@ -86,7 +86,7 @@ const issued = new WeakSet<object>();
 
 export const subjectDigest = (subject: string): string => `sha256:${createHash("sha256").update(subject, "utf8").digest("hex")}`;
 
-export type ApprovalErrorCode = "APPROVAL_REQUIRED" | "APPROVAL_REJECTED" | "APPROVAL_CLIENT_UI_REQUIRED" | "APPROVAL_SCOPE_MISMATCH" | "APPROVAL_EXPIRED";
+export type ApprovalErrorCode = "APPROVAL_REQUIRED" | "APPROVAL_REJECTED" | "APPROVAL_CLIENT_UI_REQUIRED" | "APPROVAL_SCOPE_MISMATCH" | "APPROVAL_EXPIRED" | "APPROVAL_TIMED_OUT";
 
 /** Standalone (no dependency on workflow.ts, which depends on this file). Carries the same `code` as WorkflowError. */
 export class ApprovalError extends Error {
