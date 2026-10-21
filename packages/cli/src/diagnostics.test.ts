@@ -70,18 +70,19 @@ describe("checkHttpUrl", () => {
 });
 
 describe("approvalDiagnostics", () => {
-  it("a client that cannot show a dialog is reported as an unverified fallback, in plain words", () => {
+  it("a client that cannot show a dialog is reported plainly: protected actions are not executed", () => {
     const report = approvalDiagnostics({});
-    expect(report).toMatchObject({ mode: "unverified-fallback", strict: false });
-    expect(report.note).toMatch(/cannot verify that a person was asked/);
-    expect(report.decisionLog).toBe(".praxis/approvals/decisions.jsonl");
+    expect(report.mode).toBe("no-dialog");
+    expect(report.note).toMatch(/NOT executed/);
+    expect(report.decisionLog).toMatch(/decisions/);
   });
 
-  it("a client that can ask is reported as client-ui; strict comes from the real environment", () => {
+  it("a client that can ask is reported as client-ui; the journal is outside the repository", () => {
     const channel = { kind: "client-elicitation" as const, ask: async () => ({ answer: "approve" as const }) };
-    expect(withApprovalChannel(channel, () => approvalDiagnostics({}))).toMatchObject({ mode: "client-ui", strict: false });
-    expect(withApprovalChannel(channel, () => approvalDiagnostics({ PRAXIS_APPROVAL_STRICT: "1" }))).toMatchObject({ mode: "client-ui", strict: true });
-    expect(approvalDiagnostics({ PRAXIS_APPROVAL_STRICT: "1" })).toMatchObject({ mode: "unverified-fallback", strict: true });
+    const repo = mkdtempSync(join(tmpdir(), "praxis-diag-"));
+    const report = withApprovalChannel(channel, () => approvalDiagnostics({}, repo));
+    expect(report.mode).toBe("client-ui");
+    expect(report.decisionLog.startsWith(repo)).toBe(false);
   });
 });
 
@@ -92,20 +93,18 @@ describe("doctorNextSteps", () => {
     project: "loaded" as const,
     quality: { status: "healthy" },
     providers: providerDiagnostics({}, ok),
-    approval: { mode: "client-ui", strict: false, note: "", decisionLog: ".praxis/approvals/decisions.jsonl" } as ApprovalReport,
+    approval: { mode: "client-ui", note: "", decisionLog: "" } as ApprovalReport,
   };
 
   it("has nothing to say when everything is in order (Jira is optional)", () => {
     expect(doctorNextSteps(base)).toEqual([]);
   });
 
-  it("says plainly what the fallback means when the client cannot show an approval dialog", () => {
+  it("says plainly that protected actions are not executed when the client cannot show an approval dialog", () => {
     const steps = doctorNextSteps({ ...base, approval: approvalDiagnostics({}) }).join("\n");
     expect(steps).toMatch(/cannot show an approval dialog/);
-    expect(steps).toMatch(/confirmation=YES/);
-    expect(steps).toMatch(/unverified/);
-    const strict = doctorNextSteps({ ...base, approval: approvalDiagnostics({ PRAXIS_APPROVAL_STRICT: "1" }) }).join("\n");
-    expect(strict).toMatch(/will be refused/);
+    expect(steps).toMatch(/NOT executed/);
+    expect(steps).toMatch(/nothing the agent says counts as your approval/);
   });
 
   it("gives actionable steps for a missing .project and a not-started Quality service", () => {
@@ -127,8 +126,8 @@ describe("doctorNextSteps", () => {
   });
 
   it("names the refused dotenv keys and says they were ignored", () => {
-    const steps = doctorNextSteps({ ...base, dotenvRejected: ["PRAXIS_APPROVAL_STRICT"] }).join("\n");
-    expect(steps).toMatch(/PRAXIS_APPROVAL_STRICT.*ignored/);
+    const steps = doctorNextSteps({ ...base, dotenvRejected: ["PRAXIS_TEST_APPROVALS"] }).join("\n");
+    expect(steps).toMatch(/PRAXIS_TEST_APPROVALS.*ignored/);
   });
 
   it("a missing repository short-circuits", () => {
@@ -155,13 +154,13 @@ describe("doctor end to end", () => {
     const out = (await doctorOp({ repo } as never, "test")) as Record<string, any>;
     expect(out.providers.jira.state).toBe("unconfigured");
     expect(out.providers.jira.required).toBe(false);
-    expect(out.approval.mode).toBe("unverified-fallback");
+    expect(out.approval.mode).toBe("no-dialog");
     expect(out.project.status).toBe("missing");
     expect(out.nextSteps.join("\n")).toMatch(/praxis_project_init_preview/);
     expect(out.nextSteps.join("\n")).toMatch(/praxis_quality_ensure/);
     // Jira is optional: no step is about Jira configuration.
     expect(out.nextSteps.filter((step: string) => /^jira:/i.test(step))).toEqual([]);
-    expect(out.approval).toMatchObject({ mode: "unverified-fallback", strict: false });
+    expect(out.approval).toMatchObject({ mode: "no-dialog" });
     expect(out.security).toBeUndefined();
     expect(out.approvalService).toBeUndefined();
   });
@@ -169,15 +168,13 @@ describe("doctor end to end", () => {
   it("Desktop placeholders for every optional setting leave all providers unconfigured", async () => {
     process.env.PRAXIS_JIRA_BASE_URL = "${user_config.jira_base_url}";
     process.env.PRAXIS_GITLAB_TOKEN = "${user_config.gitlab_token}";
-    process.env.PRAXIS_APPROVAL_STRICT = "${user_config.approval_strict}";
     const repo = mkdtempSync(join(tmpdir(), "praxis-doctor-"));
     mkdirSync(join(repo, ".git"), { recursive: true });
     const out = (await doctorOp({ repo } as never, "test")) as Record<string, any>;
     expect(out.providers.jira.state).toBe("unconfigured");
     expect(out.providers.gitlab.state).toBe("unconfigured");
-    expect(out.approval.strict).toBe(false);
     expect(out.hostPlaceholdersIgnored).toEqual(
-      expect.arrayContaining(["PRAXIS_JIRA_BASE_URL", "PRAXIS_GITLAB_TOKEN", "PRAXIS_APPROVAL_STRICT"]),
+      expect.arrayContaining(["PRAXIS_JIRA_BASE_URL", "PRAXIS_GITLAB_TOKEN"]),
     );
   });
 });

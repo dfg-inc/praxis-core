@@ -1,10 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   ApprovalError,
   approvalModeReport,
+  decisionLogPath,
   approvalsGivenInThisCall,
   createUserApproval,
   hasMutationLease,
@@ -36,14 +37,8 @@ const channel = (answer: AskAnswer | Error, seen: ApprovalRequest[] = []): UserA
   },
 });
 
-const strictBefore = process.env.PRAXIS_APPROVAL_STRICT;
-afterEach(() => {
-  if (strictBefore === undefined) delete process.env.PRAXIS_APPROVAL_STRICT;
-  else process.env.PRAXIS_APPROVAL_STRICT = strictBefore;
-});
-
 describe("asking the user through the client", () => {
-  it("Approve gives an approval bound to this action and subject, with client-ui assurance", async () => {
+  it("Approve gives an approval bound to this action and subject", async () => {
     const seen: ApprovalRequest[] = [];
     const approval = await withApprovalChannel(channel({ answer: "approve" }, seen), () => obtainUserApproval(request()));
     expect(seen).toHaveLength(1);
@@ -63,57 +58,56 @@ describe("asking the user through the client", () => {
     expect(dismissed.details.dismissed).toBe(true);
   });
 
-  it("a client that fails to ask is not a yes", async () => {
+  it("a client that fails to ask is not a yes, and the preview comes back", async () => {
     const result = await withApprovalChannel(channel(new Error("client went away")), () => obtainUserApproval(request())).catch((e) => e);
     expect(result.code).toBe("APPROVAL_REQUIRED");
     expect(result.message).toMatch(/client went away/);
+    expect(result.details.preview.summary).toBe(request().summary);
   });
 
-  it("the agent's confirmation=YES does not replace the dialog when a dialog exists", async () => {
+  it("the agent's confirmation=YES never replaces the dialog: a reject stays a reject", async () => {
     const result = await withApprovalChannel(channel({ answer: "reject" }), () => obtainUserApproval(request(), { confirmation: "YES" })).catch((e) => e);
     expect(result.code).toBe("APPROVAL_REJECTED");
   });
 
-  it("a dialog that is unavailable for this connection is handled as no dialog, never as a yes", async () => {
-    const result = await withApprovalChannel(channel({ answer: "unavailable" }), () => obtainUserApproval(request())).catch((e) => e);
-    expect(result.code).toBe("APPROVAL_REQUIRED");
-    const relayed = await withApprovalChannel(channel({ answer: "unavailable" }), () => obtainUserApproval(request(), { confirmation: "YES" }));
-    expect(relayed.assurance).toBe("unverified");
-    process.env.PRAXIS_APPROVAL_STRICT = "1";
-    const strictResult = await withApprovalChannel(channel({ answer: "unavailable" }), () => obtainUserApproval(request(), { confirmation: "YES" })).catch((e) => e);
-    expect(strictResult.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
-  });
-
-  it("confirmation=NO is a rejection even without a dialog", async () => {
-    const result = await obtainUserApproval(request(), { confirmation: "NO" }).catch((e) => e);
+  it("confirmation=NO is a rejection and asks nobody", async () => {
+    const seen: ApprovalRequest[] = [];
+    const result = await withApprovalChannel(channel({ answer: "approve" }, seen), () => obtainUserApproval(request(), { confirmation: "NO" })).catch((e) => e);
     expect(result.code).toBe("APPROVAL_REJECTED");
+    expect(seen).toHaveLength(0);
   });
 });
 
-describe("the fallback is named for what it is", () => {
-  it("without a dialog, confirmation=YES is accepted but recorded as unverified", async () => {
-    const approval = await obtainUserApproval(request(), { confirmation: "YES" });
-    expect(approval.assurance).toBe("unverified");
-    expect(approval.channel).toBe("confirmation-flag");
-    expect(approvalModeReport().mode).toBe("unverified-fallback");
+describe("a client without a dialog: nothing protected runs", () => {
+  it("is refused with the preview and a clear message, whatever the agent says", async () => {
+    for (const confirmation of [undefined, "YES", "yes", "I confirm", "APPROVED"]) {
+      const result = await obtainUserApproval(request(), { confirmation }).catch((e) => e);
+      expect(result.code, String(confirmation)).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+      expect(result.message).toMatch(/NOT executed/);
+      expect(result.message).toMatch(/not accepted as approval/);
+      expect(result.details).toMatchObject({ executed: false, preview: { action: "praxis_developer_git_commit", summary: "Commit README.md on feature/x", description: "One commit with README.md" } });
+    }
   });
 
-  it("without a dialog and without confirmation, nothing is approved", async () => {
-    const result = await obtainUserApproval(request()).catch((e) => e);
-    expect(result.code).toBe("APPROVAL_REQUIRED");
+  it("a dialog that is unavailable for this connection is handled the same way, never as a yes", async () => {
+    const result = await withApprovalChannel(channel({ answer: "unavailable" }), () => obtainUserApproval(request(), { confirmation: "YES" })).catch((e) => e);
+    expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
   });
 
-  it("strict mode refuses the fallback, at the ask and again at verification", async () => {
-    process.env.PRAXIS_APPROVAL_STRICT = "1";
-    const refused = await obtainUserApproval(request(), { confirmation: "YES" }).catch((e) => e);
-    expect(refused.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
-    delete process.env.PRAXIS_APPROVAL_STRICT;
-    const unverified = await obtainUserApproval(request(), { confirmation: "YES" });
-    process.env.PRAXIS_APPROVAL_STRICT = "1";
-    expect(() => verifyUserApproval(unverified, { action: request().action, subject: request().subject })).toThrow(/only approvals given in the client/);
-    const viaDialog = await withApprovalChannel(channel({ answer: "approve" }), () => obtainUserApproval(request()));
-    expect(() => verifyUserApproval(viaDialog, { action: request().action, subject: request().subject })).not.toThrow();
-    expect(approvalModeReport().strict).toBe(true);
+  it("the mode report says plainly that protected actions are not executed", () => {
+    expect(approvalModeReport().mode).toBe("no-dialog");
+    expect(approvalModeReport().note).toMatch(/NOT executed/);
+    expect(withApprovalChannel(channel({ answer: "approve" }), () => approvalModeReport().mode)).toBe("client-ui");
+  });
+
+  it("there is no unverified or strict mode any more", async () => {
+    process.env.PRAXIS_APPROVAL_STRICT = "0";
+    try {
+      const result = await obtainUserApproval(request(), { confirmation: "YES" }).catch((e) => e);
+      expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    } finally {
+      delete process.env.PRAXIS_APPROVAL_STRICT;
+    }
   });
 });
 
@@ -152,20 +146,21 @@ describe("writers run only inside an approved action", () => {
   });
 });
 
-describe("decisions are logged for later review", () => {
-  it("approved, rejected and dismissed decisions land in .praxis/approvals/decisions.jsonl with their assurance", async () => {
+describe("decisions are journaled outside the repository", () => {
+  it("approved, rejected and refused decisions land in the user's Praxis home, not in the repository", async () => {
     const repo = mkdtempSync(join(tmpdir(), "praxis-decisions-"));
     try {
       await withApprovalChannel(channel({ answer: "approve" }), () => obtainUserApproval(request(), { repo }));
       await withApprovalChannel(channel({ answer: "reject", reason: "not now" }), () => obtainUserApproval(request(), { repo })).catch(() => undefined);
-      await obtainUserApproval(request(), { repo, confirmation: "YES" });
-      const rows = readFileSync(join(repo, ".praxis", "approvals", "decisions.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
-      expect(rows.map((r) => [r.decision, r.assurance])).toEqual([
-        ["approved", "client-ui"],
-        ["rejected", "client-ui"],
-        ["approved", "unverified"],
-      ]);
+      await obtainUserApproval(request(), { repo, confirmation: "YES" }).catch(() => undefined);
+      const path = decisionLogPath(repo);
+      expect(path.startsWith(repo)).toBe(false);
+      expect(existsSync(join(repo, ".praxis"))).toBe(false);
+      const rows = readFileSync(path, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      expect(rows.map((r) => r.decision)).toEqual(["approved", "rejected", "refused"]);
       expect(rows[1].reason).toBe("not now");
+      expect(rows[0].repository).toBe(repo);
+      expect(JSON.stringify(rows)).not.toMatch(/unverified/);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
@@ -179,11 +174,6 @@ describe("the result can say how each approval was obtained", () => {
       return approvalsGivenInThisCall().map((a) => [a.action, a.assurance]);
     });
     expect(rows).toEqual([["praxis_developer_git_commit", "client-ui"]]);
-    const relayed = await withApprovalChannel(undefined, async () => {
-      await obtainUserApproval(request(), { confirmation: "YES" });
-      return approvalsGivenInThisCall().map((a) => a.assurance);
-    });
-    expect(relayed).toEqual(["unverified"]);
     expect(approvalsGivenInThisCall()).toEqual([]);
   });
 });

@@ -53,6 +53,8 @@ import {
   workPackageShowOp,
   type OpContext,
 } from "./operations.js";
+import { withApprovalChannel } from "@praxis/contracts";
+import { terminalApprovalChannel } from "./terminal-approval.js";
 
 function unbundledPackageVersion(): string {
   try {
@@ -213,7 +215,8 @@ export async function runCli(argv: string[]): Promise<ExitCode> {
 
   const command = path.join(".");
   try {
-    const data = await dispatch(path, flags, repo);
+    const terminal = terminalApprovalChannel();
+    const data = await (terminal ? withApprovalChannel(terminal, () => dispatch(path, flags, repo)) : dispatch(path, flags, repo));
     if (flags.json) {
       printJson(
         envelope({

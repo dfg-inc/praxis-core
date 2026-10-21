@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dotenvRejectedKeys, loadPraxisDotenv } from "./operations.js";
 
 const TRUST_KEYS = [
-  "PRAXIS_APPROVAL_STRICT",
+  "PRAXIS_APPROVAL_FORGED",
   "PRAXIS_TEST_APPROVALS",
   "PRAXIS_ALLOW_DOCKER_SOCKET",
   "PRAXIS_FIXTURE_EXECUTION",
@@ -37,7 +37,7 @@ describe("repository dotenv files cannot set approval or trust configuration", (
     const repo = repoWith(
       ".env.praxis",
       [
-        "PRAXIS_APPROVAL_STRICT=0",
+        "PRAXIS_APPROVAL_FORGED=1",
         "PRAXIS_TEST_APPROVALS=1",
         "PRAXIS_ALLOW_DOCKER_SOCKET=1",
         "PRAXIS_FIXTURE_EXECUTION=1",
@@ -53,17 +53,17 @@ describe("repository dotenv files cannot set approval or trust configuration", (
   });
 
   it("reports the rejected key names, never their values", () => {
-    const repo = repoWith(".env", "PRAXIS_APPROVAL_STRICT=0\nPRAXIS_TEST_APPROVALS=super-secret\n");
+    const repo = repoWith(".env", "PRAXIS_APPROVAL_FORGED=1\nPRAXIS_TEST_APPROVALS=super-secret\n");
     loadPraxisDotenv(repo);
     const rejected = dotenvRejectedKeys();
-    expect(rejected).toEqual(expect.arrayContaining(["PRAXIS_APPROVAL_STRICT", "PRAXIS_TEST_APPROVALS"]));
+    expect(rejected).toEqual(expect.arrayContaining(["PRAXIS_APPROVAL_FORGED", "PRAXIS_TEST_APPROVALS"]));
     expect(JSON.stringify(rejected)).not.toContain("super-secret");
   });
 
   it("an operator-set environment value is unaffected by the repository file", () => {
-    process.env.PRAXIS_APPROVAL_STRICT = "1";
-    const repo = repoWith(".env.praxis", "PRAXIS_APPROVAL_STRICT=0\n");
+    process.env.PRAXIS_APPROVAL_FORGED = "1";
+    const repo = repoWith(".env.praxis", "PRAXIS_APPROVAL_FORGED=1\n");
     loadPraxisDotenv(repo);
-    expect(process.env.PRAXIS_APPROVAL_STRICT).toBe("1");
+    expect(process.env.PRAXIS_APPROVAL_FORGED).toBe("1");
   });
 });

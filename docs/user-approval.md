@@ -28,27 +28,26 @@ The agent calls the `*_preview` tool and shows you the result. It then calls the
 - **Reject** (or dismissing the dialog) runs nothing; the tool returns `APPROVAL_REJECTED`.
 - Your answer reaches Praxis as the client's response to the server, not as a tool argument, so the agent cannot write it. Nothing the agent puts in arguments or in a command (`approved`, `grant`, `authorization`, `userApproval`, a file in the repository) stands in for it.
 
-The result of every protected call says how the approval was obtained (`data.approval`): `assurance: "client-ui"` when you answered the dialog.
+The result of every protected call says how the approval was obtained (`data.approval`, always `assurance: "client-ui"`).
 
-## A client that cannot show the dialog
+## A client that cannot show the dialog: nothing protected runs
 
-Not every MCP client supports elicitation (and a connection on the 2026-07-28 protocol revision, which replaces it, is treated the same way until Praxis implements that mechanism). Praxis does not pretend otherwise:
+Not every MCP client supports elicitation (and a connection on the 2026-07-28 protocol revision, which replaces it, is treated the same way until Praxis implements that mechanism). There is **no fallback**: an agent saying "the user said yes", `confirmation=YES`, or text you type in chat is not an approval, because Praxis cannot tell it from the agent's own words.
 
-- `praxis_doctor` reports `approval.mode: "unverified-fallback"` and says what that means.
-- The agent must ask you **in chat** and call the apply tool with `confirmation=YES` only after you said yes. If you said no it calls it with `confirmation=NO`, which records the rejection and runs nothing.
-- Praxis cannot tell whether a person was asked. The approval is recorded as `assurance: "unverified"`, the result carries a warning saying so, and the decision log says so.
-- Many clients also show their own permission prompt for each tool call; Praxis marks previews and status as read-only and applies as destructive so that prompt can appear, but it cannot see whether you saw it.
+- The protected tool answers `APPROVAL_CLIENT_UI_REQUIRED`: the action was **not executed**, the message says why, and `data.details.preview` carries the preview so the agent can show it to you.
+- Read-only tools, previews, the doctor and the agent's own workflow records keep working.
+- `praxis_doctor` reports `approval.mode: "no-dialog"` and what that means.
+- `confirmation=NO` is the one thing text can still do: it records that you declined and runs nothing (text can only make Praxis do less).
+- The `praxis` CLI has its own dialog: in an interactive terminal it prints the action and asks you to type `approve`. With no terminal (a pipe, CI) it refuses, like a client without a dialog.
 
-**`PRAXIS_APPROVAL_STRICT=1`** (extension setting *Require approval in the client dialog*) refuses every approval that was not given in the client's dialog. Use it when your client supports the dialog and you want a guarantee that an agent cannot proceed on its own word.
+## The decision journal
 
-## The decision log
-
-Every decision is appended to `.praxis/approvals/decisions.jsonl` in the repository (git-ignored): when, what, the digest of the exact content, approved / rejected / dismissed / refused, the channel and the assurance. It is there for your later review; it is never read back as an authorization.
+Every decision is appended to a journal in your own Praxis home, **outside the repository**: `~/.praxis/decisions/<repository id>.jsonl` (`PRAXIS_STATE_HOME` moves it; `praxis_doctor` → `approval.decisionLog` shows the exact path). It records when, what, the digest of the exact content, approved / rejected / dismissed / refused, and the channel. It cannot be committed with the project, and it is never read back as an authorization.
 
 ## What this is not
 
 - It is **not** a security boundary against a malicious program running as you. An agent with a shell can edit repository files, run Git itself, or call Jira with your credentials without going through Praxis. User approval is a workflow and consent mechanism: it makes sure that when the agent uses Praxis to change something, you were shown it and said yes, and that Praxis tells the truth about how it knows.
-- It does not verify who is at the keyboard (no biometric, no hardware key).
+- It does not verify who is at the keyboard (no biometric, no hardware key): whoever answers the client's dialog is "the user".
 - Git hooks, CI and the repository host are not changed by it.
 
 If you need an approval an agent cannot influence even with a shell, that needs a separate trust domain (a different OS account or a hosted approval service). Praxis had a native approval service for that and removed it: see `docs/cleanup-native-approval-service.md` if you installed any part of it.
@@ -57,5 +56,5 @@ If you need an approval an agent cannot influence even with a shell, that needs 
 
 - Core: `packages/contracts/src/user-approval.ts` (the approval, `obtainUserApproval`, the lease writers require), `human-acts.ts` (confirm-story, confirm-decision, approve-service), `workflow.ts` (`applyWorkflowCommand(state, command, { userApproval })`, never part of the command), `packages/cli/src/operations.ts` (`guardWrite`: preview freshness, ask, run inside the lease).
 - Runtime: `packages/mcp/src/approval-channel.ts` (the elicitation dialog), `server.ts` (per-call channel, tool annotations), `tools.ts` (`confirmation=YES/NO`, the result note), `human-approval.ts`, `workflow-store.ts`.
-- Tests: `user-approval.test.ts`, `approval-enforcement.test.ts` (core); `user-approval-flow.test.ts` (runtime); `npm run accept:approval-ux` drives the packaged `.mcpb` with the official MCP client playing a host with a dialog (answers are scripted: it does not prove a person answered).
+- Tests: `user-approval.test.ts`, `approval-enforcement.test.ts` (core); `user-approval-flow.test.ts` (runtime); `npm run accept:approval-ux` drives the packaged `.mcpb` with the official MCP client playing a host with a dialog, and one without (the answers are scripted: it does not prove a person answered).
 - Library writers (`requireMutationLease`) refuse to run outside an approved action. Tests use `runApprovedForTest` / `approvalFor`, which need `PRAXIS_TEST_APPROVALS=1`; a repository `.env` can never set `PRAXIS_APPROVAL_*` or `PRAXIS_TEST_*`.

@@ -533,8 +533,7 @@ function asApprovalError(err: unknown): never {
  * Action -> Preview -> the user approves or rejects -> Execute -> Result.
  *
  * The write runs only after the user's approval of exactly this action: asked in the MCP client's own dialog when the
- * client supports it, otherwise accepted from the agent's confirmation=YES and recorded as unverified (see
- * user-approval.ts). A stale preview is refused before the user is asked, so what they approve is what runs.
+ * client supports it. A client without one gets the preview and a clear refusal; nothing runs (see user-approval.ts). A stale preview is refused before the user is asked, so what they approve is what runs.
  */
 async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => Promise<T> | T): Promise<T> {
   // "NO" is the user's refusal reported by the agent: it is recorded and refused below, not treated as a missing YES.
@@ -649,7 +648,7 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     valid: github.apiUrlValid !== false,
     issue: github.apiUrlIssue,
   });
-  const approval = approvalDiagnostics(process.env);
+  const approval = approvalDiagnostics(process.env, git ?? resolved);
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? (git ? "ok" : "no-git") : "unavailable",

@@ -17,17 +17,15 @@ export type ProviderReport = {
 
 /** How the user's approval is obtained for protected actions in this session. */
 export type ApprovalReport = {
-  /** client-ui: asked in the MCP client's own dialog. unverified-fallback: the client cannot ask; the agent relays confirmation=YES. */
-  mode: "client-ui" | "unverified-fallback";
-  /** PRAXIS_APPROVAL_STRICT=1 refuses every approval that was not given in the client's dialog. */
-  strict: boolean;
-  /** Stated plainly, including what is NOT guaranteed. */
+  /** client-ui: asked in the MCP client's own dialog. no-dialog: the client cannot ask, so protected actions are not executed. */
+  mode: "client-ui" | "no-dialog";
+  /** Stated plainly, including what does not work. */
   note: string;
-  /** Where every decision is recorded for the user's later review. */
+  /** Where decisions are journaled (outside the repository). */
   decisionLog: string;
 };
 
-import { approvalModeReport } from "@praxis/contracts";
+import { approvalModeReport, decisionLogPath } from "@praxis/contracts";
 
 const present = (value: string | undefined): boolean => Boolean(value && value.trim());
 
@@ -100,9 +98,9 @@ export function providerDiagnostics(
   return { jira, github, gitlab };
 }
 
-export function approvalDiagnostics(env: NodeJS.ProcessEnv): ApprovalReport {
+export function approvalDiagnostics(_env: NodeJS.ProcessEnv, repo?: string): ApprovalReport {
   const report = approvalModeReport();
-  return { mode: report.mode, strict: (env.PRAXIS_APPROVAL_STRICT ?? "").trim() === "1" || report.strict, note: report.note, decisionLog: ".praxis/approvals/decisions.jsonl" };
+  return { mode: report.mode, note: report.note, decisionLog: repo ? decisionLogPath(repo) : "~/.praxis/decisions/<repository id>.jsonl" };
 }
 
 export function doctorNextSteps(input: {
@@ -150,11 +148,9 @@ export function doctorNextSteps(input: {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
   }
-  if (input.approval.mode === "unverified-fallback") {
+  if (input.approval.mode === "no-dialog") {
     steps.push(
-      input.approval.strict
-        ? "This MCP client cannot show an approval dialog and PRAXIS_APPROVAL_STRICT=1 refuses unverified approvals: protected actions (Git, Jira, confirming a Story) will be refused. Use a client that supports elicitation, or unset PRAXIS_APPROVAL_STRICT."
-        : "This MCP client cannot show an approval dialog, so protected actions run on the agent's confirmation=YES after you say yes in chat. Praxis cannot verify that a person was asked; each approval is recorded as unverified in .praxis/approvals/decisions.jsonl. Set PRAXIS_APPROVAL_STRICT=1 to refuse such approvals.",
+      "This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them.",
     );
   }
   if (input.dotenvRejected?.length) {

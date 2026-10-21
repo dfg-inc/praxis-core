@@ -551,6 +551,7 @@ export {
   withApprovalChannel,
   currentApprovalChannel,
   approvalModeReport,
+  decisionLogPath,
   approvalsGivenInThisCall,
   logDecision,
   hasMutationLease,

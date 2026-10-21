@@ -96,7 +96,6 @@ describe("REQ-CFG-001 acceptance criteria", () => {
     PRAXIS_JIRA_EMAIL: "${user_config.jira_email}",
     PRAXIS_JIRA_PROJECT_KEY: "${user_config.jira_project_key}",
     PRAXIS_JIRA_TOKEN: "${user_config.jira_token}",
-    PRAXIS_APPROVAL_STRICT: "${user_config.approval_strict}",
     PRAXIS_GITHUB_TOKEN: "${user_config.github_token}",
     PRAXIS_GITHUB_API_URL: "${user_config.github_api_url}",
     PRAXIS_GITLAB_TOKEN: "${user_config.gitlab_token}",
@@ -112,8 +111,7 @@ describe("REQ-CFG-001 acceptance criteria", () => {
       expect(out.github.tokenConfigured).toBe(false);
       expect(out.github.apiUrlConfigured).toBe(false);
       expect(out.jira.configured).toBe(false);
-      expect(out.approval.strict).toBe(false); // a blank strict setting is the default, not an invalid value
-      expect(out.approval.mode).toBe("unverified-fallback");
+      expect(out.approval.mode).toBe("no-dialog");
       expect(out.hostPlaceholdersIgnored).toEqual(expect.arrayContaining(Object.keys(DESKTOP_SETTINGS).filter((k) => k !== "PRAXIS_JIRA_TOKEN")));
       expect(JSON.stringify(out)).not.toContain("${");
     } finally {

@@ -1,7 +1,8 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { withApprovalChannel } from "@praxis/contracts";
 import { EXIT } from "./exit.js";
 import { envelope, isCliEnvelope } from "./envelope.js";
 import { helpFor } from "./help.js";
@@ -132,18 +133,14 @@ describe("CLI flags and exits", () => {
       join(dir, "package.json"),
       `${JSON.stringify({ name: "x", scripts: { test: "node --test" } }, null, 2)}\n`,
     );
-    const { code, stdout } = await capture(() =>
-      runCli([
-        "project",
-        "init",
-        "--infer",
-        "--confirm",
-        "YES",
-        "--repo",
-        dir,
-        "--json",
-      ]),
-    );
+    const runInit = () => capture(() => runCli(["project", "init", "--infer", "--confirm", "YES", "--repo", dir, "--json"]));
+    // no terminal to ask (a pipe, CI): refused, nothing written
+    const refused = await runInit();
+    expect(refused.code).not.toBe(0);
+    expect(refused.stdout).toMatch(/NOT executed/);
+    expect(existsSync(join(dir, ".project"))).toBe(false);
+    // the user approves in the dialog
+    const { code, stdout } = await withApprovalChannel({ kind: "terminal-prompt", ask: async () => ({ answer: "approve" }) }, runInit);
     expect(code).toBe(0);
     expect(JSON.parse(stdout).data.wrote).toBe(true);
     const again = await capture(() =>

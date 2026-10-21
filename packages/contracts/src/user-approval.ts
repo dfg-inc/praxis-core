@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import type { DecisionKind } from "./authority.js";
 
 /**
@@ -11,13 +12,11 @@ import type { DecisionKind } from "./authority.js";
  *
  * The person who uses Praxis decides, in the interface of their MCP client. Praxis asks through the client's own
  * elicitation dialog (the client shows the preview and returns Approve / Reject / Dismiss). That answer arrives as a
- * protocol response to the server, not as a tool argument, so an agent cannot write it. This is the `client-ui`
- * assurance.
+ * protocol response to the server, not as a tool argument, so an agent cannot write it.
  *
- * A client that cannot ask (no elicitation support) leaves a fallback that is named for what it is: the agent calls
- * the apply tool with confirmation=YES after the person said yes in chat (and, usually, after the host's own tool
- * permission prompt). Praxis cannot tell whether a person was asked, so that approval is recorded as `unverified`.
- * Nothing in this file pretends otherwise; set PRAXIS_APPROVAL_STRICT=1 to refuse every approval that is not client-ui.
+ * There is no other way to approve. A client that cannot show the dialog gets the preview and a clear message, and the
+ * protected action is NOT executed: what the agent says the user said is never a decision. Read-only functionality and
+ * the agent's own notes keep working.
  *
  * What an approval is bound to: one action and one subject (the exact content shown in the preview). An approval
  * for another action, or for the same action after its content changed, does not verify. Rejection and dismissal
@@ -30,8 +29,9 @@ export const USER_APPROVAL_VERSION = 1;
 /** How long an approval stays usable between being given and being applied. */
 export const USER_APPROVAL_TTL_MS = 10 * 60 * 1000;
 
-export type ApprovalChannelKind = "client-elicitation" | "confirmation-flag" | "test";
-export type ApprovalAssurance = "client-ui" | "unverified";
+export type ApprovalChannelKind = "client-elicitation" | "terminal-prompt" | "test";
+/** Every approval is given by the user in a dialog (the client's, or the terminal's for the CLI). */
+export type ApprovalAssurance = "client-ui";
 
 /** What the user is shown and what the decision binds. */
 export type ApprovalRequest = {
@@ -56,7 +56,7 @@ export type AskAnswer = { answer: "approve" | "reject" | "dismiss" | "unavailabl
 
 /** A way to put an ApprovalRequest in front of the person. Supplied by the MCP client integration. */
 export interface UserApprovalChannel {
-  readonly kind: "client-elicitation";
+  readonly kind: "client-elicitation" | "terminal-prompt";
   ask(request: ApprovalRequest): Promise<AskAnswer>;
 }
 
@@ -79,10 +79,6 @@ export type UserApproval = Readonly<{
 const issued = new WeakSet<object>();
 
 export const subjectDigest = (subject: string): string => `sha256:${createHash("sha256").update(subject, "utf8").digest("hex")}`;
-
-function strict(): boolean {
-  return process.env.PRAXIS_APPROVAL_STRICT?.trim() === "1";
-}
 
 export type ApprovalErrorCode = "APPROVAL_REQUIRED" | "APPROVAL_REJECTED" | "APPROVAL_CLIENT_UI_REQUIRED" | "APPROVAL_SCOPE_MISMATCH" | "APPROVAL_EXPIRED";
 
@@ -116,7 +112,7 @@ export function createUserApproval(input: {
     subjectDigest: subjectDigest(input.request.subject),
     decision: "approved" as const,
     channel: input.channel,
-    assurance: input.channel === "client-elicitation" || input.channel === "test" ? ("client-ui" as const) : ("unverified" as const),
+    assurance: "client-ui" as const,
     decidedAt: (input.now ?? new Date()).toISOString(),
     ...(input.reason ? { reason: input.reason } : {}),
   });
@@ -144,22 +140,17 @@ export function approvalsGivenInThisCall(): readonly UserApproval[] {
 }
 
 /** What a diagnostic can say about how approvals will be obtained right now. */
-export function approvalModeReport(): { mode: "client-ui" | "unverified-fallback"; strict: boolean; note: string } {
-  const channel = currentApprovalChannel();
-  const isStrict = strict();
-  if (channel) {
-    return { mode: "client-ui", strict: isStrict, note: "Approvals are asked in the MCP client's own dialog; the answer cannot be written by the agent." };
+export function approvalModeReport(): { mode: "client-ui" | "no-dialog"; note: string } {
+  if (currentApprovalChannel()) {
+    return { mode: "client-ui", note: "Protected actions are approved or rejected by the user in the client's own dialog; the agent cannot write that answer." };
   }
   return {
-    mode: "unverified-fallback",
-    strict: isStrict,
-    note: isStrict
-      ? "This client cannot ask for approval (no elicitation support) and PRAXIS_APPROVAL_STRICT=1 refuses unverified approvals, so protected actions will be refused."
-      : "This client cannot ask for approval (no elicitation support). Protected actions run on the agent's confirmation=YES after you said yes in chat; Praxis cannot verify that a person was asked and records the approval as unverified.",
+    mode: "no-dialog",
+    note: "This client cannot show an approval dialog (no MCP elicitation support). Read-only tools and previews work; protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed, because nothing the agent says can stand in for the user's approval. Use a client that supports elicitation.",
   };
 }
 
-// --- decision log ------------------------------------------------------------------------------------------------
+// --- decision log --------------------------------------------------------------------------------------------------
 
 export type DecisionLogEntry = {
   at: string;
@@ -168,17 +159,29 @@ export type DecisionLogEntry = {
   subjectDigest: string;
   decision: "approved" | "rejected" | "dismissed" | "refused";
   channel: ApprovalChannelKind | "none";
-  assurance: ApprovalAssurance | "none";
   reason?: string;
+  /** The repository the decision was about (kept in the entry, not in the repository). */
+  repository?: string;
 };
 
-/** Best effort: the log is for the person's later review; a write failure never changes a decision. */
+/**
+ * Where the decision journal lives: in the user's own Praxis home (PRAXIS_STATE_HOME, default ~/.praxis), one file per
+ * repository, never inside the repository, so it can neither be committed nor edited as part of the project.
+ */
+export function decisionLogPath(repo: string): string {
+  const root = resolve(repo);
+  const home = process.env.PRAXIS_STATE_HOME?.trim() || join(homedir(), ".praxis");
+  const id = createHash("sha256").update(root).digest("hex").slice(0, 16);
+  return join(home, "decisions", `${id}.jsonl`);
+}
+
+/** Best effort: the journal is for the user's later review; a write failure never changes a decision. */
 export function logDecision(repo: string | undefined, entry: DecisionLogEntry): void {
   if (!repo) return;
   try {
-    const dir = join(resolve(repo), ".praxis", "approvals");
-    mkdirSync(dir, { recursive: true });
-    appendFileSync(join(dir, "decisions.jsonl"), `${JSON.stringify(entry)}\n`);
+    const path = decisionLogPath(repo);
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    appendFileSync(path, `${JSON.stringify({ ...entry, repository: resolve(repo) })}\n`, { mode: 0o600 });
   } catch {
     /* ignore */
   }
@@ -187,16 +190,16 @@ export function logDecision(repo: string | undefined, entry: DecisionLogEntry): 
 // --- asking ------------------------------------------------------------------------------------------------------
 
 /**
- * Gets the person's decision for exactly this request, or throws before anything runs.
- *   rejected / dismissed  -> APPROVAL_REJECTED
- *   no way to ask and no confirmation=YES -> APPROVAL_REQUIRED
- *   no way to ask, strict mode -> APPROVAL_CLIENT_UI_REQUIRED
- * `confirmation` is the agent's own argument: "YES" means "apply it"; "NO" records that the person declined.
+ * Gets the user's decision for exactly this request, or throws before anything runs.
+ *   rejected / dismissed -> APPROVAL_REJECTED
+ *   no dialog available  -> APPROVAL_CLIENT_UI_REQUIRED, carrying the preview so it can be shown to the user
+ * `confirmation` is the agent's own argument: "NO" records that the user declined (it can only stop things); "YES"
+ * never approves anything, it only says the agent wants to apply what was previewed.
  */
 export async function obtainUserApproval(request: ApprovalRequest, options: { confirmation?: string; repo?: string } = {}): Promise<UserApproval> {
   const base = { at: new Date().toISOString(), action: request.action, summary: request.summary, subjectDigest: subjectDigest(request.subject) };
   if (options.confirmation === "NO") {
-    logDecision(options.repo, { ...base, decision: "rejected", channel: "confirmation-flag", assurance: "unverified", reason: "the person declined (reported by the agent)" });
+    logDecision(options.repo, { ...base, decision: "rejected", channel: "none", reason: "the user declined (reported by the agent)" });
     throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected. Nothing was changed.`, { rejected: true });
   }
   const channel = currentApprovalChannel();
@@ -205,37 +208,36 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
     try {
       answer = await channel.ask(request);
     } catch (error) {
-      logDecision(options.repo, { ...base, decision: "refused", channel: "client-elicitation", assurance: "client-ui", reason: error instanceof Error ? error.message : String(error) });
-      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`);
+      logDecision(options.repo, { ...base, decision: "refused", channel: channel.kind, reason: error instanceof Error ? error.message : String(error) });
+      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, previewDetails(request));
     }
   }
-  if (answer && answer.answer !== "unavailable") {
+  if (channel && answer && answer.answer !== "unavailable") {
     if (answer.answer === "approve") {
-      const approval = createUserApproval({ request, channel: "client-elicitation", reason: answer.reason });
+      const approval = createUserApproval({ request, channel: channel.kind });
       channelStore.getStore()?.approvals.push(approval);
-      logDecision(options.repo, { ...base, decision: "approved", channel: "client-elicitation", assurance: "client-ui", ...(answer.reason ? { reason: answer.reason } : {}) });
+      logDecision(options.repo, { ...base, decision: "approved", channel: channel.kind, ...(answer.reason ? { reason: answer.reason } : {}) });
       return approval;
     }
     const dismissed = answer.answer === "dismiss";
-    logDecision(options.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", channel: "client-elicitation", assurance: "client-ui", ...(answer.reason ? { reason: answer.reason } : {}) });
+    logDecision(options.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", channel: channel.kind, ...(answer.reason ? { reason: answer.reason } : {}) });
     throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was ${dismissed ? "dismissed" : "rejected"} by the user. Nothing was changed.`, { rejected: !dismissed, dismissed });
   }
-  if (strict()) {
-    logDecision(options.repo, { ...base, decision: "refused", channel: "none", assurance: "none", reason: "strict mode, no client approval dialog" });
-    throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} needs approval in the client's own dialog, and this client cannot ask (PRAXIS_APPROVAL_STRICT=1). Nothing was changed.`);
-  }
-  if (options.confirmation !== "YES") {
-    throw new ApprovalError("APPROVAL_REQUIRED", `${request.summary} needs the user's approval. Show the preview, ask the user, then apply with confirmation=YES. Nothing was changed.`);
-  }
-  const approval = createUserApproval({ request, channel: "confirmation-flag" });
-  channelStore.getStore()?.approvals.push(approval);
-  logDecision(options.repo, { ...base, decision: "approved", channel: "confirmation-flag", assurance: "unverified", reason: "agent-relayed confirmation=YES; Praxis cannot verify that a person was asked" });
-  return approval;
+  logDecision(options.repo, { ...base, decision: "refused", channel: "none", reason: "no approval dialog in this client" });
+  throw new ApprovalError(
+    "APPROVAL_CLIENT_UI_REQUIRED",
+    `${request.summary} was NOT executed. It needs the user's approval in the client's own dialog, and this client cannot show one (no MCP elicitation support). Show the user the preview below and tell them it can only be applied from a client that supports approval dialogs; the agent's or the user's text in chat is not accepted as approval. Read-only tools still work.`,
+    previewDetails(request),
+  );
+}
+
+function previewDetails(request: ApprovalRequest): Record<string, unknown> {
+  return { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, ...(request.risks?.length ? { risks: request.risks } : {}) } };
 }
 
 /**
  * Checks an approval before the contract acts on it: made by this module, for this action, for this exact subject,
- * recent, and (in strict mode) given in the client's dialog. Throws before any change.
+ * recent. Throws before any change.
  */
 export function verifyUserApproval(approval: UserApproval | undefined, expected: { action: string; subject: string; now?: Date }): UserApproval {
   if (!approval || typeof approval !== "object" || !issued.has(approval)) {
@@ -251,9 +253,6 @@ export function verifyUserApproval(approval: UserApproval | undefined, expected:
   const age = (expected.now ?? new Date()).getTime() - Date.parse(approval.decidedAt);
   if (!Number.isFinite(age) || age > USER_APPROVAL_TTL_MS || age < -60_000) {
     throw new ApprovalError("APPROVAL_EXPIRED", "the user's approval is too old; ask again");
-  }
-  if (strict() && approval.assurance !== "client-ui") {
-    throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", "strict mode accepts only approvals given in the client's own dialog");
   }
   return approval;
 }
