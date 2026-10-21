@@ -39,7 +39,7 @@ describe("a protected action runs only after the user approves it", () => {
     expect(seen[0]).toMatchObject({ action: "praxis_project_init_apply", kind: "development_action" });
     // the user is shown the exact file that will be written, not a label
     expect(seen[0]!.description).toContain(`Creates ${join(root, ".project")} with exactly this content`);
-    expect(seen[0]!.description).toMatch(/npm test/);
+    expect(seen[0]!.description).toMatch(/requirementsFormat: user-story-gherkin/);
     expect(log(root).at(-1)).toMatchObject({ decision: "approved", channel: "client-elicitation" });
   });
 
