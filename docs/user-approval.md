@@ -30,15 +30,32 @@ The agent calls the `*_preview` tool and shows you the result. It then calls the
 
 The result of every protected call says how the approval was obtained (`data.approval`, always `assurance: "client-ui"`).
 
+## Which clients show the dialog (evidence, not assumption)
+
+MCP defines elicitation; whether a particular host implements it is only known from what it declares. `praxis_doctor` → `approval.client` shows what YOUR client declared (`name`, `version`, `protocolVersion`, `elicitation`), whether Praxis can show a dialog (`dialog`), which protocol flow is used (`flow`) and, when not, why (`reason`).
+
+| Client | Form-mode dialog | Evidence |
+| --- | --- | --- |
+| Claude Code CLI 2.1.304 | **VERIFIED**, both protocol eras | declares `elicitation: {form, url}` (read from the binary and by `praxis_doctor`); driven end to end against the packed Runtime: Approve ran the action, Reject, Decline and Cancel ran nothing (the user's answer was played by an `Elicitation` hook, so it proves the protocol and the client, not that a person answered) |
+| Official MCP SDK 2.0 client | **VERIFIED**, both protocol eras | `npm run accept:approval-ux` |
+| Claude Desktop 3.1623.1, Chat | **UNTESTED** | the main process declares URL-mode elicitation only for the servers it connects itself; local extensions are connected by the chat window, whose declaration is not in the app bundle. Check with the Desktop Chat prompt in `desktop-install/INSTALL.md` |
+| Other MCP clients | UNTESTED | `praxis_doctor` tells you |
+
 ## A client that cannot show the dialog: nothing protected runs
 
-Not every MCP client supports elicitation (and a connection on the 2026-07-28 protocol revision, which replaces it, is treated the same way until Praxis implements that mechanism). There is **no fallback**: an agent saying "the user said yes", `confirmation=YES`, or text you type in chat is not an approval, because Praxis cannot tell it from the agent's own words.
+There is **no fallback by default**: an agent saying "the user said yes", `confirmation=YES`, or text you type in chat is not an approval, because Praxis cannot tell it from the agent's own words.
 
-- The protected tool answers `APPROVAL_CLIENT_UI_REQUIRED`: the action was **not executed**, the message says why, and `data.details.preview` carries the preview so the agent can show it to you.
+- The protected tool answers `APPROVAL_CLIENT_UI_REQUIRED`: the action was **not executed**, the message says why, and `data.preview` carries the preview so the agent can show it to you.
 - Read-only tools, previews, the doctor and the agent's own workflow records keep working.
-- `praxis_doctor` reports `approval.mode: "no-dialog"` and what that means.
+- `praxis_doctor` reports `approval.mode: "no-dialog"` and the reason.
 - `confirmation=NO` is the one thing text can still do: it records that you declined and runs nothing (text can only make Praxis do less).
-- The `praxis` CLI has its own dialog: in an interactive terminal it prints the action and asks you to type `approve`. With no terminal (a pipe, CI) it refuses, like a client without a dialog.
+- The `praxis` CLI has its own dialog: in an interactive terminal it prints the action and asks you to type `approve`. With no terminal it refuses.
+
+### Opt-in: `PRAXIS_APPROVAL_MODE=host-permission`
+
+For a host that has no dialog but does ask before running an MCP tool, you can switch on a weaker mode (extension setting *Approval without a client dialog*, never settable from a repository). The agent calls `praxis_approval_plan` (read-only; returns the exact plan Praxis computed from the live state), shows it to you, then calls the apply tool with that exact text as `planText`. Praxis recomputes the plan and refuses unless the text matches, so the host's permission prompt shows what will really run and a changed plan needs a new text and a new prompt.
+
+What it cannot do, stated plainly: Praxis cannot see whether the host's prompt was shown. If you chose "always allow" for the tool, there is no prompt and the agent has approved itself. The result is labelled `assurance: "host-prompt"` (never `client-ui`), and quality fixes (commit then push, two approvals) still need a dialog. Leave it off if your client has the dialog.
 
 ## The decision journal
 
