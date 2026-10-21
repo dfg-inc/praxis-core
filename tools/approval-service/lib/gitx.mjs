@@ -5,7 +5,7 @@
  * execute code or redirect credentials is refused outright (see assertRepositorySafe).
  */
 import { execFile } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export class GitxError extends Error {
@@ -16,13 +16,21 @@ export class GitxError extends Error {
   }
 }
 
+/**
+ * The repository-local settings the service accepts: an explicit list, not a deny list. Anything else is refused,
+ * because git has many keys that run a program (diff/merge drivers, filters, credential helpers, ssh commands, pagers,
+ * gpg, fsmonitor, hooks) or change where credentials go (proxy, extra headers, CA files, URL rewrites), and new ones
+ * appear over time. The cost is that repositories with other settings (Git LFS, worktree configs) are refused until
+ * the owner removes them, which is stated rather than worked around.
+ */
 const SAFE_LOCAL_KEYS = [
-  /^core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks|autocrlf|safecrlf|eol|longpaths|sharedrepository)$/,
+  /^core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks|autocrlf|safecrlf|eol|longpaths|sharedrepository|untrackedcache|preloadindex|compression)$/,
   /^remote\.[^.]+\.(url|fetch)$/,
   /^branch\.[^.]+\.(remote|merge|description)$/,
   /^user\.(name|email)$/,
   /^init\.defaultbranch$/,
-  /^(pull|push|fetch|merge|rebase|diff|status|color|log|advice|gc|maintenance|submodule|http)\.(?!.*(helper|command|program|textconv|external|cmd|proxy|sslcainfo|extraheader|cookiefile)).*$/,
+  /^index\.version$/,
+  /^(pull\.(rebase|ff)|push\.(default|followtags|autosetupremote)|fetch\.(prune|prunetags)|merge\.ff|rebase\.(autostash|autosquash|backend)|diff\.renames|status\.showuntrackedfiles|color\.ui|log\.(date|abbrevcommit|decorate)|advice\.[a-z]+)$/,
 ];
 
 /** Service-owned git environment. `home` holds the service's own gitconfig and credential helper; nothing is inherited. */
@@ -135,6 +143,15 @@ export function assertRepositorySafe(repoPath, { allowed }) {
   if (!stat || stat.isSymbolicLink() || !stat.isDirectory()) throw new GitxError("REPOSITORY_UNSAFE", ".git must be a real directory (not a link or a worktree file)");
   for (const forbidden of ["commondir", "objects/info/alternates", "info/grafts", "shallow"]) {
     if (existsSync(join(gitDir, forbidden))) throw new GitxError("REPOSITORY_UNSAFE", `.git/${forbidden} is not accepted`);
+  }
+  // No link anywhere directly under .git: a symlinked refs/, objects/, hooks/, HEAD, config or index would let the
+  // service write outside the repository.
+  for (const name of readdirSync(gitDir)) {
+    if (lstatSync(join(gitDir, name)).isSymbolicLink()) throw new GitxError("REPOSITORY_UNSAFE", `.git/${name} is a symbolic link`);
+  }
+  for (const sub of ["refs", "refs/heads", "objects", "info"]) {
+    const st = lstatSync(join(gitDir, sub), { throwIfNoEntry: false });
+    if (st?.isSymbolicLink()) throw new GitxError("REPOSITORY_UNSAFE", `.git/${sub} is a symbolic link`);
   }
   if (existsSync(join(gitDir, "info", "attributes")) && readFileSync(join(gitDir, "info", "attributes"), "utf8").trim()) {
     throw new GitxError("REPOSITORY_UNSAFE", ".git/info/attributes is not accepted");

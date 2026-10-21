@@ -47,6 +47,7 @@ import {
   developerGitDeliveryStatusOp,
   developerGitLinkJiraPreviewOp,
   developerGitLinkJiraApplyOp,
+  loadPraxisDotenv,
   redact,
   workPackageListOp,
   workPackageShowOp,
@@ -135,19 +136,6 @@ export function parseFlags(argv: string[]): Flags {
   return flags;
 }
 
-function loadDotenv(repo: string): void {
-  if (process.env.PRAXIS_SKIP_DOTENV === "1") return;
-  for (const f of [".env.praxis", ".env", ".env.praxis.local"]) {
-    const p = join(repo, f);
-    if (!existsSync(p)) continue;
-    for (const line of readFileSync(p, "utf8").split("\n")) {
-      const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-      if (!m || process.env[m[1]!]) continue;
-      process.env[m[1]!] = m[2]!.replace(/^["']|["']$/g, "");
-    }
-  }
-}
-
 function printJson(obj: unknown): void {
   process.stdout.write(`${JSON.stringify(obj)}\n`);
 }
@@ -194,7 +182,8 @@ function ctxFrom(flags: Flags, repo: string): OpContext {
 export async function runCli(argv: string[]): Promise<ExitCode> {
   const flags = parseFlags(argv);
   const repo = resolve(flags.repo);
-  loadDotenv(repo);
+  // The filtered loader: a repository file can never set security, approval or approval-service variables.
+  loadPraxisDotenv(repo);
   const path = flags.argv;
 
   if (flags.version && path.length === 0) {

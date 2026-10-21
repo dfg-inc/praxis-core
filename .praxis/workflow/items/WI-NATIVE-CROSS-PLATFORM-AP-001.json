@@ -8,8 +8,8 @@
     "projectId": "praxis-core",
     "title": "Native cross-platform Approval Service",
     "source": "local",
-    "status": "in_progress",
-    "revision": 2
+    "status": "changes_requested",
+    "revision": 4
   },
   "requirements": [
     {
@@ -149,7 +149,68 @@
       "assumptionIds": []
     }
   ],
-  "services": [],
+  "services": [
+    {
+      "id": "approval-service-core",
+      "name": "Approval Service core and trusted executor",
+      "kind": "module",
+      "repository": "praxis-core",
+      "localPath": "tools/approval-service",
+      "responsibilities": [
+        "IPC protocol: submit, status, execute, health; no approve or sign message",
+        "Canonical plan derivation from the repository, WebAuthn-only signing, replay ledger, hash-chained audit",
+        "Trusted executor: plumbing commit with compare-and-swap, explicit-URL push, provider interface, hostile-repository defences"
+      ],
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-002",
+        "REQ-NAS-003"
+      ],
+      "dependsOn": [],
+      "status": "in_progress"
+    },
+    {
+      "id": "runtime-client",
+      "name": "Runtime client and delegation",
+      "kind": "module",
+      "repository": "praxis-core",
+      "localPath": "packages/contracts",
+      "responsibilities": [
+        "Strict IPC schemas and client; assessApprovalService judges isolation from file ownership evidence, never from the service's say-so",
+        "Delegate that hands commit, push and merge request to the service and fails closed on an absent, incompatible or unisolated service",
+        "vcs and guardWrite integration; praxis_doctor reports the service"
+      ],
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-003",
+        "REQ-NAS-004"
+      ],
+      "dependsOn": [
+        "approval-service-core"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "platform-adapters-installers",
+      "name": "Platform adapters and installer artifacts",
+      "kind": "module",
+      "repository": "praxis-core",
+      "localPath": "tools/approval-service/platform",
+      "responsibilities": [
+        "Per-OS paths, isolation probe, install, uninstall and unit rendering as data; no privileged command is run by Praxis",
+        "macOS launchd daemon plist and unsigned .pkg builder with manifest; Linux systemd unit; Windows registration script",
+        "Each platform's status reported separately: macOS BLOCKED pending operator, Linux and Windows UNTESTED"
+      ],
+      "requirementIds": [
+        "REQ-NAS-004",
+        "REQ-NAS-001"
+      ],
+      "dependsOn": [
+        "approval-service-core"
+      ],
+      "status": "in_progress"
+    }
+  ],
   "handoffs": [
     {
       "contract": "praxis.role.handoff",
@@ -278,10 +339,200 @@
       "evidenceRefs": [],
       "revision": 2,
       "fingerprint": "sha256:26697301addb006bd971a4d4b17a97e0693bfefa5ed15f0393a329911a8e24eb"
+    },
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "workItemId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "handoffId": "HO-3",
+      "sourceRole": "quality",
+      "targetRole": "developer",
+      "serviceIds": [
+        "approval-service-core",
+        "platform-adapters-installers"
+      ],
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-003"
+      ],
+      "acceptanceCriterionIds": [],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [],
+      "assumptions": [],
+      "openQuestions": [],
+      "risks": [],
+      "blockers": [
+        "The independent review was cut short by a tooling safety stop: packaging scripts, provider code and the IPC flood/slowloris, XSS, CSRF and DNS-rebinding areas were NOT reviewed independently."
+      ],
+      "decisionRecords": [],
+      "resolved": [],
+      "nextActions": [
+        "Correct REQ-NAS-001, REQ-NAS-003 and resubmit evidence"
+      ],
+      "readiness": "blocked",
+      "evidenceRefs": [
+        "reviewer report: read-only review of core, executor, gitx, audit, delegate, operator page only; no proofs of concept beyond the .env finding"
+      ],
+      "revision": 3,
+      "fingerprint": "sha256:faedade4626f395f9fef69921bc0b17f0803879ca5671f4880269b439b096ca8"
+    },
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "workItemId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "handoffId": "HO-4",
+      "sourceRole": "quality",
+      "targetRole": "architect",
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "acceptanceCriterionIds": [],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [],
+      "assumptions": [],
+      "openQuestions": [],
+      "risks": [],
+      "blockers": [
+        "Truncating the tail of the audit chain is not detectable by hash chaining alone; health now exposes the chain head but nothing anchors it outside the service."
+      ],
+      "decisionRecords": [],
+      "resolved": [],
+      "nextActions": [
+        "Correct REQ-NAS-001 and resubmit evidence"
+      ],
+      "readiness": "blocked",
+      "evidenceRefs": [
+        "documented limit; head hash in health"
+      ],
+      "revision": 4,
+      "fingerprint": "sha256:6adc9328db9708288bea57bf7655ee06209c75610b659e154cf0ef410e6588e1"
     }
   ],
-  "findings": [],
-  "verdicts": [],
+  "findings": [
+    {
+      "id": "F-NAS-001",
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "serviceIds": [
+        "runtime-client"
+      ],
+      "owner": "developer",
+      "summary": "The standalone CLI loaded repository .env files with no key filter, so a repository could set PRAXIS_SECURITY_MODE=compatibility (or an approval-service endpoint) for CLI runs.",
+      "evidence": [
+        "reproduced by the independent reviewer in a temporary repository; fixed by using the filtered loader; regression test in dotenv-trust.test.ts"
+      ],
+      "status": "resolved"
+    },
+    {
+      "id": "F-NAS-002",
+      "requirementIds": [
+        "REQ-NAS-003"
+      ],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "owner": "developer",
+      "summary": "The repository-setting allow-list was a deny pattern that accepted merge.<n>.driver and HTTP transport keys (proxy, sslVerify, curlopt).",
+      "evidence": [
+        "found by the new unit tests (merge.x.driver) and the reviewer; replaced by an explicit allow-list; 36 refused-key tests"
+      ],
+      "status": "resolved"
+    },
+    {
+      "id": "F-NAS-003",
+      "requirementIds": [
+        "REQ-NAS-003"
+      ],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "owner": "developer",
+      "summary": "Only .git itself was checked for being a link; a symlinked .git/refs or objects could redirect service writes.",
+      "evidence": [
+        "fixed: every entry under .git and refs, objects, info are lstat-checked; service test covers a symlinked refs"
+      ],
+      "status": "resolved"
+    },
+    {
+      "id": "F-NAS-004",
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "owner": "developer",
+      "summary": "Any local process could grow the audit chain with malformed requests.",
+      "evidence": [
+        "fixed: malformed requests are counted, logged first and every 1000th; test floods 40 requests"
+      ],
+      "status": "resolved"
+    },
+    {
+      "id": "F-NAS-005",
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-003"
+      ],
+      "serviceIds": [
+        "approval-service-core",
+        "platform-adapters-installers"
+      ],
+      "owner": "quality",
+      "summary": "The independent review was cut short by a tooling safety stop: packaging scripts, provider code and the IPC flood/slowloris, XSS, CSRF and DNS-rebinding areas were NOT reviewed independently.",
+      "evidence": [
+        "reviewer report: read-only review of core, executor, gitx, audit, delegate, operator page only; no proofs of concept beyond the .env finding"
+      ],
+      "status": "open",
+      "severity": "high",
+      "expected": "An independent review of every area in the Quality brief",
+      "observed": "Partial review",
+      "suggestion": "Re-run the review of packaging, providers and the operator page before any installation"
+    },
+    {
+      "id": "F-NAS-006",
+      "requirementIds": [
+        "REQ-NAS-001"
+      ],
+      "serviceIds": [
+        "approval-service-core"
+      ],
+      "owner": "architect",
+      "summary": "Truncating the tail of the audit chain is not detectable by hash chaining alone; health now exposes the chain head but nothing anchors it outside the service.",
+      "evidence": [
+        "documented limit; head hash in health"
+      ],
+      "status": "open",
+      "severity": "medium",
+      "expected": "An external anchor for the chain head",
+      "observed": "No anchor",
+      "suggestion": "Owner decision: periodic head export to a second protected location"
+    }
+  ],
+  "verdicts": [
+    {
+      "id": "V-STORY-1",
+      "scope": "feature",
+      "scopeId": "WI-NATIVE-CROSS-PLATFORM-AP-001",
+      "verdict": "FAIL",
+      "evidenceRefs": [
+        "testsGreen:true",
+        "green tests are not story evidence",
+        "independentRerun:false",
+        "no story scenarios were verified"
+      ],
+      "requirementIds": [],
+      "stale": false
+    }
+  ],
   "decisions": [
     {
       "id": "DEC-NAS-001",
@@ -295,11 +546,47 @@
   "risks": [],
   "blockers": [],
   "assumptions": [],
-  "implementationUnits": [],
+  "implementationUnits": [
+    {
+      "id": "IMPL-NAS-001",
+      "serviceId": "approval-service-core",
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-002",
+        "REQ-NAS-003"
+      ],
+      "path": "tools/approval-service/lib/service.mjs",
+      "summary": "Service core (IPC, plan derivation, WebAuthn-only signing, ledger, restart recovery, hash-chained audit), executor (plumbing commit with CAS, named-path commits, explicit-URL push, provider interface; Jira blocked), explicit allow-list of repository settings. Tests: units 44, service 24 (18 required scenarios), real process 5, artifacts 4.",
+      "stale": false
+    },
+    {
+      "id": "IMPL-NAS-002",
+      "serviceId": "runtime-client",
+      "requirementIds": [
+        "REQ-NAS-001",
+        "REQ-NAS-003",
+        "REQ-NAS-004"
+      ],
+      "path": "packages/contracts/src/git-executor-delegate.ts",
+      "summary": "Strict IPC schemas and client, isolation assessment from file-ownership evidence, delegate that fails closed on an absent, incompatible or unisolated service, vcs and guardWrite delegation, doctor approvalService section, standalone CLI now uses the filtered dotenv loader. Tests: contracts protocol 13, dotenv 4, runtime accept:service-delegation (real MCPB, steps 0-9).",
+      "stale": false
+    },
+    {
+      "id": "IMPL-NAS-003",
+      "serviceId": "platform-adapters-installers",
+      "requirementIds": [
+        "REQ-NAS-004",
+        "REQ-NAS-001"
+      ],
+      "path": "tools/approval-service/platform/darwin.mjs",
+      "summary": "Adapters for macOS (launchd daemon, role account plan), Linux (systemd, UNTESTED), Windows (plan only, UNTESTED, no probe); posix isolation probe; build script producing bundle, MANIFEST.json and an unsigned macOS .pkg without a Node runtime (self-contained Node must be supplied); docs INSTALL/ISOLATION-ACCEPTANCE. Tests: artifact tests 4, plan/plist checks.",
+      "stale": false
+    }
+  ],
   "stories": [],
   "coverage": [],
   "changes": [],
-  "stage": "in_progress",
+  "stage": "changes_requested",
   "history": [
     {
       "revision": 1,
@@ -310,6 +597,16 @@
       "revision": 2,
       "stage": "in_progress",
       "note": "ba → architect"
+    },
+    {
+      "revision": 3,
+      "stage": "changes_requested",
+      "note": "finding F-NAS-005 returned to quality"
+    },
+    {
+      "revision": 4,
+      "stage": "changes_requested",
+      "note": "finding F-NAS-006 returned to architect"
     }
   ]
 }

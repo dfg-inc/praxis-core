@@ -62,6 +62,14 @@ describe("repository dotenv files cannot set security or trust configuration", (
     expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("PRX");
   });
 
+  it("never lets a repository file point the Runtime at another approval service", () => {
+    delete process.env.PRAXIS_APPROVAL_SERVICE_ENDPOINT;
+    const repo = repoWith(".env", "PRAXIS_APPROVAL_SERVICE_ENDPOINT=/tmp/attacker.sock\n");
+    loadPraxisDotenv(repo);
+    expect(process.env.PRAXIS_APPROVAL_SERVICE_ENDPOINT).toBeUndefined();
+    expect(dotenvRejectedKeys()).toContain("PRAXIS_APPROVAL_SERVICE_ENDPOINT");
+  });
+
   it("reports the rejected key names, never their values", () => {
     const repo = repoWith(".env", "PRAXIS_SECURITY_MODE=compatibility\nPRAXIS_APPROVAL_AUTHORIZATION=super-secret\n");
     loadPraxisDotenv(repo);

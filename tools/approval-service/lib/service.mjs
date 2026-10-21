@@ -207,6 +207,7 @@ export async function createService({ paths, config, mode, version, platformId, 
 
   // --- request handling ---------------------------------------------------------------------------------------
 
+  let refusedMalformed = 0;
   const repoQueues = new Map();
   const serialize = (key, fn) => {
     const prev = repoQueues.get(key) ?? Promise.resolve();
@@ -368,7 +369,7 @@ export async function createService({ paths, config, mode, version, platformId, 
       isolation,
       operatorChannel: { url: origin, enrolledAuthenticators: operators?.credentials?.length ?? 0 },
       pending,
-      auditChain: audit.verify(),
+      auditChain: { ...audit.verify(), head: audit.entries().at(-1)?.hash ?? null },
       ledgerEntries: readdirSync(dirs.ledger).filter((f) => f.endsWith(".json")).length,
     };
   }
@@ -377,7 +378,9 @@ export async function createService({ paths, config, mode, version, platformId, 
     const parsed = parseServiceRequest(raw);
     const base = { protocol: APPROVAL_SERVICE_PROTOCOL, ...(parsed.ok && parsed.request.id ? { id: parsed.request.id } : {}) };
     if (!parsed.ok) {
-      audit.append("refused", { code: parsed.code, op: raw && typeof raw === "object" ? String(raw.op ?? "").slice(0, 40) : "?" });
+      // Malformed or unknown requests are counted, not logged one by one: anyone who can reach the socket must not be able to grow the audit chain.
+      refusedMalformed += 1;
+      if (refusedMalformed === 1 || refusedMalformed % 1000 === 0) audit.append("refused-malformed", { code: parsed.code, total: refusedMalformed });
       return { ok: false, ...base, code: parsed.code, message: parsed.message };
     }
     const request = parsed.request;

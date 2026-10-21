@@ -440,6 +440,13 @@ describe("executor hardening", () => {
     git(a.dir, "config", "url.https://evil/.insteadOf", "git@github.com:someone/else.git");
     assert.equal((await h.call(commitRequest(a.dir))).ok, true, "a rewrite that cannot touch the service's URLs is harmless to it");
     git(a.dir, "config", "--unset", "url.https://evil/.insteadOf");
+    // symlinked parts of .git are refused (they could redirect writes outside the repository)
+    const refs = join(a.dir, ".git", "refs");
+    renameSync(refs, join(root, "moved-refs"));
+    symlinkSync(join(root, "moved-refs"), refs);
+    assert.equal((await h.call(commitRequest(a.dir))).code, "REPOSITORY_UNSAFE");
+    rmSync(refs);
+    renameSync(join(root, "moved-refs"), refs);
     // path substitution: a symlink to the repository resolves to the allow-listed real path (allowed), a symlinked .git is not
     const link = join(root, "link");
     symlinkSync(a.dir, link);
@@ -502,6 +509,17 @@ describe("providers", () => {
       h.config.repositories[0].provider = { kind, instanceId: "fixture/demo" };
       assert.equal((await mr()).code, code, kind);
     }
+  });
+});
+
+describe("audit growth", () => {
+  test("a flood of malformed requests does not grow the audit chain per request", async () => {
+    const { h } = await world();
+    const before = h.service.audit.entries().length;
+    for (let i = 0; i < 40; i += 1) await h.call({ op: "approve" });
+    assert.ok(h.service.audit.entries().length <= before + 1);
+    const health = (await h.call({ op: "health" })).health;
+    assert.match(health.auditChain.head, /^sha256:/);
   });
 });
 

@@ -104,6 +104,9 @@ Stated limits (residual risks), none hidden:
 * **Enrollment is a trust root.** Whoever can open an enrollment window (write to the service's state, i.e. the
   service principal or an administrator) can add an authenticator that approves everything. An administrator or kernel
   compromise is out of scope. A virtual authenticator is blocked only while enrollment is closed and its code unknown.
+* **The audit chain detects edits and removals in the middle, not truncation of its tail,** unless its head hash (shown in `health`) is recorded elsewhere. No external anchor exists yet (finding F-NAS-006).
+* **Review coverage is partial.** The independent review stopped early; packaging, providers and the operator page's XSS/CSRF/DNS-rebinding behaviour were not independently reviewed (finding F-NAS-005). Do not install on the strength of this document alone.
+* **Repositories with other Git settings are refused** (Git LFS, worktree configs): only an explicit list of settings is accepted.
 * **UV is not attestation.** The page requires user verification, but enrollment accepts `attestation: none`. Praxis
   does not claim the authenticator is hardware-backed.
 * **Merge and release stay separate capabilities** and are not provided by this service.
