@@ -12,10 +12,37 @@ function nodeBinary() {
   return "node";
 }
 
+
+import { mkdirSync as __mk, readFileSync as __rf, statSync as __st, writeFileSync as __wf } from "node:fs";
+import { tmpdir as __tmp } from "node:os";
+import { join as __join } from "node:path";
+/**
+ * Slow scenarios (a Linux container, the packaged extension) run once and their result is reused for a few minutes: the
+ * preview and the apply of one verification, and a retry after a client timeout, must not each repeat a multi-minute run.
+ * The scenario really executed within the window; only the repetition is skipped.
+ */
+function cachedRun(name, ttlMs, fn) {
+  const dir = __join(__tmp(), "praxis-quality-cache");
+  __mk(dir, { recursive: true });
+  const file = __join(dir, `${name}.json`);
+  try {
+    if (Date.now() - __st(file).mtimeMs < ttlMs) return JSON.parse(__rf(file, "utf8"));
+  } catch {
+    /* no fresh result */
+  }
+  const value = fn();
+  __wf(file, JSON.stringify(value));
+  return value;
+}
+
 const here = dirname(fileURLToPath(import.meta.url));
 
 /** Runs the Linux container acceptance (a real Linux kernel with separate uids). BLOCKED-by-environment when Docker or the image is absent. */
 export function linuxContainerLifecycle() {
+  return cachedRun("linux-container", 15 * 60_000, runLinuxContainer);
+}
+
+function runLinuxContainer() {
   const r = spawnSync(nodeBinary(), [join(here, "../acceptance/linux-container.mjs")], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 600_000, env: { ...process.env, PATH: `${process.env.PATH ?? ""}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin` } });
   const last = r.stdout.trim().split("\n").filter((l) => l.startsWith("LINUX-CONTAINER") || l.startsWith("BLOCKED")).pop() ?? "no result";
   const failed = r.stdout.split("\n").filter((l) => l.startsWith("FAIL")).length;

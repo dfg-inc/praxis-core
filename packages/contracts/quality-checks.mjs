@@ -1,5 +1,6 @@
 /** Executable Quality checks for the Runtime client of the Approval Service (service-integration level; same OS user). */
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { assessApprovalService, callApprovalService, parseServiceRequest } from "./dist/index.js";
@@ -9,6 +10,35 @@ function nodeBinary() {
   for (const candidate of [process.env.PRAXIS_NODE, "/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]) if (candidate && existsSync(candidate)) return candidate;
   return "node";
 }
+
+/** Slow scenarios run once; their result is reused for a few minutes (preview and apply of one verification, a retry after a client timeout). */
+function cachedRunSync(name, ttlMs, fn) {
+  const dir = join(tmpdir(), "praxis-quality-cache");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${name}.json`);
+  try {
+    if (Date.now() - statSync(file).mtimeMs < ttlMs) return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    /* no fresh result */
+  }
+  const value = fn();
+  writeFileSync(file, JSON.stringify(value));
+  return value;
+}
+async function cachedRun(name, ttlMs, fn) {
+  const dir = join(tmpdir(), "praxis-quality-cache");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${name}.json`);
+  try {
+    if (Date.now() - statSync(file).mtimeMs < ttlMs) return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    /* no fresh result */
+  }
+  const value = await fn();
+  writeFileSync(file, JSON.stringify(value));
+  return value;
+}
+void cachedRunSync;
 
 export function protocolHasNoApprovePath() {
   const refused = ["approve", "reject", "sign", "enroll", "set-config", "exec", "shell", "grant"].map((op) => parseServiceRequest({ protocol: "praxis.approval-service.v1", op }).code);
@@ -43,6 +73,10 @@ export async function impostorAndDeadServiceAreNotTrusted() {
 
 /** The Desktop path: the packaged MCPB (from the sibling Runtime repository) delegating to a real service process. */
 export async function desktopMcpbDelegation() {
+  return cachedRun("desktop-mcpb", 15 * 60_000, runDesktopMcpbDelegation);
+}
+
+async function runDesktopMcpbDelegation() {
   const { spawnSync } = await import("node:child_process");
   const { existsSync } = await import("node:fs");
   const { resolve } = await import("node:path");
