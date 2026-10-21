@@ -17,6 +17,9 @@ esac
 MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
 [ "$MAJOR" -ge 12 ] || { echo "praxis-approval-service: macOS 12 or newer is required" >&2; exit 1; }
 
+# the service runs Git as its own account through /usr/bin/git, which needs the Xcode Command Line Tools (or Xcode) to be installed system-wide
+/usr/bin/git --version >/dev/null 2>&1 || { echo "praxis-approval-service: /usr/bin/git does not run; install the Xcode Command Line Tools (xcode-select --install) first" >&2; exit 1; }
+
 # the base directory must not be a link and must be root-owned
 if [ -e "$BASE" ]; then
   [ ! -L "$BASE" ] || { echo "praxis-approval-service: $BASE is a symbolic link; refusing" >&2; exit 1; }

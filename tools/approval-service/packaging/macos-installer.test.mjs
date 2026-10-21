@@ -83,6 +83,10 @@ for a in "$@"; do
 done
 exec /usr/bin/install "\${out[@]}"
 `,
+  git: `#!/bin/bash
+[ -n "$SHIM_NO_GIT" ] && { echo "xcode-select: note: no developer tools were found" >&2; exit 1; }
+exec /usr/bin/git "$@"
+`,
   tar: `#!/bin/bash
 [ -n "$SHIM_TAR_FAILS" ] && [ "$1" = "-C" ] && [ "$3" = "-czf" ] && { echo "tar: simulated failure" >&2; exit 1; }
 exec /usr/bin/tar "$@"
@@ -100,7 +104,7 @@ function sandbox({ arch = "arm64", version = "9.9.9" } = {}) {
   for (const [name, body] of Object.entries(SHIMS)) {
     writeFileSync(join(sb, "shims", name), body, { mode: 0o755 });
   }
-  const rewrite = (text) => text.replaceAll(REAL_BASE, base).replaceAll(REAL_PLIST, plist).replaceAll(REAL_LOG, log).replaceAll("@ARCH@", arch).replaceAll("@VERSION@", version);
+  const rewrite = (text) => text.replaceAll(REAL_BASE, base).replaceAll(REAL_PLIST, plist).replaceAll(REAL_LOG, log).replaceAll("/usr/bin/git", join(sb, "shims/git")).replaceAll("@ARCH@", arch).replaceAll("@VERSION@", version);
   const scripts = {};
   for (const [key, file] of [["pre", "macos-preinstall.sh"], ["post", "macos-postinstall.sh"], ["ctl", "macos-ctl.sh"]]) {
     const path = join(sb, `${key}.sh`);
@@ -160,6 +164,17 @@ describe("preinstall (sandboxed; privileged commands simulated)", { skip: proces
       assert.match(r.stderr, /not owned by root/);
     } finally {
       owned.cleanup();
+    }
+  });
+
+  test("refuses when /usr/bin/git does not run (no Command Line Tools): the service could not start", () => {
+    const s = sandbox();
+    try {
+      const r = s.run("pre", ["pkg", "dest", "/", "/"], { SHIM_NO_GIT: "1" });
+      assert.notEqual(r.status, 0);
+      assert.match(r.stderr, /xcode-select --install/);
+    } finally {
+      s.cleanup();
     }
   });
 
