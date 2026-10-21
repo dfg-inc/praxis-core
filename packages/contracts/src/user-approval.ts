@@ -126,15 +126,21 @@ export function createUserApproval(input: {
 
 // --- the channel for the call being served -----------------------------------------------------------------------
 
-const channelStore = new AsyncLocalStorage<UserApprovalChannel | undefined>();
+type CallStore = { channel: UserApprovalChannel | undefined; approvals: UserApproval[] };
+const channelStore = new AsyncLocalStorage<CallStore>();
 
 /** The MCP integration wraps each tool call so deep code can ask the person without threading a parameter. */
 export function withApprovalChannel<T>(channel: UserApprovalChannel | undefined, run: () => T): T {
-  return channelStore.run(channel, run);
+  return channelStore.run({ channel, approvals: [] }, run);
 }
 
 export function currentApprovalChannel(): UserApprovalChannel | undefined {
-  return channelStore.getStore();
+  return channelStore.getStore()?.channel;
+}
+
+/** The approvals given while serving the current call, so the result can say how each was obtained. */
+export function approvalsGivenInThisCall(): readonly UserApproval[] {
+  return channelStore.getStore()?.approvals ?? [];
 }
 
 /** What a diagnostic can say about how approvals will be obtained right now. */
@@ -206,6 +212,7 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
   if (answer && answer.answer !== "unavailable") {
     if (answer.answer === "approve") {
       const approval = createUserApproval({ request, channel: "client-elicitation", reason: answer.reason });
+      channelStore.getStore()?.approvals.push(approval);
       logDecision(options.repo, { ...base, decision: "approved", channel: "client-elicitation", assurance: "client-ui", ...(answer.reason ? { reason: answer.reason } : {}) });
       return approval;
     }
@@ -221,6 +228,7 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
     throw new ApprovalError("APPROVAL_REQUIRED", `${request.summary} needs the user's approval. Show the preview, ask the user, then apply with confirmation=YES. Nothing was changed.`);
   }
   const approval = createUserApproval({ request, channel: "confirmation-flag" });
+  channelStore.getStore()?.approvals.push(approval);
   logDecision(options.repo, { ...base, decision: "approved", channel: "confirmation-flag", assurance: "unverified", reason: "agent-relayed confirmation=YES; Praxis cannot verify that a person was asked" });
   return approval;
 }

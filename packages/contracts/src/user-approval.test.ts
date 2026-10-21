@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   ApprovalError,
   approvalModeReport,
+  approvalsGivenInThisCall,
   createUserApproval,
   hasMutationLease,
   obtainUserApproval,
@@ -168,5 +169,21 @@ describe("decisions are logged for later review", () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the result can say how each approval was obtained", () => {
+  it("approvals given during a call are listed with their assurance", async () => {
+    const rows = await withApprovalChannel(channel({ answer: "approve" }), async () => {
+      await obtainUserApproval(request());
+      return approvalsGivenInThisCall().map((a) => [a.action, a.assurance]);
+    });
+    expect(rows).toEqual([["praxis_developer_git_commit", "client-ui"]]);
+    const relayed = await withApprovalChannel(undefined, async () => {
+      await obtainUserApproval(request(), { confirmation: "YES" });
+      return approvalsGivenInThisCall().map((a) => a.assurance);
+    });
+    expect(relayed).toEqual(["unverified"]);
+    expect(approvalsGivenInThisCall()).toEqual([]);
   });
 });
