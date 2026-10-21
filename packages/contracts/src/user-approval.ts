@@ -29,9 +29,15 @@ export const USER_APPROVAL_VERSION = 1;
 /** How long an approval stays usable between being given and being applied. */
 export const USER_APPROVAL_TTL_MS = 10 * 60 * 1000;
 
-export type ApprovalChannelKind = "client-elicitation" | "terminal-prompt" | "test";
-/** Every approval is given by the user in a dialog (the client's, or the terminal's for the CLI). */
-export type ApprovalAssurance = "client-ui";
+export type ApprovalChannelKind = "client-elicitation" | "terminal-prompt" | "host-permission" | "test";
+/**
+ * client-ui: given by the user in a dialog (the client's elicitation dialog, or the terminal's for the CLI); the agent
+ * cannot write that answer.
+ * host-prompt: OPT-IN only (PRAXIS_APPROVAL_MODE=host-permission). The call reached Praxis, so the host's own
+ * tool-permission prompt was passed, and its arguments carried the exact plan. Praxis cannot verify that the prompt was
+ * shown: an "always allow" setting removes it, and then the agent approves itself. Never the default.
+ */
+export type ApprovalAssurance = "client-ui" | "host-prompt";
 
 /** What the user is shown and what the decision binds. */
 export type ApprovalRequest = {
@@ -56,7 +62,7 @@ export type AskAnswer = { answer: "approve" | "reject" | "dismiss" | "unavailabl
 
 /** A way to put an ApprovalRequest in front of the person. Supplied by the MCP client integration. */
 export interface UserApprovalChannel {
-  readonly kind: "client-elicitation" | "terminal-prompt";
+  readonly kind: "client-elicitation" | "terminal-prompt" | "host-permission";
   ask(request: ApprovalRequest): Promise<AskAnswer>;
 }
 
@@ -127,7 +133,7 @@ export function createUserApproval(input: {
     subjectDigest: subjectDigest(input.request.subject),
     decision: "approved" as const,
     channel: input.channel,
-    assurance: "client-ui" as const,
+    assurance: input.channel === "host-permission" ? ("host-prompt" as const) : ("client-ui" as const),
     decidedAt: (input.now ?? new Date()).toISOString(),
     ...(input.reason ? { reason: input.reason } : {}),
   });
@@ -156,7 +162,8 @@ export function approvalsGivenInThisCall(): readonly UserApproval[] {
 
 /** What a diagnostic can say about how approvals will be obtained right now. */
 export function approvalModeReport(): { mode: "client-ui" | "no-dialog"; note: string } {
-  if (currentApprovalChannel()) {
+  const channel = currentApprovalChannel();
+  if (channel && channel.kind !== "host-permission") {
     return { mode: "client-ui", note: "Protected actions are approved or rejected by the user in the client's own dialog; the agent cannot write that answer." };
   }
   return {
