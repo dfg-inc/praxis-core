@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ApprovalError,
+  ApprovalNeedsInput,
   approvalModeReport,
   decisionLogPath,
   approvalsGivenInThisCall,
@@ -175,5 +176,19 @@ describe("the result can say how each approval was obtained", () => {
     });
     expect(rows).toEqual([["praxis_developer_git_commit", "client-ui"]]);
     expect(approvalsGivenInThisCall()).toEqual([]);
+  });
+});
+
+describe("a channel that needs a separate round trip", () => {
+  it("unwinds with the request, before anything runs, and is neither an approval nor a refusal", async () => {
+    const needs: UserApprovalChannel = {
+      kind: "client-elicitation",
+      async ask(r) {
+        throw new ApprovalNeedsInput(r);
+      },
+    };
+    const result = await withApprovalChannel(needs, () => obtainUserApproval(request())).catch((e) => e);
+    expect(result).toBeInstanceOf(ApprovalNeedsInput);
+    expect(result.request.subject).toBe(request().subject);
   });
 });

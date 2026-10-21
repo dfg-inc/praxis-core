@@ -544,6 +544,7 @@ export {
   USER_APPROVAL_VERSION,
   USER_APPROVAL_TTL_MS,
   ApprovalError,
+  ApprovalNeedsInput,
   createUserApproval,
   obtainUserApproval,
   verifyUserApproval,

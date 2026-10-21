@@ -94,6 +94,21 @@ export class ApprovalError extends Error {
   }
 }
 
+/**
+ * Thrown by a channel whose answer is not available yet because the client has to be asked in a SEPARATE round trip
+ * (the 2026-07-28 protocol revision: the server returns input_required and the client retries the call with the
+ * answer). Nothing has been executed when this is thrown; the caller unwinds to the protocol layer, which asks and
+ * re-runs the whole call. It is never an approval and never a refusal.
+ */
+export class ApprovalNeedsInput extends Error {
+  readonly request: ApprovalRequest;
+  constructor(request: ApprovalRequest) {
+    super(`approval needed: ${request.summary}`);
+    this.name = "ApprovalNeedsInput";
+    this.request = request;
+  }
+}
+
 export function createUserApproval(input: {
   request: ApprovalRequest;
   channel: ApprovalChannelKind;
@@ -208,6 +223,7 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
     try {
       answer = await channel.ask(request);
     } catch (error) {
+      if (error instanceof ApprovalNeedsInput) throw error;
       logDecision(options.repo, { ...base, decision: "refused", channel: channel.kind, reason: error instanceof Error ? error.message : String(error) });
       throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, previewDetails(request));
     }
