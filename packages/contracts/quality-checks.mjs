@@ -1,8 +1,14 @@
 /** Executable Quality checks for the Runtime client of the Approval Service (service-integration level; same OS user). */
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { assessApprovalService, callApprovalService, parseServiceRequest } from "./dist/index.js";
+
+/** The Desktop runtime's own process.execPath is not a Node that can be spawned; find a real one. */
+function nodeBinary() {
+  for (const candidate of [process.env.PRAXIS_NODE, "/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]) if (candidate && existsSync(candidate)) return candidate;
+  return "node";
+}
 
 export function protocolHasNoApprovePath() {
   const refused = ["approve", "reject", "sign", "enroll", "set-config", "exec", "shell", "grant"].map((op) => parseServiceRequest({ protocol: "praxis.approval-service.v1", op }).code);
@@ -43,7 +49,7 @@ export async function desktopMcpbDelegation() {
   const runtime = process.env.PRAXIS_RUNTIME_ROOT ?? resolve(import.meta.dirname, "../../../praxis-runtime");
   const script = resolve(runtime, "tools/scripts/service-delegation-acceptance.mjs");
   if (!existsSync(script)) return { result: "BLOCKED: the Runtime repository is not available", steps: 0 };
-  const run = spawnSync(process.execPath, [script], { cwd: runtime, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 900_000, env: { ...process.env, PRAXIS_CORE_ROOT: resolve(import.meta.dirname, "../..") } });
+  const run = spawnSync(nodeBinary(), [script], { cwd: runtime, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 900_000, env: { ...process.env, PATH: `${process.env.PATH ?? ""}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin`, PRAXIS_CORE_ROOT: resolve(import.meta.dirname, "../..") } });
   const pass = run.stdout.split("\n").find((l) => l.startsWith("PASS service-delegation"));
   return { result: pass ? "PASS service-delegation" : `FAIL: ${(run.stdout + run.stderr).slice(-300)}`, steps: run.stdout.split("\n").filter((l) => /^ {2}ok \d/.test(l)).length };
 }
