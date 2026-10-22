@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   INTERNAL_WORKSPACE_RANGE,
   applyInternalWorkspaceDeps,
@@ -18,6 +18,21 @@ import {
   syncInternalWorkspaceDeps,
   syncVendorPins,
 } from "./release-lib.mjs";
+
+// These tests build fixture repositories at fixed versions. In a tag pipeline CI_COMMIT_TAG names the real release, which
+// would be compared with the fixtures, so the tag environment is cleared for every test and restored afterwards.
+const TAG_ENV = ["CI_COMMIT_TAG", "GITHUB_REF_TYPE", "GITHUB_REF_NAME"];
+let savedTagEnv = {};
+beforeEach(() => {
+  savedTagEnv = Object.fromEntries(TAG_ENV.map((key) => [key, process.env[key]]));
+  for (const key of TAG_ENV) delete process.env[key];
+});
+afterEach(() => {
+  for (const key of TAG_ENV) {
+    if (savedTagEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = savedTagEnv[key];
+  }
+});
 
 describe("isValidSemVer", () => {
   it.each([
