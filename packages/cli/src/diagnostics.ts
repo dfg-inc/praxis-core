@@ -18,7 +18,7 @@ export type ProviderReport = {
 /** How the user's approval is obtained for protected actions in this session. */
 export type ApprovalReport = {
   /** client-ui: asked in the MCP client's own dialog. no-dialog: the client cannot ask, so protected actions are not executed. */
-  mode: "client-ui" | "no-dialog";
+  mode: "client-ui" | "no-dialog" | "trusted-client";
   /** Stated plainly, including what does not work. */
   note: string;
   /** Where decisions are journaled (outside the repository). */

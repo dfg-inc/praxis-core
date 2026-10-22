@@ -29,7 +29,7 @@ export const USER_APPROVAL_VERSION = 1;
 /** How long an approval stays usable between being given and being applied. */
 export const USER_APPROVAL_TTL_MS = 10 * 60 * 1000;
 
-export type ApprovalChannelKind = "client-elicitation" | "terminal-prompt" | "host-permission" | "test";
+export type ApprovalChannelKind = "client-elicitation" | "terminal-prompt" | "host-permission" | "trusted-client" | "test";
 /**
  * client-ui: given by the user in a dialog (the client's elicitation dialog, or the terminal's for the CLI); the agent
  * cannot write that answer.
@@ -37,7 +37,13 @@ export type ApprovalChannelKind = "client-elicitation" | "terminal-prompt" | "ho
  * tool-permission prompt was passed, and its arguments carried the exact plan. Praxis cannot verify that the prompt was
  * shown: an "always allow" setting removes it, and then the agent approves itself. Never the default.
  */
-export type ApprovalAssurance = "client-ui" | "host-prompt";
+export type ApprovalAssurance = "client-ui" | "host-prompt" | "trusted-client";
+/*
+ * trusted-client: OPT-IN only (PRAXIS_APPROVAL_MODE=trusted-client, an extension setting). The user has told Praxis to
+ * trust this client to run protected actions without asking about each one (for example Claude Desktop with "Always
+ * allow"). It is NOT evidence that the user confirmed this action: the journal says "trusted-client". What stays: the
+ * agent's confirmation=YES, the preview and its fingerprint (a stale plan is refused), argument checks and the journal.
+ */
 
 /** What the user is shown and what the decision binds. */
 export type ApprovalRequest = {
@@ -62,7 +68,7 @@ export type AskAnswer = { answer: "approve" | "reject" | "dismiss" | "unavailabl
 
 /** A way to put an ApprovalRequest in front of the person. Supplied by the MCP client integration. */
 export interface UserApprovalChannel {
-  readonly kind: "client-elicitation" | "terminal-prompt" | "host-permission";
+  readonly kind: "client-elicitation" | "terminal-prompt" | "host-permission" | "trusted-client";
   ask(request: ApprovalRequest): Promise<AskAnswer>;
 }
 
@@ -133,7 +139,7 @@ export function createUserApproval(input: {
     subjectDigest: subjectDigest(input.request.subject),
     decision: "approved" as const,
     channel: input.channel,
-    assurance: input.channel === "host-permission" ? ("host-prompt" as const) : ("client-ui" as const),
+    assurance: input.channel === "host-permission" ? ("host-prompt" as const) : input.channel === "trusted-client" ? ("trusted-client" as const) : ("client-ui" as const),
     decidedAt: (input.now ?? new Date()).toISOString(),
     ...(input.reason ? { reason: input.reason } : {}),
   });
@@ -161,8 +167,11 @@ export function approvalsGivenInThisCall(): readonly UserApproval[] {
 }
 
 /** What a diagnostic can say about how approvals will be obtained right now. */
-export function approvalModeReport(): { mode: "client-ui" | "no-dialog"; note: string } {
+export function approvalModeReport(): { mode: "client-ui" | "no-dialog" | "trusted-client"; note: string } {
   const channel = currentApprovalChannel();
+  if (channel?.kind === "trusted-client") {
+    return { mode: "trusted-client", note: "TRUSTED CLIENT (enabled by you in the extension settings): protected actions run on the agent's confirmation=YES for a current preview, without a separate confirmation of each action. This is your standing permission for this client, not proof that you confirmed each action. Every action is still checked against its preview and journaled." };
+  }
   if (channel && channel.kind !== "host-permission") {
     return { mode: "client-ui", note: "Protected actions are approved or rejected by the user in the client's own dialog; the agent cannot write that answer." };
   }
