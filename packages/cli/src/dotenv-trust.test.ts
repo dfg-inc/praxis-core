@@ -7,6 +7,8 @@ import { dotenvRejectedKeys, loadPraxisDotenv } from "./operations.js";
 const TRUST_KEYS = [
   "PRAXIS_APPROVAL_FORGED",
   "PRAXIS_TEST_APPROVALS",
+  "PRAXIS_APPROVAL_MODE",
+  "PRAXIS_STATE_HOME",
   "PRAXIS_ALLOW_DOCKER_SOCKET",
   "PRAXIS_FIXTURE_EXECUTION",
   "PRAXIS_JIRA_PROJECT_KEY",
@@ -39,6 +41,8 @@ describe("repository dotenv files cannot set approval or trust configuration", (
       [
         "PRAXIS_APPROVAL_FORGED=1",
         "PRAXIS_TEST_APPROVALS=1",
+        "PRAXIS_APPROVAL_MODE=trusted-client",
+        "PRAXIS_STATE_HOME=/tmp/elsewhere",
         "PRAXIS_ALLOW_DOCKER_SOCKET=1",
         "PRAXIS_FIXTURE_EXECUTION=1",
         "PRAXIS_JIRA_PROJECT_KEY=PRX",

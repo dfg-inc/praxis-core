@@ -254,6 +254,7 @@ const DOTENV_FORBIDDEN_PREFIXES = [
   "PRAXIS_ALLOW_",
   "PRAXIS_FIXTURE_",
   "PRAXIS_TEST_",
+  "PRAXIS_STATE_HOME",
 ];
 
 let dotenvRejected: string[] = [];

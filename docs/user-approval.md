@@ -28,7 +28,7 @@ The agent calls the `*_preview` tool and shows you the result. It then calls the
 - **Reject** (or dismissing the dialog) runs nothing; the tool returns `APPROVAL_REJECTED`.
 - Your answer reaches Praxis as the client's response to the server, not as a tool argument, so the agent cannot write it. Nothing the agent puts in arguments or in a command (`approved`, `grant`, `authorization`, `userApproval`, a file in the repository) stands in for it.
 
-The result of every protected call says how the approval was obtained (`data.approval`, always `assurance: "client-ui"`).
+The result of every protected call says how the approval was obtained (`data.approval`: `assurance` is `client-ui` for a dialog, `host-prompt` or `trusted-client` for the opt-in modes).
 
 ## Which clients show the dialog (evidence, not assumption)
 
@@ -65,7 +65,7 @@ What it cannot do, stated plainly: Praxis cannot see whether the host's prompt w
 
 The owner's explicit decision to trust a client with protected actions without a separate confirmation of each one, for example Claude Desktop with "Always allow". Extension setting *Approval mode*, or the environment variable for a client that starts the Runtime itself (Claude Code, Cowork). It is never the default and a repository `.env` cannot set it.
 
-When the agent applies a previewed action with `confirmation=YES` and the matching `previewFingerprint`, Praxis runs it. Results carry `approval[].channel/assurance = "trusted-client"` and the journal records `trusted-client`. It is **not** the user's confirmation of that action and Praxis never says it is. Unchanged: the preview and its fingerprint (a stale plan is refused), argument checks, `confirmation=NO` as a recorded refusal, the journal. Confirming a Story or decision is still the user's act: do it only for the revision they named.
+When the agent applies a previewed action with `confirmation=YES` and the matching `previewFingerprint`, Praxis runs it. Results carry `approval[].channel/assurance = "trusted-client"` and the journal records `trusted-client`. It is **not** the user's confirmation of that action and Praxis never says it is. Unchanged: the preview and its fingerprint (a stale plan is refused), argument checks, `confirmation=NO` as a recorded refusal, the journal. It does **not** cover acts only a person may perform: confirming a Story or an architecture decision and approving a service are refused with `APPROVAL_CLIENT_UI_REQUIRED` in this mode (a standing permission is not the person doing them); use a client with an approval dialog or the CLI.
 
 ## The decision journal
 
