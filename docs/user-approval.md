@@ -61,6 +61,12 @@ For a host that has no dialog but does ask before running an MCP tool, you can s
 
 What it cannot do, stated plainly: Praxis cannot see whether the host's prompt was shown. If you chose "always allow" for the tool, there is no prompt and the agent has approved itself. The result is labelled `assurance: "host-prompt"` (never `client-ui`), and quality fixes (commit then push, two approvals) still need a dialog. Leave it off if your client has the dialog.
 
+### Opt-in: `PRAXIS_APPROVAL_MODE=trusted-client` (Trusted Client)
+
+The owner's explicit decision to trust a client with protected actions without a separate confirmation of each one, for example Claude Desktop with "Always allow". Extension setting *Approval mode*, or the environment variable for a client that starts the Runtime itself (Claude Code, Cowork). It is never the default and a repository `.env` cannot set it.
+
+When the agent applies a previewed action with `confirmation=YES` and the matching `previewFingerprint`, Praxis runs it. Results carry `approval[].channel/assurance = "trusted-client"` and the journal records `trusted-client`. It is **not** the user's confirmation of that action and Praxis never says it is. Unchanged: the preview and its fingerprint (a stale plan is refused), argument checks, `confirmation=NO` as a recorded refusal, the journal. Confirming a Story or decision is still the user's act: do it only for the revision they named.
+
 ## The decision journal
 
 Every decision is appended to a journal in your own Praxis home, **outside the repository**: `~/.praxis/decisions/<repository id>.jsonl` (`PRAXIS_STATE_HOME` moves it; `praxis_doctor` → `approval.decisionLog` shows the exact path). It records when, what, the digest of the exact content, approved / rejected / dismissed / refused, and the channel. It cannot be committed with the project, and it is never read back as an authorization.
