@@ -8,7 +8,7 @@ on:
       tag:
         description: Existing immutable tag to publish (does not move the tag)
         required: true
-        default: v0.1.0-alpha.47
+        default: v0.1.0-alpha.48
         type: string
 
 permissions:

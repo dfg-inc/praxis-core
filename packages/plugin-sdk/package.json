@@ -1,6 +1,6 @@
 {
   "name": "@praxis/plugin-sdk",
-  "version": "0.1.0-alpha.47",
+  "version": "0.1.0-alpha.48",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
