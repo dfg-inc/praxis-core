@@ -15,7 +15,7 @@
     "pack:vendor": "node tools/scripts/pack-core-vendor.mjs",
     "accept:git-delivery-lib": "node tools/scripts/git-delivery-acceptance.mjs",
     "accept:git-delivery-e2e": "node tools/scripts/git-delivery-e2e-acceptance.mjs",
-    "verify": "npm run build && npm run typecheck && npm run test && npm run check:tests",
+    "verify": "npm run build && npm run typecheck && npm run test && npm run check:tests && npm run accept:git-delivery-lib",
     "check:version": "node tools/scripts/check-ecosystem-version.mjs",
     "check:tests": "node tools/scripts/check-test-completeness.mjs"
   },

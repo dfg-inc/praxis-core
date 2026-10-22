@@ -36,6 +36,13 @@ import {
   validateGithubApiUrl,
   VCS_CODES,
 } from "@praxis/vcs";
+import { runApprovedForTest } from "@praxis/contracts";
+
+// Library-level acceptance of the delivery logic. Every repository write needs an approval lease, which only the test
+// harness may issue (PRAXIS_TEST_APPROVALS). The user-facing approval flow is accepted through the packed Runtime
+// (praxis-runtime: accept:git-delivery, accept:git-delivery-e2e, accept:approval-ux).
+process.env.PRAXIS_TEST_APPROVALS = "1";
+await runApprovedForTest("git-delivery-acceptance", async () => {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const WP = "WP-20260914-002";
@@ -649,3 +656,4 @@ console.log(
   ),
 );
 console.log(`PASS git-delivery ${proven.join("; ")}`);
+});
