@@ -89,7 +89,7 @@ const RULES: Array<{ rule: string; severity: "high" | "medium"; re: RegExp }> = 
 ];
 
 /** Files that carry agent instructions by convention. In an analysed repository they are data about that repository. */
-export const AGENT_INSTRUCTION_FILES = [/(^|\/)CLAUDE\.md$/i, /(^|\/)AGENTS\.md$/i, /(^|\/)GEMINI\.md$/i, /(^|\/)\.cursorrules$/i, /(^|\/)\.cursor\/rules\//i, /(^|\/)\.claude\//i, /(^|\/)SKILL\.md$/i, /(^|\/)\.github\/copilot-instructions\.md$/i, /(^|\/)\.windsurfrules$/i];
+export const AGENT_INSTRUCTION_FILES = [/(^|\/)CLAUDE\.md$/i, /(^|\/)AGENTS\.md$/i, /(^|\/)GEMINI\.md$/i, /(^|\/)\.cursorrules$/i, /(^|\/)\.cursor\/rules\//i, /(^|\/)\.claude\//i, /(^|\/)SKILL\.md$/i, /(^|\/)\.github\/copilot-instructions\.md$/i, /(^|\/)\.windsurfrules$/i, /(^|\/)CLAUDE\.local\.md$/i, /(^|\/)AGENT\.md$/i, /(^|\/)\.mcp\.json$/i, /(^|\/)\.clinerules/i, /(^|\/)\.roo\/rules/i, /(^|\/)\.github\/instructions\//i, /(^|\/)\.aider/i];
 
 export function isAgentInstructionFile(path: string): boolean {
   const normalized = path.replace(/\\/g, "/");
