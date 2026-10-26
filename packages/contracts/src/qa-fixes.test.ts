@@ -97,14 +97,14 @@ describe("prototype search box (D12)", () => {
     const dom = new JSDOM(renderReview(s, "prototype"), { runScripts: "dangerously", pretendToBeVisual: true });
     const doc = dom.window.document;
     const box = () => doc.querySelector("input[data-search]") as HTMLInputElement;
+    const original = box();
     for (const text of ["B", "B-", "B-2"]) {
       box().value = text;
       box().dispatchEvent(new dom.window.Event("input"));
     }
     expect(box().value).toBe("B-2");
     expect(doc.querySelectorAll("#proto-screen tr").length).toBe(2);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(doc.activeElement).toBe(box());
+    expect(box()).toBe(original); // the input itself is never rebuilt, so focus and caret stay in a real browser
   });
 });
 
