@@ -110,7 +110,7 @@ describe("a contract is agreed by the user", () => {
     (doc.querySelector("#btn-copy") as HTMLElement).click();
     const submission = JSON.parse((doc.querySelector("#out textarea") as HTMLTextAreaElement).value);
     expect(submission.view).toBe("contracts");
-    expect(submission.contracts).toEqual({ agree: ["C-1"] });
+    expect(submission.contracts).toEqual({ agree: ["C-1"], remove: [] });
     const plan = submissionToCommands(s, submission);
     expect(plan.details[0]).toMatch(/AGREE contract C-1 'Orders API': provider svc-api, consumers svc-web, schema openapi.json/);
     let after = s;
@@ -124,3 +124,38 @@ describe("a contract is agreed by the user", () => {
     expect(stale.conflicts[0].reason).toMatch(/changed since the page was rendered/);
   });
 });
+
+describe("what the user agreed cannot be dropped or left behind by the agent", () => {
+  const agreedItem = () => {
+    let s = run(null, { action: "open", projectId: "p", title: "Orders", request: "r" });
+    s = run(s, { action: "add-requirement", id: "REQ-ORD-001", statement: "View orders", acceptanceCriteria: ["List shows orders"] });
+    const svc = (id: string, deps: string[]) => ({ action: "set-service", service: { id, name: id, kind: "module", responsibilities: ["x"], requirementIds: ["REQ-ORD-001"], dependsOn: deps, status: "in_progress" } });
+    s = run(s, svc("svc-api", []));
+    s = run(s, svc("svc-web", ["svc-api"]));
+    s = run(s, { action: "set-contract", contract: { id: "C-1", name: "Orders API", providerServiceId: "svc-api", consumerServiceIds: ["svc-web"] } });
+    return run(s, { action: "set-contract", contract: { ...s.contracts[0], status: "agreed" } }, U);
+  };
+  it("S5: the agent cannot remove an agreed contract; it can remove a proposed one; the user can remove either through the page", () => {
+    const s = agreedItem();
+    expect(() => run(s, { action: "remove-contract", id: "C-1" })).toThrow(/agreed by the user/);
+    expect(run(s, { action: "remove-contract", id: "C-1" }, U).contracts).toEqual([]);
+    const proposed = run(s, { action: "set-contract", contract: { ...s.contracts[0], schemaRef: "x.json", status: "proposed" } });
+    expect(run(proposed, { action: "remove-contract", id: "C-1" }).contracts).toEqual([]);
+    const plan = submissionToCommands(s, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "contracts", workItemId: s.workItem.id, baseFingerprint: contractsFp(s), contracts: { agree: [], remove: ["C-1"] } });
+    expect(plan.commands).toEqual([{ action: "remove-contract", via: "html-review", id: "C-1" }]);
+    expect(plan.details[0]).toMatch(/REMOVE contract C-1/);
+  });
+  it("S7: a contract that became proposed again after the gate was passed blocks quality and delivery", () => {
+    const s = agreedItem();
+    const changed = run(s, { action: "set-contract", contract: { ...s.contracts[0], schemaRef: "v2.json", status: "proposed" } });
+    for (const phase of ["development", "quality", "delivery"] as const) expect(phaseGates(changed, phase).missing.join(" "), phase).toMatch(/contract C-1/);
+    for (const phase of ["development", "quality", "delivery"] as const) expect(phaseGates(s, phase).missing.join(" "), phase).not.toMatch(/contract C-1/);
+  });
+  it("S8: the agreement line shows everything that is part of the agreed content", () => {
+    let s = agreedItem();
+    s = run(s, { action: "set-contract", contract: { ...s.contracts[0], description: "GET /orders returns {items: []}", requirementIds: ["REQ-ORD-001"], storyIds: [], status: "proposed" } });
+    const plan = submissionToCommands(s, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "contracts", workItemId: s.workItem.id, baseFingerprint: contractsFp(s), contracts: { agree: ["C-1"], remove: [] } });
+    expect(plan.details[0]).toMatch(/description 'GET \/orders returns \{items: \[\]\}', requirements REQ-ORD-001/);
+  });
+});
+import { contractsFingerprint as contractsFp } from "./index.js";

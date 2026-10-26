@@ -101,7 +101,7 @@ export const ReviewSubmissionSchema = z.object({
   plan: PlanPayload.optional(),
   stories: StoriesPayload.optional(),
   /** Contracts the user agrees. Implementation across services waits for it; an agent can propose a contract, never agree it. */
-  contracts: z.object({ agree: z.array(z.string().min(1)).default([]) }).optional(),
+  contracts: z.object({ agree: z.array(z.string().min(1)).default([]), remove: z.array(z.string().min(1)).default([]) }).optional(),
   /** Leaving guided mode switches the gates off, so it is the user's call. */
   modeChange: z.object({ to: z.enum(["classic", "guided"]), reason: z.string().max(1000).optional() }).optional(),
   /** Gaps the user chooses not to cover (a prototype for a pure refactor, a capability a requirement does not need). Only the user may waive. */
@@ -345,7 +345,19 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       const { status: _s, agreement: _a, ...content } = contract;
       commands.push({ action: "set-contract", via, contract: { ...content, status: "agreed" } });
       summary.push(`contract ${id} agreed`);
-      details.push(`AGREE contract ${id} '${contract.name}': provider ${contract.providerServiceId}, consumers ${contract.consumerServiceIds.join(", ") || "none"}${contract.schemaRef ? `, schema ${contract.schemaRef}` : ""}`);
+      details.push(`AGREE contract ${id} '${contract.name}': provider ${contract.providerServiceId}, consumers ${contract.consumerServiceIds.join(", ") || "none"}${contract.schemaRef ? `, schema ${contract.schemaRef}` : ""}${contract.description ? `, description '${contract.description.slice(0, 400)}'` : ""}${contract.requirementIds.length ? `, requirements ${contract.requirementIds.join(" ")}` : ""}${contract.storyIds.length ? `, stories ${contract.storyIds.join(" ")}` : ""}`);
+    }
+  }
+  if (submission.view === "contracts" && submission.contracts) {
+    for (const id of submission.contracts.remove) {
+      const contract = state.contracts.find((c) => c.id === id);
+      if (!contract) {
+        conflicts.push({ item: id, reason: "the contract no longer exists" });
+        continue;
+      }
+      commands.push({ action: "remove-contract", via, id });
+      summary.push(`contract ${id} removed`);
+      details.push(`REMOVE contract ${id} '${contract.name}' (${contract.status})`);
     }
   }
   if (submission.modeChange && submission.modeChange.to !== state.mode) {

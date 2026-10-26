@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, lstatSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   inferProjectConfig,
@@ -271,6 +271,25 @@ const DOTENV_ALLOWED_KEYS = new Set([
 ]);
 const DOTENV_ALLOWED_PREFIXES = ["PRAXIS_JIRA_TRANSITION_"];
 
+/**
+ * An allowed key still gets only a value of the right shape: a project key, an issue-type name, a numeric id or a field id are
+ * spliced into Jira paths, JQL and request bodies, so a value from a file the agent can write must not be able to carry
+ * path or query syntax.
+ */
+const DOTENV_VALUE_SHAPES: Array<[RegExp, RegExp]> = [
+  [/^PRAXIS_JIRA_PROJECT_KEY$/, /^[A-Z][A-Z0-9_]{1,19}$/],
+  [/^PRAXIS_JIRA_[A-Z_]+_TYPE_ID$/, /^\d{1,10}$/],
+  [/^PRAXIS_JIRA_[A-Z_]+_TYPE$/, /^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,59}$/],
+  [/^PRAXIS_JIRA_(STORY_POINTS|ARCHITECT_ESTIMATE)_FIELD$/, /^(customfield_\d{1,8}|[A-Za-z][A-Za-z0-9_ .\-]{0,59})$/],
+  [/^PRAXIS_JIRA_TRANSITION_/, /^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,39}$/],
+  [/^PRAXIS_GIT_PROVIDER$/, /^(github|gitlab)$/],
+  [/^PRAXIS_WORK_PACKAGE_MAX_HOURS$/, /^\d{1,3}$/],
+];
+export function dotenvValueValid(key: string, value: string): boolean {
+  const shape = DOTENV_VALUE_SHAPES.find(([k]) => k.test(key));
+  return shape ? shape[1].test(value) : false;
+}
+
 export function dotenvKeyAllowed(key: string): boolean {
   return DOTENV_ALLOWED_KEYS.has(key) || DOTENV_ALLOWED_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
@@ -286,27 +305,55 @@ function dotenvKeyForbidden(key: string): boolean {
   return !dotenvKeyAllowed(key);
 }
 
+/** Values a repository file put into process.env, so the next call can take them back: one repository's file must not apply to another. */
+const fileSourced = new Map<string, string>();
+const DOTENV_MAX_BYTES = 64 * 1024;
+
+function parseDotenvLine(raw: string): { key: string; value: string } | undefined {
+  const line = raw.replace(/^\uFEFF/, "").trim().replace(/^export\s+/, "");
+  const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+  if (!m) return undefined;
+  let value = m[2]!.trim();
+  const quoted = value.match(/^(["'])(.*)\1$/);
+  if (quoted) value = quoted[2]!;
+  else value = value.replace(/\s+#.*$/, "").trim();
+  return { key: m[1]!, value };
+}
+
 export function loadPraxisDotenv(repo: string): void {
   const removed = scrubUnexpandedPlaceholders();
   if (removed.length) {
     hostPlaceholdersIgnored = [...new Set([...hostPlaceholdersIgnored, ...removed])].sort();
   }
+  // take back what the previous call's repository file set, unless the operator has since set the same variable
+  for (const [key, value] of fileSourced) if (process.env[key] === value) delete process.env[key];
+  fileSourced.clear();
   if (process.env.PRAXIS_SKIP_DOTENV === "1") return;
   const resolved = resolve(repo);
   if (!existsSync(resolved)) return;
   for (const f of [".env.praxis", ".env", ".env.praxis.local"]) {
     const p = join(resolved, f);
-    if (!existsSync(p)) continue;
-    for (const line of readFileSync(p, "utf8").split("\n")) {
-      const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-      if (!m) continue;
-      if (dotenvKeyForbidden(m[1]!)) {
+    let text: string;
+    try {
+      // only a regular file of sensible size: a FIFO or a device would block the whole Runtime, a link may point anywhere
+      const st = lstatSync(p);
+      if (!st.isFile() || st.size > DOTENV_MAX_BYTES) continue;
+      text = readFileSync(p, "utf8");
+    } catch {
+      continue;
+    }
+    for (const raw of text.split(/\r?\n/)) {
+      const parsed = parseDotenvLine(raw);
+      if (!parsed) continue;
+      const { key, value } = parsed;
+      if (dotenvKeyForbidden(key) || !dotenvValueValid(key, value)) {
         // only Praxis-looking keys are worth reporting; the product's own variables (DATABASE_URL ...) are simply not loaded
-        if (m[1]!.startsWith("PRAXIS_") && !dotenvRejected.includes(m[1]!)) dotenvRejected = [...dotenvRejected, m[1]!].sort();
+        if (key.startsWith("PRAXIS_") && !dotenvRejected.includes(key)) dotenvRejected = [...dotenvRejected, key].sort();
         continue;
       }
-      if (process.env[m[1]!]) continue;
-      process.env[m[1]!] = m[2]!.replace(/^["']|["']$/g, "");
+      if (process.env[key]) continue;
+      process.env[key] = value;
+      fileSourced.set(key, value);
     }
   }
 }

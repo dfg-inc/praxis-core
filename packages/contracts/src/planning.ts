@@ -470,7 +470,7 @@ export const PlanningCommandSchemas = [
   z.object({ action: z.literal("record-repository-inspection"), repositoryId: RepositoryIdSchema, inspection: RepositoryInspectionSchema }),
   z.object({ action: z.literal("set-contract"), via: Via, contract: ServiceContractSchema.omit({ agreement: true }) }),
   z.object({ action: z.literal("set-mode"), mode: WorkflowModeSchema, reason: z.string().optional() }),
-  z.object({ action: z.literal("remove-contract"), id: z.string().min(1) }),
+  z.object({ action: z.literal("remove-contract"), via: Via, id: z.string().min(1) }),
   z.object({ action: z.literal("record-impact"), impact: ImpactSchema.omit({ revision: true, recordedAt: true }) }),
   z.object({ action: z.literal("advance-phase"), to: PhaseSchema, reason: z.string().optional() }),
   z.object({ action: z.literal("return-to-phase"), to: PhaseSchema, reason: z.string().min(1) }),
@@ -1005,10 +1005,12 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
       }
       break;
     case "quality": {
+      for (const contract of state.contracts) need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user (it was changed after implementation started?)`);
       for (const service of state.services) need(state.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
       break;
     }
     case "delivery":
+      for (const contract of state.contracts) need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user`);
       need(state.verdicts.some((v) => v.scope === "feature" && v.verdict !== "FAIL" && !v.stale), "a current feature verdict that is not FAIL");
       // A feature verdict is only as good as the services under it: each one needs its own implementation and a passing verdict.
       for (const service of state.services) {
@@ -1592,7 +1594,10 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
       return { state: touch({ ...state, contracts }, now, `contract ${contract.id} set`), duplicate: false, result: { contractId: contract.id } };
     }
     case "remove-contract": {
-      if (!state.contracts.some((c) => c.id === command.id)) throw missing("CONTRACT_NOT_FOUND", `contract ${command.id} not found`);
+      const doomed = state.contracts.find((c) => c.id === command.id);
+      if (!doomed) throw missing("CONTRACT_NOT_FOUND", `contract ${command.id} not found`);
+      // Removing what the user agreed would let implementation continue with nothing agreed: that is the user's call.
+      if (doomed.status === "agreed" && !verified) throw new WorkflowError("USER_DECISION_REQUIRED", `contract ${command.id} was agreed by the user; removing it is their decision, not the agent's`);
       return { state: touch({ ...state, contracts: state.contracts.filter((c) => c.id !== command.id) }, now, `contract ${command.id} removed`), duplicate: false, result: { removed: command.id } };
     }
     case "record-impact": {

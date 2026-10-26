@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -62,18 +63,20 @@ describe("repository files configure Praxis only through an allowlist", () => {
     expect(dotenvRejectedKeys()).toEqual(expect.arrayContaining(["PRAXIS_APPROVAL_MODE", "PRAXIS_TEST_APPROVALS"]));
   });
 
-  it("only the allowlisted per-project naming settings load", () => {
-    loadPraxisDotenv(repo({ ".env": lines(ALLOWED, "PRX") }));
-    for (const k of ALLOWED) expect(process.env[k], k).toBe("PRX");
+  it("only the allowlisted per-project naming settings load, and only with a value of the right shape", () => {
+    const GOOD: Record<string, string> = { PRAXIS_JIRA_PROJECT_KEY: "PRX", PRAXIS_JIRA_STORY_TYPE: "User Story", PRAXIS_JIRA_TRANSITION_DONE: "Done", PRAXIS_GIT_PROVIDER: "github", PRAXIS_WORK_PACKAGE_MAX_HOURS: "16" };
+    loadPraxisDotenv(repo({ ".env": ALLOWED.map((k) => `${k}=${GOOD[k]}`).join("\n") }));
+    for (const k of ALLOWED) expect(process.env[k], k).toBe(GOOD[k]);
     for (const k of ALLOWED) expect(dotenvKeyAllowed(k)).toBe(true);
     for (const k of FORBIDDEN) expect(dotenvKeyAllowed(k), k).toBe(false);
   });
 
   it("priority: the operator's real environment wins over every file; among files the first one read wins", () => {
     process.env.PRAXIS_JIRA_PROJECT_KEY = "FROM_OPERATOR";
-    loadPraxisDotenv(repo({ ".env.praxis": "PRAXIS_JIRA_PROJECT_KEY=FILE1\nPRAXIS_GIT_PROVIDER=github", ".env": "PRAXIS_JIRA_PROJECT_KEY=FILE2\nPRAXIS_GIT_PROVIDER=gitlab", ".env.praxis.local": "PRAXIS_GIT_PROVIDER=other" }));
+    loadPraxisDotenv(repo({ ".env.praxis": "PRAXIS_JIRA_PROJECT_KEY=FILE1\nPRAXIS_GIT_PROVIDER=github", ".env": "PRAXIS_JIRA_PROJECT_KEY=FILE2\nPRAXIS_GIT_PROVIDER=gitlab", ".env.praxis.local": "PRAXIS_GIT_PROVIDER=github" }));
     expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("FROM_OPERATOR");
     expect(process.env.PRAXIS_GIT_PROVIDER).toBe("github");
+    delete process.env.PRAXIS_GIT_PROVIDER;
   });
 
   it("PRAXIS_SKIP_DOTENV=1 in the real environment stops all loading; a file cannot set or clear it", () => {
@@ -103,11 +106,69 @@ describe("repository files configure Praxis only through an allowlist", () => {
     expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("OK");
   });
 
-  it("a symlinked .env cannot pull in another file's trust settings either", () => {
+  it("a symlinked .env is not read at all", () => {
     const outside = repo({ "trusted.env": "PRAXIS_APPROVAL_MODE=trusted-client\nPRAXIS_JIRA_PROJECT_KEY=LINKED" });
     const dir = repo({});
     symlinkSync(join(outside, "trusted.env"), join(dir, ".env"));
     loadPraxisDotenv(dir);
+    expect(process.env.PRAXIS_APPROVAL_MODE).toBeUndefined();
+    expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBeUndefined();
+  });
+
+  it("S2: an allowed key with path, query, JQL or injection syntax in its value is refused", () => {
+    for (const bad of ["X/../../rest/api/2/myself?a=b#", "PRX OR project = SECRET", "prx", "PRX\"; DROP", "A".repeat(40), "../PRX", "PRX%2f..", "P R X"]) {
+      delete process.env.PRAXIS_JIRA_PROJECT_KEY;
+      loadPraxisDotenv(repo({ ".env": `PRAXIS_JIRA_PROJECT_KEY=${bad}` }));
+      expect(process.env.PRAXIS_JIRA_PROJECT_KEY, bad).toBeUndefined();
+    }
+    for (const bad of ["customfield_1/../x", "a?b=c", "x#y"]) {
+      delete process.env.PRAXIS_JIRA_STORY_POINTS_FIELD;
+      loadPraxisDotenv(repo({ ".env": `PRAXIS_JIRA_STORY_POINTS_FIELD=${bad}` }));
+      expect(process.env.PRAXIS_JIRA_STORY_POINTS_FIELD, bad).toBeUndefined();
+    }
+    delete process.env.PRAXIS_JIRA_STORY_TYPE_ID;
+    loadPraxisDotenv(repo({ ".env": "PRAXIS_JIRA_STORY_TYPE_ID=10001" }));
+    expect(process.env.PRAXIS_JIRA_STORY_TYPE_ID).toBe("10001");
+    delete process.env.PRAXIS_JIRA_STORY_TYPE_ID;
+    loadPraxisDotenv(repo({ ".env": "PRAXIS_JIRA_STORY_TYPE_ID=10001/../x" }));
+    expect(process.env.PRAXIS_JIRA_STORY_TYPE_ID).toBeUndefined();
+  });
+
+  it("S3: one repository's file does not apply to another repository, or to a repository without a file", () => {
+    delete process.env.PRAXIS_JIRA_PROJECT_KEY;
+    loadPraxisDotenv(repo({ ".env": "PRAXIS_JIRA_PROJECT_KEY=AAA" }));
+    expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("AAA");
+    loadPraxisDotenv(repo({ ".env": "PRAXIS_JIRA_PROJECT_KEY=BBB" }));
+    expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("BBB");
+    loadPraxisDotenv(repo({}));
+    expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBeUndefined();
+    // the operator's own value is never taken back
+    process.env.PRAXIS_JIRA_PROJECT_KEY = "OPS";
+    loadPraxisDotenv(repo({ ".env": "PRAXIS_JIRA_PROJECT_KEY=AAA" }));
+    loadPraxisDotenv(repo({}));
+    expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("OPS");
+  });
+
+  it("S4: a FIFO, a device or an oversized file named .env cannot hang or slow the Runtime", () => {
+    const dir = repo({});
+    execFileSync("mkfifo", [join(dir, ".env")]);
+    const start = Date.now();
+    loadPraxisDotenv(dir);
+    expect(Date.now() - start).toBeLessThan(2000);
+    const big = repo({ ".env": `${"X=1\n".repeat(40_000)}PRAXIS_JIRA_PROJECT_KEY=BIG\n` });
+    delete process.env.PRAXIS_JIRA_PROJECT_KEY;
+    loadPraxisDotenv(big);
+    expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBeUndefined();
+  });
+
+  it("S9: CRLF, a BOM, an export prefix, quotes and trailing comments behave the way users expect, for allowed keys only", () => {
+    delete process.env.PRAXIS_JIRA_PROJECT_KEY;
+    delete process.env.PRAXIS_GIT_PROVIDER;
+    delete process.env.PRAXIS_WORK_PACKAGE_MAX_HOURS;
+    loadPraxisDotenv(repo({ ".env": "\uFEFFexport PRAXIS_JIRA_PROJECT_KEY=PRX # the project\r\nPRAXIS_GIT_PROVIDER=\"github\"\r\nPRAXIS_WORK_PACKAGE_MAX_HOURS='8'  \r\nexport PRAXIS_APPROVAL_MODE=trusted-client\r\n" }));
+    expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("PRX");
+    expect(process.env.PRAXIS_GIT_PROVIDER).toBe("github");
+    expect(process.env.PRAXIS_WORK_PACKAGE_MAX_HOURS).toBe("8");
     expect(process.env.PRAXIS_APPROVAL_MODE).toBeUndefined();
   });
 

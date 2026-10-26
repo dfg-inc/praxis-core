@@ -122,8 +122,8 @@ function collect(){
     s.plan={entries:es,agree:!!($('#agree-plan')&&$('#agree-plan').checked)};
   }
   if(D.view==='contracts'){
-    var ag=[];$$('[data-contract]').forEach(function(card){var c=$('[data-f=agree]',card);if(c&&c.checked)ag.push(card.getAttribute('data-contract'))});
-    s.contracts={agree:ag};
+    var ag=[],rm=[];$$('[data-contract]').forEach(function(card){var c=$('[data-f=agree]',card);if(c&&c.checked)ag.push(card.getAttribute('data-contract'));var r=$('[data-f=remove]',card);if(r&&r.checked)rm.push(card.getAttribute('data-contract'))});
+    s.contracts={agree:ag,remove:rm};
   }
   if(D.view==='stories'){
     var items=[],sts=[];
@@ -448,7 +448,7 @@ export function renderContractsReview(state: WorkflowState, options: RenderRevie
     .map((c) => {
       const agreed = c.status === "agreed";
       return `<section class="card" data-contract="${esc(c.id)}">
-<div class="row"><h2 class="grow">${esc(c.id)} ${esc(c.name)} ${pill(c.status, agreed ? "ok" : "warn")}</h2>${agreed ? `<span class="meta">agreed ${esc(c.agreement?.at ?? "")}${c.agreement ? " (" + esc(c.agreement.via) + ")" : ""}</span>` : `<label class="marks"><input type="checkbox" data-f="agree"> I agree this contract</label>`}</div>
+<div class="row"><h2 class="grow">${esc(c.id)} ${esc(c.name)} ${pill(c.status, agreed ? "ok" : "warn")}</h2>${agreed ? `<label class="marks"><input type="checkbox" data-f="remove"> Remove</label><span class="meta">agreed ${esc(c.agreement?.at ?? "")}${c.agreement ? " (" + esc(c.agreement.via) + ")" : ""}</span>` : `<label class="marks"><input type="checkbox" data-f="agree"> I agree this contract</label>`}</div>
 <p>${esc(c.description)}</p>
 <div class="kv"><span class="muted">Provider</span><span>${esc(c.providerServiceId)}</span><span class="muted">Consumers</span><span>${esc(c.consumerServiceIds.join(", ") || "-")}</span><span class="muted">Schema</span><span>${esc(c.schemaRef ?? "-")}</span><span class="muted">Requirements</span><span>${esc(c.requirementIds.join(", ") || "-")}</span><span class="muted">Stories</span><span>${esc(c.storyIds.join(", ") || "-")}</span></div>
 ${agreed ? "" : `<p class="meta">Agreeing lets implementation start in the services that use it. Changing the contract afterwards makes it proposed again.</p>`}</section>`;
