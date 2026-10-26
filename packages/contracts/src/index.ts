@@ -591,6 +591,8 @@ export {
   prototypeFingerprint,
   requirementsFingerprint,
   isUserDecision,
+  contractsFingerprint,
+  modeSwitchReport,
   REVIEW_DECISION_ACTION,
   reviewApprovalRequest,
   reviewBatchSubject,

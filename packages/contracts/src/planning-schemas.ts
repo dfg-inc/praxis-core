@@ -110,6 +110,8 @@ export const ServiceContractSchema = z.object({
   requirementIds: z.array(RequirementIdSchema).default([]),
   storyIds: z.array(StoryIdSchema).default([]),
   status: z.enum(["proposed", "agreed"]).default("proposed"),
+  /** Who agreed it: only the user can (see isUserDecision). Absent while proposed. */
+  agreement: z.object({ at: z.string(), via: z.enum(["html-review", "approved", "system"]) }).optional(),
 });
 export type ServiceContract = z.infer<typeof ServiceContractSchema>;
 

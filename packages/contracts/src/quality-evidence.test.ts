@@ -45,7 +45,7 @@ function scenario(storyId: string, status: "PASS" | "FAIL", scenarioId = `${stor
 }
 
 function base(): WorkflowState {
-  let state = openLocalWorkflow({ projectId: "qev", title: "Evidence", request: "Evidence consistency" });
+  let state = openLocalWorkflow({ mode: "classic", projectId: "qev", title: "Evidence", request: "Evidence consistency" });
   state = applyWorkflowCommand(state, {
     action: "add-requirement",
     id: REQ,

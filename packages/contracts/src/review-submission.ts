@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { RequirementIdSchema, StoryIdSchema } from "./ids.js";
 import {
+  contractsFingerprint,
   currentFingerprint,
   prototypeFingerprint,
   requirementsFingerprint,
@@ -16,7 +17,7 @@ import type { WorkflowState } from "./workflow.js";
  * the Runtime, and an item that changed since the page was rendered is skipped and reported, never overwritten.
  */
 
-export const REVIEW_VIEWS = ["requirements", "prototype", "story-plan", "stories"] as const;
+export const REVIEW_VIEWS = ["requirements", "prototype", "story-plan", "stories", "contracts"] as const;
 export const ReviewViewSchema = z.enum(REVIEW_VIEWS);
 export type ReviewView = z.infer<typeof ReviewViewSchema>;
 
@@ -99,6 +100,10 @@ export const ReviewSubmissionSchema = z.object({
   prototype: PrototypePayload.optional(),
   plan: PlanPayload.optional(),
   stories: StoriesPayload.optional(),
+  /** Contracts the user agrees. Implementation across services waits for it; an agent can propose a contract, never agree it. */
+  contracts: z.object({ agree: z.array(z.string().min(1)).default([]) }).optional(),
+  /** Leaving guided mode switches the gates off, so it is the user's call. */
+  modeChange: z.object({ to: z.enum(["classic", "guided"]), reason: z.string().max(1000).optional() }).optional(),
   /** Gaps the user chooses not to cover (a prototype for a pure refactor, a capability a requirement does not need). Only the user may waive. */
   waivers: z.array(z.object({ kind: z.string().min(1).max(100), requirementId: RequirementIdSchema.optional(), reason: z.string().min(3).max(1000) })).default([]),
 });
@@ -112,6 +117,8 @@ export function fingerprintFor(state: WorkflowState, view: ReviewView): string {
       return prototypeFingerprint(state.prototype);
     case "story-plan":
       return storyPlanFingerprint(state.storyPlan);
+    case "contracts":
+      return contractsFingerprint(state);
     default:
       return storiesFingerprint(state);
   }
@@ -323,6 +330,29 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
     }
   }
 
+  if (submission.view === "contracts" && submission.contracts) {
+    for (const id of submission.contracts.agree) {
+      const contract = state.contracts.find((c) => c.id === id);
+      if (!contract) {
+        conflicts.push({ item: id, reason: "the contract no longer exists" });
+        continue;
+      }
+      if (stale) {
+        conflicts.push({ item: id, reason: "the contracts changed since the page was rendered: re-open it so you agree what is there now" });
+        continue;
+      }
+      if (contract.status === "agreed") continue;
+      const { status: _s, agreement: _a, ...content } = contract;
+      commands.push({ action: "set-contract", via, contract: { ...content, status: "agreed" } });
+      summary.push(`contract ${id} agreed`);
+      details.push(`AGREE contract ${id} '${contract.name}': provider ${contract.providerServiceId}, consumers ${contract.consumerServiceIds.join(", ") || "none"}${contract.schemaRef ? `, schema ${contract.schemaRef}` : ""}`);
+    }
+  }
+  if (submission.modeChange && submission.modeChange.to !== state.mode) {
+    commands.push({ action: "set-mode", via, mode: submission.modeChange.to, ...(submission.modeChange.reason ? { reason: submission.modeChange.reason } : {}) });
+    summary.push(`mode -> ${submission.modeChange.to}`);
+    details.push(`SWITCH this work item from ${state.mode} to ${submission.modeChange.to}${submission.modeChange.to === "classic" ? ": stage gates, plan-before-stories and coverage checks stop being enforced (nothing is deleted)" : ""}`);
+  }
   for (const w of submission.waivers) {
     commands.push({ action: "waive-coverage", kind: w.kind, ...(w.requirementId ? { requirementId: w.requirementId } : {}), reason: w.reason });
     summary.push(`waive ${w.kind}`);

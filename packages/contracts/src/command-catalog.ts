@@ -27,6 +27,7 @@ const EXAMPLES: Record<string, Record<string, unknown>> = {
   "record-implementation": { action: "record-implementation", id: "IMPL-1", serviceId: "svc-web", requirementIds: ["REQ-ORD-001"], path: "src/pages/Orders.tsx", summary: "orders list with search" },
   "review-requirements": { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", statement: "Managers can view, search and filter orders", addAcceptance: [{ statement: "Filtering by status works" }] }] },
   "set-requirement-scope": { action: "set-requirement-scope", requirementIds: ["REQ-ORD-002"], scope: "deferred", note: "next release" },
+  "set-mode": { action: "set-mode", mode: "guided", reason: "use the guided flow for this item" },
   "advance-phase": { action: "advance-phase", to: "prototype" },
   "return-to-phase": { action: "return-to-phase", to: "requirements_review", reason: "the user changed the search requirement" },
   "log-session": { action: "log-session", summary: "Requirements accepted", nextAction: "build the prototype", role: "ba" },

@@ -23,6 +23,7 @@ import {
   ServiceContractSchema,
   StoryPlanEntrySchema,
   WorkItemKindSchema,
+  WorkflowModeSchema,
   type AcceptablePhase,
   type Phase,
   type Prototype,
@@ -75,6 +76,11 @@ export function requirementsFingerprint(state: WorkflowState): string {
       ac: r.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement })),
     })),
   );
+}
+
+/** What the user agrees to when they agree a contract: its content, not its status. */
+export function contractsFingerprint(state: WorkflowState): string {
+  return hash(state.contracts.map(({ status: _s, agreement: _a, ...content }) => content));
 }
 
 export function prototypeFingerprint(prototype: Prototype | undefined): string {
@@ -462,7 +468,8 @@ export const PlanningCommandSchemas = [
   z.object({ action: z.literal("register-repository"), repository: RepositorySchema.pick({ id: true, name: true }).extend({ role: z.string().default(""), localPath: z.string().optional(), remoteUrl: z.string().optional(), branch: z.string().optional(), notes: z.string().optional() }) }),
   z.object({ action: z.literal("assign-repositories"), repositoryIds: z.array(RepositoryIdSchema).min(1), storyIds: z.array(StoryIdSchema).default([]), requirementIds: z.array(RequirementIdSchema).default([]), serviceIds: z.array(z.string()).default([]) }),
   z.object({ action: z.literal("record-repository-inspection"), repositoryId: RepositoryIdSchema, inspection: RepositoryInspectionSchema }),
-  z.object({ action: z.literal("set-contract"), contract: ServiceContractSchema }),
+  z.object({ action: z.literal("set-contract"), via: Via, contract: ServiceContractSchema.omit({ agreement: true }) }),
+  z.object({ action: z.literal("set-mode"), mode: WorkflowModeSchema, reason: z.string().optional() }),
   z.object({ action: z.literal("remove-contract"), id: z.string().min(1) }),
   z.object({ action: z.literal("record-impact"), impact: ImpactSchema.omit({ revision: true, recordedAt: true }) }),
   z.object({ action: z.literal("advance-phase"), to: PhaseSchema, reason: z.string().optional() }),
@@ -989,6 +996,7 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
         if (repo && repo.status !== "inspected") warnings.push(`repository ${repo.id} has not been inspected`);
       }
       for (const service of state.services) for (const dep of service.dependsOn) if (!state.services.some((s) => s.id === dep)) missingItems.push(`service ${service.id} depends on unknown ${dep}`);
+      for (const contract of state.contracts) need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user: implementation across services waits for it`);
       const cyc = implementationOrderOf(state);
       need(cyc.length === 0, `services depend on each other in a cycle: ${cyc.join(", ")}`);
       for (const repo of state.repositories) {
@@ -1128,8 +1136,10 @@ export function nextStep(state: WorkflowState): NextStep {
         blockers: [...state.blockers, ...(coverage.ok ? [] : ["coverage gaps"])],
       };
     }
-    case "architecture":
-      return { ...base, role: "architect", action: "design-services", summary: "Map requirements to services and repositories, agree cross-service contracts and implementation order.", tools: ["praxis_workflow_apply", "praxis_repository_inspect"], skills: ["praxis-architect:local-workflow"], userDecision: true };
+    case "architecture": {
+      const proposed = state.contracts.filter((c) => c.status !== "agreed");
+      return { ...base, role: "architect", action: proposed.length ? "agree-contracts" : "design-services", summary: proposed.length ? `Ask the user to agree ${proposed.length} contract(s) (${proposed.map((c) => c.id).join(", ")}) in the contracts review; implementation waits for it.` : "Map requirements to services and repositories, propose cross-service contracts and implementation order.", tools: proposed.length ? ["praxis_review_render", "praxis_review_apply"] : ["praxis_workflow_apply", "praxis_repository_inspect"], skills: ["praxis-architect:local-workflow"], userDecision: true };
+    }
     case "development": {
       const pending = state.services.filter((s) => !state.implementationUnits.some((u) => u.serviceId === s.id && !u.stale));
       return { ...base, role: "developer", action: pending.length ? "implement-service" : "advance-to-quality", summary: pending.length ? `Implement in order; pending: ${pending.map((s) => s.id).join(", ")}.` : "All services have implementation records: hand over to Quality.", tools: ["praxis_repository_brief", "praxis_workflow_apply"], skills: ["praxis-developer:local-workflow"], userDecision: false };
@@ -1184,6 +1194,12 @@ export function isUserDecision(command: { action: string } & Record<string, unkn
     case "review-stories":
     case "waive-coverage":
       return true;
+    // An agreed contract lets implementation start: only the user can agree it. Proposing one is the agent's.
+    case "set-contract":
+      return (command.contract as { status?: string }).status === "agreed";
+    // Leaving guided mode switches the gates off: the user's call. Entering it only adds protection.
+    case "set-mode":
+      return command.mode === "classic";
     case "review-requirements":
       return (command.decisions as Array<{ acceptance?: Array<{ status?: unknown }> }>).some((d) => (d.acceptance ?? []).some((a) => a.status !== undefined));
     case "update-story-plan":
@@ -1202,6 +1218,36 @@ function verifiedVia(command: PlanningCommand, channel: ReviewChannel | undefine
     throw new WorkflowError("USER_DECISION_REQUIRED", "this decision is not part of what the user approved");
   }
   return "approved";
+}
+
+/**
+ * What changes, and what does not, when a work item changes mode. Nothing is ever deleted or rewritten: only the gates change.
+ * classic -> guided: existing artifacts stay valid; from now on new stories need an agreed plan line and a stage is entered only
+ * when its conditions hold. guided -> classic: the stage is still recorded, nothing is enforced.
+ */
+export function modeSwitchReport(state: WorkflowState, to: "classic" | "guided") {
+  const planIds = new Set((state.storyPlan?.entries ?? []).map((e) => e.id));
+  const stagesWithoutAcceptance = ACCEPTABLE_PHASES.filter((phase) => {
+    const exists = phase === "requirements_review" ? activeRequirements(state).length > 0 : phase === "prototype" ? Boolean(state.prototype) : phase === "story_plan" ? Boolean(state.storyPlan) : activeStories(state).length > 0;
+    return exists && acceptanceStatus(state, phase) !== "accepted";
+  });
+  return {
+    from: state.mode,
+    to,
+    phase: state.phase,
+    dataKept: { requirements: activeRequirements(state).length, stories: activeStories(state).length, services: state.services.length, implementationRecords: state.implementationUnits.length, verdicts: state.verdicts.length },
+    ...(to === "guided"
+      ? {
+          storiesWithoutPlanLine: activeStories(state).filter((s) => !planIds.has(s.id)).map((s) => s.id),
+          stagesWithoutUserAcceptance: stagesWithoutAcceptance,
+          gatesAtCurrentPhase: phaseGates(state, state.phase),
+          notes: [
+            "Nothing is deleted or rewritten; existing requirements, stories, services and records stay valid.",
+            "New stories need an agreed story plan and a plan line. Moving to the next stage needs its conditions: stages listed above have no acceptance by the user yet and will ask for it when you move on.",
+          ],
+        }
+      : { notes: ["The stage is still recorded; gates, plan-before-stories and coverage checks are no longer enforced. Nothing is deleted."] }),
+  };
 }
 
 export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningCommand, options: { now?: Date; channel?: ReviewChannel } = {}): PlanningResult {
@@ -1536,7 +1582,13 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
       const { contract } = command;
       if (!state.services.some((s) => s.id === contract.providerServiceId)) throw missing("SERVICE_NOT_FOUND", `provider service ${contract.providerServiceId} not found`);
       for (const id of contract.consumerServiceIds) if (!state.services.some((s) => s.id === id)) throw missing("SERVICE_NOT_FOUND", `consumer service ${id} not found`);
-      const contracts = [...state.contracts.filter((c) => c.id !== contract.id), contract];
+      const previous = state.contracts.find((c) => c.id === contract.id);
+      const stripped = (c: { status?: string; agreement?: unknown }) => { const { status: _s, agreement: _a, ...rest } = c; return hash(rest); };
+      // A user agreement belongs to the content they agreed to: a changed contract is proposed again.
+      const agreedNow = contract.status === "agreed";
+      const kept = previous?.status === "agreed" && !agreedNow && stripped(previous) === stripped(contract);
+      const next1 = { ...contract, status: agreedNow || kept ? ("agreed" as const) : ("proposed" as const), ...(agreedNow ? { agreement: { at: iso(now), via: command.via === "approved" ? ("approved" as const) : ("html-review" as const) } } : kept && previous?.agreement ? { agreement: previous.agreement } : {}) };
+      const contracts = [...state.contracts.filter((c) => c.id !== contract.id), next1];
       return { state: touch({ ...state, contracts }, now, `contract ${contract.id} set`), duplicate: false, result: { contractId: contract.id } };
     }
     case "remove-contract": {
@@ -1561,6 +1613,13 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
       if (command.requirementId) requirementOf(state, command.requirementId);
       const waiver = CoverageWaiverSchema.parse({ id: `W-${String(state.waivers.length + 1).padStart(3, "0")}`, kind: command.kind, requirementId: command.requirementId, reason: command.reason, at: iso(now) });
       return { state: touch({ ...state, waivers: [...state.waivers, waiver] }, now, `waived ${command.kind}${command.requirementId ? ` for ${command.requirementId}` : ""}: ${command.reason}`), duplicate: false, result: { waiverId: waiver.id } };
+    }
+    case "set-mode": {
+      if (state.mode === command.mode) return { state, duplicate: true, result: { mode: state.mode, unchanged: true } };
+      const report = modeSwitchReport(state, command.mode);
+      const note = { at: iso(now), summary: `mode changed from ${state.mode} to ${command.mode}${command.reason ? `: ${command.reason}` : ""}`, nextAction: nextStep({ ...state, mode: command.mode }).summary };
+      const next = touch({ ...state, mode: command.mode, sessionLog: [...state.sessionLog, note].slice(-200) }, now, `mode ${state.mode} -> ${command.mode}`);
+      return { state: next, duplicate: false, result: { from: state.mode, to: command.mode, report } };
     }
     case "set-work-item-kind":
       return { state: touch({ ...state, workItem: { ...state.workItem, kind: command.kind } }, now, `work item kind: ${command.kind}`), duplicate: state.workItem.kind === command.kind, result: { kind: command.kind } };

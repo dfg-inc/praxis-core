@@ -121,6 +121,10 @@ function collect(){
     });
     s.plan={entries:es,agree:!!($('#agree-plan')&&$('#agree-plan').checked)};
   }
+  if(D.view==='contracts'){
+    var ag=[];$$('[data-contract]').forEach(function(card){var c=$('[data-f=agree]',card);if(c&&c.checked)ag.push(card.getAttribute('data-contract'))});
+    s.contracts={agree:ag};
+  }
   if(D.view==='stories'){
     var items=[],sts=[];
     $$('[data-story]').forEach(function(card){
@@ -437,6 +441,22 @@ ${cards || `<p class="muted">No stories yet.</p>`}`;
   return shell(state, "stories", "User stories review", body, {}, options, `<label class="marks"><input type="checkbox" id="accept-stories"> Accept the stories</label>`);
 }
 
+// --- contracts ---------------------------------------------------------------------------------------------------
+
+export function renderContractsReview(state: WorkflowState, options: RenderReviewOptions = {}): string {
+  const cards = state.contracts
+    .map((c) => {
+      const agreed = c.status === "agreed";
+      return `<section class="card" data-contract="${esc(c.id)}">
+<div class="row"><h2 class="grow">${esc(c.id)} ${esc(c.name)} ${pill(c.status, agreed ? "ok" : "warn")}</h2>${agreed ? `<span class="meta">agreed ${esc(c.agreement?.at ?? "")}${c.agreement ? " (" + esc(c.agreement.via) + ")" : ""}</span>` : `<label class="marks"><input type="checkbox" data-f="agree"> I agree this contract</label>`}</div>
+<p>${esc(c.description)}</p>
+<div class="kv"><span class="muted">Provider</span><span>${esc(c.providerServiceId)}</span><span class="muted">Consumers</span><span>${esc(c.consumerServiceIds.join(", ") || "-")}</span><span class="muted">Schema</span><span>${esc(c.schemaRef ?? "-")}</span><span class="muted">Requirements</span><span>${esc(c.requirementIds.join(", ") || "-")}</span><span class="muted">Stories</span><span>${esc(c.storyIds.join(", ") || "-")}</span></div>
+${agreed ? "" : `<p class="meta">Agreeing lets implementation start in the services that use it. Changing the contract afterwards makes it proposed again.</p>`}</section>`;
+    })
+    .join("");
+  return shell(state, "contracts", "Contracts review", `<p class="meta">A contract is what services promise each other. The architect proposes it; only you agree it.</p>${cards || `<p class="muted">There are no contracts yet.</p>`}`, {}, options, "");
+}
+
 export function renderReview(state: WorkflowState, view: ReviewView, options: RenderReviewOptions = {}): string {
   switch (view) {
     case "requirements":
@@ -445,6 +465,8 @@ export function renderReview(state: WorkflowState, view: ReviewView, options: Re
       return renderPrototypeReview(state, options);
     case "story-plan":
       return renderStoryPlanReview(state, options);
+    case "contracts":
+      return renderContractsReview(state, options);
     default:
       return renderStoriesReview(state, options);
   }

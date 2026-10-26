@@ -11,7 +11,7 @@ import {
 const REQ = "REQ-QRO-901" as const;
 
 function base(criteria = ["First holds.", "Second holds."]): WorkflowState {
-  const state = openLocalWorkflow({ projectId: "qro", title: "Requirement only", request: "No stories here" });
+  const state = openLocalWorkflow({ mode: "classic", projectId: "qro", title: "Requirement only", request: "No stories here" });
   return applyWorkflowCommand(state, {
     action: "add-requirement",
     id: REQ,

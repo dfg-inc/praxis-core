@@ -438,7 +438,7 @@ export function openLocalWorkflow(input: {
       revision: 1,
       kind: input.changeKind ?? "feature",
     },
-    mode: input.mode ?? "classic",
+    mode: input.mode ?? "guided",
     phase: "request",
     requirements: [],
     services: [],
