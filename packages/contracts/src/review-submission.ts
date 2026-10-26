@@ -179,6 +179,8 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         acceptance.push({ id: criterion.id, ...(criterion.status ? { status: criterion.status } : {}), ...(criterion.comment !== undefined ? { comment: criterion.comment } : {}), ...(criterion.statement !== undefined ? { statement: criterion.statement } : {}) });
       }
       if (item.statement !== undefined) details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 400)}'`);
+      if (item.comment) details.push(`${item.id}: comment '${item.comment.slice(0, 400)}'`);
+      if (item.scopeNote !== undefined && item.scopeNote !== (current.scopeNote ?? "")) details.push(`${item.id}: scope note '${item.scopeNote.slice(0, 400)}'`);
       if (item.scope !== undefined && item.scope !== current.scope) details.push(`${item.id}: scope ${current.scope} -> ${item.scope}`);
       for (const a of item.addCriteria) details.push(`${item.id}: add criterion '${a.statement.slice(0, 400)}'`);
       for (const r of item.removeCriteria) details.push(`${item.id}: remove criterion ${r}`);

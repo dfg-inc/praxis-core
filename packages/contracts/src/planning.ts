@@ -491,7 +491,14 @@ function keepArtifact(state: WorkflowState, kind: "requirement" | "prototype" | 
   const all = [...kept, entry];
   const protos = all.filter((h) => h.kind === "prototype");
   const drop = new Set(protos.slice(0, Math.max(0, protos.length - 10)));
-  return { ...state, artifactHistory: all.filter((h) => !drop.has(h)).slice(-150) };
+  let kept2 = all.filter((h) => !drop.has(h)).slice(-150);
+  // bounded by size as well as by count: oldest snapshots go first once the history passes 1 MB
+  let bytes = kept2.reduce((n, h) => n + h.snapshot.length, 0);
+  while (bytes > 1_000_000 && kept2.length > 1) {
+    bytes -= kept2[0].snapshot.length;
+    kept2 = kept2.slice(1);
+  }
+  return { ...state, artifactHistory: kept2 };
 }
 
 function applyRequirementDecisions(state: WorkflowState, command: Extract<PlanningCommand, { action: "review-requirements" }>, now: Now): PlanningResult {
