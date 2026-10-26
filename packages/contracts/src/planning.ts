@@ -969,7 +969,9 @@ function advancePhase(state: WorkflowState, command: Extract<PlanningCommand, { 
     throw missing("PHASE_GATE", `cannot enter ${command.to}: ${failures.map((f) => `${f.phase} needs ${f.missing.join("; ")}`).join(" | ")}`, { failures });
   }
   const entry = { at: iso(now), kind: "advance" as const, from, to: command.to, reason: command.reason ?? "", invalidated: [] };
-  const next = touch({ ...state, phase: command.to, phaseHistory: [...state.phaseHistory, entry].slice(-200) }, now, `phase ${from} -> ${command.to}`);
+  let next = touch({ ...state, phase: command.to, phaseHistory: [...state.phaseHistory, entry].slice(-200) }, now, `phase ${from} -> ${command.to}`);
+  // The session log is what a new chat reads first: moving between stages is always worth a line in it.
+  next = { ...next, sessionLog: [...next.sessionLog, { at: iso(now), summary: `moved from ${from} to ${command.to}${command.reason ? `: ${command.reason}` : ""}`, nextAction: nextStep(next).summary }].slice(-200) };
   return { state: next, duplicate: false, result: { phase: command.to, gatesMissing: failures, warnings: [...new Set(warnings)], enforced: state.mode === "guided" } };
 }
 

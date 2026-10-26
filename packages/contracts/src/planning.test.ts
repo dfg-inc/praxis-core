@@ -528,3 +528,13 @@ describe("add-story keeps what it is given and what the plan said", () => {
     expect(explicit.stories[0]).toMatchObject({ title: "Mine", capabilities: ["edit", "permissions"], screenRefs: ["detail#status"] });
   });
 });
+
+describe("the session log follows the work", () => {
+  it("advancing a stage leaves a note with the next action for the next chat", () => {
+    let s = ok(open(), { action: "add-requirement", id: "REQ-ORD-001", statement: "View orders", acceptanceCriteria: ["List shows orders"] });
+    s = ok(s, { action: "advance-phase", to: "requirements_review" });
+    const note = s.sessionLog.at(-1)!;
+    expect(note.summary).toBe("moved from request to requirements_review");
+    expect(note.nextAction).toMatch(/Review requirements in HTML/);
+  });
+});
