@@ -71,3 +71,23 @@ describe("repository dotenv files cannot set approval or trust configuration", (
     expect(process.env.PRAXIS_APPROVAL_FORGED).toBe("1");
   });
 });
+
+describe("a repository .env cannot change how the Runtime's child processes behave", () => {
+  const KEYS = ["BROWSER", "NODE_OPTIONS", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "GIT_ASKPASS", "PATH_EXTRA_TEST", "PRAXIS_TEST_REVIEW_NO_BROWSER", "PRAXIS_REVIEW_X", "PRAXIS_JIRA_PROJECT_KEY"];
+  it("only PRAXIS_ keys outside the trust prefixes are loaded; everything else is reported as rejected", () => {
+    const before = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+    for (const k of KEYS) delete process.env[k];
+    try {
+      const repo = repoWith(".env", KEYS.map((k) => `${k}=/tmp/evil`).join("\n"));
+      loadPraxisDotenv(repo);
+      for (const k of KEYS.filter((k) => k !== "PRAXIS_JIRA_PROJECT_KEY")) expect(process.env[k], k).toBeUndefined();
+      expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("/tmp/evil");
+      expect(dotenvRejectedKeys()).toEqual(expect.arrayContaining(["BROWSER", "NODE_OPTIONS", "LD_PRELOAD", "GIT_ASKPASS", "PRAXIS_TEST_REVIEW_NO_BROWSER", "PRAXIS_REVIEW_X"]));
+    } finally {
+      for (const k of KEYS) {
+        if (before[k] === undefined) delete process.env[k];
+        else process.env[k] = before[k];
+      }
+    }
+  });
+});

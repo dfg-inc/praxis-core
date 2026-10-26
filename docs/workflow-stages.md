@@ -63,6 +63,8 @@ Order, highest first: the host's own system instructions (Praxis does not replac
 
 ## Continuing in a new chat
 
+When a chat's context window fills up (or you simply start a new chat), do not try to continue the old one: open a new chat in the same project and say "continue this task". The agent reads the work item's recorded state, tells you where it stands and proposes the next step; if several work items exist it asks which one. At the end of a long session the agent should leave a `log-session` note (what was done and the next action), because that note is the first thing the next chat reads.
+
 The state that survives is what is recorded in the work item: requirements, criteria and your decisions, stories and their history, decisions and assumptions, questions and risks, the prototype, the plan, repositories and inspections, the current stage, and session notes (`log-session`: what was done and the next action). `praxis_session_start` and `praxis_workflow_status` rebuild a briefing from it. With several work items the status and session-start results carry a `choose` instruction: the agent is told to ask which one unless you named it. **The earlier chat messages are not restored**: anything that was only said in chat has to be repeated.
 
 ## Known limits

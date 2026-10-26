@@ -266,6 +266,8 @@ export function dotenvRejectedKeys(): string[] {
 }
 
 function dotenvKeyForbidden(key: string): boolean {
+  // A repository file may only configure Praxis. Anything else (BROWSER, NODE_OPTIONS, LD_PRELOAD, GIT_*, PATH ...) would let a file the agent can write change how the Runtime's own child processes behave.
+  if (!key.startsWith("PRAXIS_")) return true;
   return DOTENV_FORBIDDEN_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
 
