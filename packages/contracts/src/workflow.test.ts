@@ -405,7 +405,7 @@ describe("capabilities, Jira failure, compatibility", () => {
       title: "Bulk User Import",
       request: "Import users from CSV",
       mode: "classic",
-    }).state;
+    }, { channel: { via: "html-review" } }).state; // an alpha.48-style item: the user chose classic
     state = applyWorkflowCommand(state, {
       action: "add-requirement",
       id: "REQ-BUI-061",
@@ -443,7 +443,7 @@ describe("capabilities, Jira failure, compatibility", () => {
       title: "Bulk User Import",
       request: "Import users from CSV",
       mode: "classic",
-    }).state;
+    }, { channel: { via: "html-review" } }).state; // an alpha.48-style item: the user chose classic
     const clarified = applyWorkflowCommand(state, {
       action: "clarify",
       role: "ba",
@@ -520,7 +520,7 @@ describe("capabilities, Jira failure, compatibility", () => {
       title: "Bulk User Import",
       request: "Import users from CSV",
       mode: "classic",
-    }).state;
+    }, { channel: { via: "html-review" } }).state; // an alpha.48-style item: the user chose classic
     state = applyWorkflowCommand(state, {
       action: "add-requirement",
       id: "REQ-BUI-061",

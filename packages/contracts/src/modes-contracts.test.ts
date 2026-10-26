@@ -22,7 +22,7 @@ describe("default mode and switching", () => {
   });
 
   const classicItem = () => {
-    let s = run(null, { action: "open", projectId: "p", title: "Orders", request: "r", mode: "classic" });
+    let s = run(null, { action: "open", projectId: "p", title: "Orders", request: "r", mode: "classic" }, U);
     s = run(s, { action: "add-requirement", id: "REQ-ORD-001", statement: "View orders", acceptanceCriteria: ["List shows orders"] });
     s = run(s, { action: "add-story", id: "US-ORD-001", requirementIds: ["REQ-ORD-001"], actor: "m", narrative: "As a m, I want orders, so that I see them.", objective: "o", userValue: "v", happyPath: ["a"], acceptanceCriteria: [{ id: "US-ORD-001-AC-01", given: "g", when: "w", then: "t" }], expectedResults: ["r"], confirmedBehavior: false });
     return s;
@@ -180,8 +180,32 @@ describe("N1: an agreed contract cannot be laundered away by changing it first",
     expect(run(fresh, { action: "remove-contract", id: "C-2" }).contracts.map((c) => c.id)).toEqual(["C-1"]);
   });
   it("the open result says when an item is classic", () => {
-    const res = applyWorkflowCommand(null, { action: "open", projectId: "p", title: "t", request: "r", mode: "classic" }, { now: NOW });
+    const res = applyWorkflowCommand(null, { action: "open", projectId: "p", title: "t", request: "r", mode: "classic" }, { now: NOW, channel: U });
     expect((res.result as { note?: string }).note).toMatch(/classic/);
     expect((applyWorkflowCommand(null, { action: "open", projectId: "p", title: "t", request: "r" }, { now: NOW }).result as { mode: string }).mode).toBe("guided");
+  });
+});
+
+import { createUserApproval, reviewApprovalRequest, workItemIdFor } from "./index.js";
+
+describe("opening a work item in classic mode is the user's choice", () => {
+  const open = { action: "open", projectId: "p", title: "Orders", request: "r", mode: "classic" };
+  it("an agent cannot open a classic work item; without a mode it gets guided", () => {
+    expect(() => applyWorkflowCommand(null, open, { now: NOW })).toThrow(/classic mode turns the stage gates off/);
+    expect(applyWorkflowCommand(null, { ...open, mode: undefined }, { now: NOW }).state.mode).toBe("guided");
+    expect(applyWorkflowCommand(null, { ...open, mode: "guided" }, { now: NOW }).state.mode).toBe("guided");
+  });
+  it("the user's approved batch opens it, even though the store adds a sequence number afterwards; an approval for another item does not", () => {
+    const batch = [open];
+    const approval = createUserApproval({ request: reviewApprovalRequest(batch, "Open in classic mode"), channel: "test" });
+    const res = applyWorkflowCommand(null, { ...open, sequence: 1 }, { now: NOW, channel: { via: "approved", approval, batch } });
+    expect(res.state.mode).toBe("classic");
+    const other = createUserApproval({ request: reviewApprovalRequest([{ ...open, title: "Other" }], "x"), channel: "test" });
+    expect(() => applyWorkflowCommand(null, { ...open, sequence: 1 }, { now: NOW, channel: { via: "approved", approval: other, batch: [{ ...open, title: "Other" }] } })).toThrow(/not part of what the user approved/);
+  });
+  it("Cyrillic titles get a descriptive Latin id", () => {
+    expect(workItemIdFor("Список заказов", 1)).toBe("WI-SPISOK-ZAKAZOV-001");
+    expect(workItemIdFor("Экспорт счетов в CSV", 2)).toBe("WI-EKSPORT-SCHETOV-V-CSV-002");
+    expect(workItemIdFor("Order list", 1)).toBe("WI-ORDER-LIST-001");
   });
 });

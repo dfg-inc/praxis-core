@@ -36,7 +36,7 @@ import {
   type QualityCommentReadback,
 } from "@praxis/jira/workflow";
 import { resolveWorkPackageRef, type ResolvedIdentifier } from "./identity.js";
-import { approvalDiagnostics, doctorNextSteps, providerDiagnostics } from "./diagnostics.js";
+import { approvalDiagnostics, classifyDotenvRefusal, doctorNextSteps, providerDiagnostics, type DotenvRefusal } from "./diagnostics.js";
 import { VcsError, githubTokenFlags, gitlabTokenFlags, type GitDeliveryJournal, type GitWriteFields } from "@praxis/vcs";
 import {
   ApprovalError,
@@ -301,6 +301,16 @@ export function dotenvRejectedKeys(): string[] {
   return dotenvRejected;
 }
 
+/** Refusals from the most recent load (one repository), with a reason; names only. */
+let dotenvRefusals: DotenvRefusal[] = [];
+/** Allowlisted keys the most recent load actually took from a repository file (names only). */
+export function dotenvRefusalList(): DotenvRefusal[] {
+  return dotenvRefusals;
+}
+export function dotenvLoadedKeys(): string[] {
+  return [...fileSourced.keys()].sort();
+}
+
 function dotenvKeyForbidden(key: string): boolean {
   return !dotenvKeyAllowed(key);
 }
@@ -328,6 +338,7 @@ export function loadPraxisDotenv(repo: string): void {
   // take back what the previous call's repository file set, unless the operator has since set the same variable
   for (const [key, value] of fileSourced) if (process.env[key] === value) delete process.env[key];
   fileSourced.clear();
+  dotenvRefusals = [];
   if (process.env.PRAXIS_SKIP_DOTENV === "1") return;
   const resolved = resolve(repo);
   if (!existsSync(resolved)) return;
@@ -349,6 +360,9 @@ export function loadPraxisDotenv(repo: string): void {
       if (dotenvKeyForbidden(key) || !dotenvValueValid(key, value)) {
         // only Praxis-looking keys are worth reporting; the product's own variables (DATABASE_URL ...) are simply not loaded
         if (key.startsWith("PRAXIS_") && !dotenvRejected.includes(key)) dotenvRejected = [...dotenvRejected, key].sort();
+        if (key.startsWith("PRAXIS_") && !dotenvRefusals.some((r) => r.key === key)) {
+          dotenvRefusals = [...dotenvRefusals, { key, reason: classifyDotenvRefusal(key, !dotenvKeyForbidden(key)) }].sort((a, b) => a.key.localeCompare(b.key));
+        }
         continue;
       }
       if (process.env[key]) continue;
@@ -739,6 +753,8 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     capabilities,
     hostPlaceholdersIgnored,
     dotenvRejected,
+    dotenvRefused: dotenvRefusals,
+    dotenvLoaded: dotenvLoadedKeys(),
     providers,
     approval,
     nextSteps: [
@@ -750,6 +766,8 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
       providers,
       approval,
       dotenvRejected,
+      dotenvRefused: dotenvRefusals,
+      dotenvLoaded: dotenvLoadedKeys(),
     }),
     ],
     codes: {

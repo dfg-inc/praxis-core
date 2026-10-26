@@ -11,7 +11,7 @@ beforeAll(() => {
 });
 
 const base = (mode: "guided" | "classic" = "guided") => {
-  let s = run(null, { action: "open", projectId: "p", title: "Orders", request: "r", mode });
+  let s = run(null, { action: "open", projectId: "p", title: "Orders", request: "r", mode }, { via: "html-review" });
   s = run(s, { action: "add-requirement", id: "REQ-ORD-001", statement: "View orders", acceptanceCriteria: ["List shows orders", "Search works"] });
   return s;
 };

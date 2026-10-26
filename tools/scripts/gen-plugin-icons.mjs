@@ -1,96 +1,99 @@
 #!/usr/bin/env node
 /**
- * Writes the square plugin icons (512x512 PNG, no external tools) into each plugin's .claude-plugin/icon.png.
- * A rounded square in the role's color with a white "P". Re-run to regenerate; the PNGs are committed.
+ * Writes the square plugin icons (512x512 PNG) into each plugin's .claude-plugin/icon.png.
+ *
+ * Brand inputs: the Praxis website (praxis-website/site) has no logo mark (its favicon.svg is the Astro
+ * framework default, so it is NOT used); it has the warm palette and the Geist type family, and the social
+ * artwork (og-praxis.png) shows a lowercase "praxis" wordmark with a dotted "connected team" motif. The icons
+ * therefore use a geometric lowercase "p" (stem plus a round bowl, Geist-like) with one small "node" dot,
+ * in the website cream (#faf9f5) on a rounded square (22% corner radius, glyph centred, ~60% of the height,
+ * readable at 64 px). The role is the background colour, from the website palette
+ * (site/src/styles/globals.css): runtime = ink, ba = terracotta, architect = blue-violet,
+ * developer = green, quality = amber, praxis (umbrella) = art terracotta.
+ * The marketplace repository carries mirror copies of the five role plugins; they are written too.
+ *
+ * Rendering: headless Chromium through playwright-core (no new dependency; resolved from
+ * praxis-runtime/node_modules or this repository). Chromium comes from the Playwright cache, else from
+ * /Applications/Google Chrome.app. Re-run to regenerate; the PNGs are committed.
  *   node tools/scripts/gen-plugin-icons.mjs [--split-root <dir containing the repositories>]
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deflateSync } from "node:zlib";
+import { createRequire } from "node:module";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const splitRoot = resolve(argv.includes("--split-root") ? argv[argv.indexOf("--split-root") + 1] : join(here, "../../.."));
 const SIZE = 512;
+const CREAM = "#faf9f5";
+
+const ROLE = {
+  runtime: "#141413",
+  ba: "#a34f35",
+  architect: "#426879",
+  developer: "#46653d",
+  quality: "#875b16",
+  praxis: "#c0785d",
+};
 const targets = [
-  ["praxis-runtime/plugins/runtime", [0x33, 0x41, 0x55]],
-  ["praxis-ba/plugins/ba", [0x0d, 0x94, 0x88]],
-  ["praxis-architect/plugins/architect", [0xd9, 0x77, 0x06]],
-  ["praxis-developer/plugins/developer", [0x25, 0x63, 0xeb]],
-  ["praxis-quality/plugins/quality", [0x16, 0xa3, 0x4a]],
-  ["praxis-marketplace/plugins/praxis", [0x4f, 0x46, 0xe5]],
+  ["praxis-runtime/plugins/runtime", "runtime"],
+  ["praxis-ba/plugins/ba", "ba"],
+  ["praxis-architect/plugins/architect", "architect"],
+  ["praxis-developer/plugins/developer", "developer"],
+  ["praxis-quality/plugins/quality", "quality"],
+  ["praxis-marketplace/plugins/praxis", "praxis"],
+  // mirror copies kept in the marketplace repository
+  ["praxis-marketplace/plugins/praxis-runtime", "runtime"],
+  ["praxis-marketplace/plugins/praxis-ba", "ba"],
+  ["praxis-marketplace/plugins/praxis-architect", "architect"],
+  ["praxis-marketplace/plugins/praxis-developer", "developer"],
+  ["praxis-marketplace/plugins/praxis-quality", "quality"],
 ];
 
-function crc32(buf) {
-  let c;
-  let crc = 0xffffffff;
-  for (let n = 0; n < buf.length; n += 1) {
-    c = (crc ^ buf[n]) & 0xff;
-    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    crc = (crc >>> 8) ^ c;
-  }
-  return (crc ^ 0xffffffff) >>> 0;
+function svgFor(color) {
+  // glyph bounding box is x 142..396, y 110..420; shift so it is centred on 256,256
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" viewBox="0 0 ${SIZE} ${SIZE}">
+<rect width="${SIZE}" height="${SIZE}" rx="${Math.round(SIZE * 0.22)}" fill="${color}"/>
+<g transform="translate(-13 -9)" fill="none" stroke="${CREAM}">
+<circle cx="266" cy="234" r="96" stroke-width="56"/>
+<rect x="142" y="110" width="56" height="310" fill="${CREAM}" stroke="none"/>
+<circle cx="372" cy="394" r="24" fill="${CREAM}" fill-opacity=".72" stroke="none"/>
+</g>
+</svg>`;
 }
-function chunk(type, data) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length);
-  const body = Buffer.concat([Buffer.from(type), data]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(body));
-  return Buffer.concat([len, body, crc]);
-}
-const inRoundedSquare = (x, y, r) => {
-  const cx = Math.min(Math.max(x, r), SIZE - r);
-  const cy = Math.min(Math.max(y, r), SIZE - r);
-  return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
-};
-// the letter P: a stem and a bowl (a ring with the left side removed)
-function inLetter(x, y) {
-  const stem = x >= 150 && x <= 226 && y >= 118 && y <= 394;
-  const cx = 262;
-  const cy = 224;
-  const d = Math.hypot(x - cx, y - cy);
-  const bowl = d <= 106 && d >= 36 && x >= 226;
-  const top = y >= 118 && y <= 150 && x >= 226 && x <= cx;
-  const mid = y >= 298 - 106 + 106 - 32 && false;
-  return stem || bowl || top || mid;
-}
-function png(color) {
-  const raw = Buffer.alloc((SIZE * 4 + 1) * SIZE);
-  const SS = 2;
-  for (let y = 0; y < SIZE; y += 1) {
-    raw[y * (SIZE * 4 + 1)] = 0;
-    for (let x = 0; x < SIZE; x += 1) {
-      let cover = 0;
-      let letter = 0;
-      for (let sy = 0; sy < SS; sy += 1) {
-        for (let sx = 0; sx < SS; sx += 1) {
-          const px = x + (sx + 0.5) / SS;
-          const py = y + (sy + 0.5) / SS;
-          if (inRoundedSquare(px, py, 96)) cover += 1;
-          if (inLetter(px, py)) letter += 1;
-        }
-      }
-      const a = cover / (SS * SS);
-      const l = letter / (SS * SS);
-      const o = y * (SIZE * 4 + 1) + 1 + x * 4;
-      raw[o] = Math.round(color[0] * (1 - l) + 255 * l);
-      raw[o + 1] = Math.round(color[1] * (1 - l) + 255 * l);
-      raw[o + 2] = Math.round(color[2] * (1 - l) + 255 * l);
-      raw[o + 3] = Math.round(255 * a);
+
+function loadPlaywright() {
+  const candidates = [join(splitRoot, "praxis-runtime/package.json"), join(splitRoot, "praxis-core/package.json"), import.meta.url];
+  for (const c of candidates) {
+    try {
+      return createRequire(c)("playwright-core");
+    } catch {
+      /* try next */
     }
   }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(SIZE, 0);
-  ihdr.writeUInt32BE(SIZE, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw, { level: 9 })), chunk("IEND", Buffer.alloc(0))]);
+  throw new Error("playwright-core is not resolvable (expected in praxis-runtime/node_modules)");
 }
-for (const [dir, color] of targets) {
-  const out = join(splitRoot, dir, ".claude-plugin", "icon.png");
-  mkdirSync(dirname(out), { recursive: true });
-  writeFileSync(out, png(color));
-  console.log(`wrote ${out}`);
+
+const { chromium } = loadPlaywright();
+const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+let browser;
+try {
+  browser = await chromium.launch();
+} catch {
+  browser = await chromium.launch({ executablePath: chrome });
 }
+const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE }, deviceScaleFactor: 1 });
+for (const [dir, role] of targets) {
+  const out = join(splitRoot, dir, ".claude-plugin");
+  if (!existsSync(join(splitRoot, dir))) {
+    console.log(`skip (missing) ${dir}`);
+    continue;
+  }
+  await page.setContent(`<!doctype html><style>html,body{margin:0;background:transparent}</style>${svgFor(ROLE[role])}`);
+  const png = await page.screenshot({ omitBackground: true, type: "png", clip: { x: 0, y: 0, width: SIZE, height: SIZE } });
+  mkdirSync(out, { recursive: true });
+  writeFileSync(join(out, "icon.png"), png);
+  console.log(`wrote ${join(dir, ".claude-plugin/icon.png")} (${png.length} bytes)`);
+}
+await browser.close();

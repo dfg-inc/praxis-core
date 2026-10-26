@@ -7,7 +7,7 @@ import { PlanningStateFields, ScopeSchema, WorkItemKindSchema, WorkflowModeSchem
 import { PLANNING_ACTIONS, PlanningCommandSchemas, acceptanceStatus, applyPlanningCommand, migrateWorkflowState, type PlanningCommand } from "./planning.js";
 import { humanActContent } from "./human-acts.js";
 import { verifyUserApproval, type UserApproval } from "./user-approval.js";
-import type { ReviewChannel } from "./planning.js";
+import { verifyUserChannel, type ReviewChannel } from "./planning.js";
 import {
   ReviewMarkSchema,
   assertStoryNarrative,
@@ -401,8 +401,14 @@ export function transition(
   };
 }
 
+const TRANSLIT: Record<string, string> = { а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya", і: "i", ї: "yi", є: "ye", ґ: "g" };
+/** Latin ids for any title: Cyrillic is transliterated so a Russian title gets a descriptive stable id instead of WORK. */
+function latin(title: string): string {
+  return [...title.toLowerCase()].map((ch) => TRANSLIT[ch] ?? ch).join("");
+}
+
 export function workItemIdFor(title: string, sequence = 1): string {
-  const slug = title
+  const slug = latin(title)
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
@@ -1196,6 +1202,8 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     sequence: z.number().int().positive().optional(),
     /** guided enforces the stage gates (requirements accepted, prototype, story plan, ...); classic keeps the alpha.48 behaviour. */
     mode: WorkflowModeSchema.optional(),
+    /** Create a new item although one with this title exists (the store otherwise refuses: stable ids, explicit choice). */
+    newItem: z.boolean().optional(),
     /** feature, change to existing behaviour, extension, fix or technical change. */
     changeKind: WorkItemKindSchema.optional(),
   }),
@@ -1380,6 +1388,10 @@ export function applyWorkflowCommand(
   const command = WorkflowCommandSchema.parse(raw);
   if (command.action === "open") {
     if (state) return { state, duplicate: true, result: { workflowId: state.workflowId } };
+    // Opening in classic mode switches the stage gates off from the start: that is the user's choice, never the agent's.
+    if (command.mode === "classic" && !verifyUserChannel(command as unknown as Record<string, unknown>, options?.channel)) {
+      throw new WorkflowError("USER_DECISION_REQUIRED", "opening a work item in classic mode turns the stage gates off, so the user chooses it (the Runtime asks them in the approval dialog). Open it without a mode to get the guided flow.");
+    }
     const opened = openLocalWorkflow(command);
     return { state: opened, duplicate: false, result: { workflowId: opened.workflowId, workItemId: opened.workItem.id, mode: opened.mode, ...(opened.mode === "classic" ? { note: "This work item is classic: stage gates, plan-before-stories and coverage checks are not enforced (user decisions still are). Tell the user." } : {}) } };
   }

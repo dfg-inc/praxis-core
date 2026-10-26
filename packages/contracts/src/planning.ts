@@ -1165,7 +1165,8 @@ export type ReviewChannel = { via: "html-review" } | { via: "approved"; approval
 export const REVIEW_DECISION_ACTION = "review-decisions";
 
 function withoutVia(command: Record<string, unknown>): Record<string, unknown> {
-  const { via: _via, ...rest } = command;
+  // "sequence" is added by the workflow store after the user approved an open command
+  const { via: _via, sequence: _sequence, ...rest } = command;
   return rest;
 }
 
@@ -1220,6 +1221,11 @@ function verifiedVia(command: PlanningCommand, channel: ReviewChannel | undefine
     throw new WorkflowError("USER_DECISION_REQUIRED", "this decision is not part of what the user approved");
   }
   return "approved";
+}
+
+/** Whether the user's own channel stands behind this command (page click, or a batch they approved). null when there is none. */
+export function verifyUserChannel(command: Record<string, unknown>, channel: ReviewChannel | undefined): "html-review" | "approved" | null {
+  return verifiedVia(command as unknown as PlanningCommand, channel);
 }
 
 /**
