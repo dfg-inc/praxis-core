@@ -23,4 +23,4 @@ Every write goes through the protected preview / apply pair (`praxis_ba_preview`
 
 ## Re-sync, conflicts, errors
 
-Re-running an apply is idempotent: the same canonical Story is updated, not duplicated. If the issue changed in Jira since the preview, the apply is refused with a fingerprint mismatch and you get a new preview. A Jira error leaves the local state unchanged and is reported with its code; nothing is retried silently.
+Re-running a BA or Architect apply updates the same canonical issues instead of creating duplicates (the Jira skills are idempotent by design). An apply runs only against a current preview: a stale preview is refused and you get a new one. A Jira error is reported with its code and message; the Runtime does not retry a write silently. Which exact Jira fields conflict after an outside edit is decided by the Jira plugin, not by this workflow.
