@@ -936,6 +936,10 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
         if (repo && repo.status !== "inspected") warnings.push(`repository ${repo.id} has not been inspected`);
       }
       for (const service of state.services) for (const dep of service.dependsOn) if (!state.services.some((s) => s.id === dep)) missingItems.push(`service ${service.id} depends on unknown ${dep}`);
+      for (const repo of state.repositories) {
+        const assigned = activeStories(state).some((s) => s.repositoryIds.includes(repo.id)) || activeRequirements(state).some((r) => r.repositoryIds.includes(repo.id));
+        need(!assigned || state.services.some((s) => s.repositoryId === repo.id), `repository ${repo.id} has stories or requirements assigned but no service (set-service with repositoryId): nothing would be implemented there`);
+      }
       break;
     case "quality": {
       for (const service of state.services) need(state.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
