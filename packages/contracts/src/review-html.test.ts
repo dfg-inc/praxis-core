@@ -14,7 +14,7 @@ import {
 } from "./index.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
-const apply = (state: WorkflowState | null, command: Record<string, unknown>) => applyWorkflowCommand(state, command, { now: NOW });
+const apply = (state: WorkflowState | null, command: Record<string, unknown>) => applyWorkflowCommand(state, command, { now: NOW, channel: { via: "html-review" } });
 const ok = (state: WorkflowState, command: Record<string, unknown>) => apply(state, command).state;
 
 function base(): WorkflowState {

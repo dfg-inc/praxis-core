@@ -16,7 +16,7 @@ export const HUMAN_ACT_KIND = {
   "approve-service": "quality_verdict",
 } as const satisfies Record<HumanAct, DecisionKind>;
 
-function canonicalText(value: unknown): string {
+export function canonicalText(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalText).join(",")}]`;
   if (value && typeof value === "object") {
     return `{${Object.keys(value as Record<string, unknown>)

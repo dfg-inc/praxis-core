@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { WorkflowError } from "./errors.js";
+import { canonicalText } from "./human-acts.js";
+import { verifyUserApproval, type ApprovalRequest, type UserApproval } from "./user-approval.js";
 import { RepositoryIdSchema, RequirementIdSchema, StoryIdSchema } from "./ids.js";
 import {
   ACCEPTABLE_PHASES,
@@ -119,7 +121,7 @@ export function acceptanceStatus(state: WorkflowState, phase: AcceptablePhase): 
   return (acceptance as { fingerprint?: string }).fingerprint === currentFingerprint(state, phase) ? "accepted" : "stale";
 }
 
-function recordAcceptance(state: WorkflowState, phase: AcceptablePhase, via: "html-review" | "chat" | "system", now: Now): WorkflowState {
+function recordAcceptance(state: WorkflowState, phase: AcceptablePhase, via: "html-review" | "approved" | "chat" | "system", now: Now): WorkflowState {
   const revision =
     phase === "prototype" ? (state.prototype?.revision ?? 0) : phase === "story_plan" ? (state.storyPlan?.revision ?? 0) : state.workItem.revision;
   return {
@@ -357,7 +359,7 @@ function dropDanglingRefs(state: WorkflowState): WorkflowState {
 
 // --- commands ----------------------------------------------------------------------------------------------------
 
-const Via = z.enum(["html-review", "chat", "system"]).default("chat");
+const Via = z.enum(["html-review", "approved", "chat", "system"]).default("chat");
 const ReviewStatus = z.enum(["pending", "accepted", "rejected"]);
 
 const AcDecision = z.object({
@@ -1075,8 +1077,76 @@ export function nextStep(state: WorkflowState): NextStep {
 
 // --- the dispatcher --------------------------------------------------------------------------------------------
 
-export function applyPlanningCommand(state: WorkflowState, command: PlanningCommand, options: { now?: Date } = {}): PlanningResult {
+/**
+ * Where a decision came from. The user's own click in a review page served by the Runtime ("html-review"), or a batch of
+ * decisions the user approved in the client's dialog ("approved"). Nothing an agent puts in a command can stand in for
+ * either: the command's own via field is replaced by what the Runtime verified.
+ */
+export type ReviewChannel = { via: "html-review" } | { via: "approved"; approval: UserApproval; batch: ReadonlyArray<Record<string, unknown>> };
+
+export const REVIEW_DECISION_ACTION = "review-decisions";
+
+function withoutVia(command: Record<string, unknown>): Record<string, unknown> {
+  const { via: _via, ...rest } = command;
+  return rest;
+}
+
+/** What the user approves when the decisions come through the client's dialog: the exact commands, canonical. */
+export function reviewBatchSubject(batch: ReadonlyArray<Record<string, unknown>>): string {
+  return canonicalText(batch.map(withoutVia));
+}
+
+/** What the user is asked when the decisions of a review come through the client's dialog. */
+export function reviewApprovalRequest(batch: ReadonlyArray<Record<string, unknown>>, summary: string): ApprovalRequest {
+  return {
+    action: REVIEW_DECISION_ACTION,
+    kind: "requirement_acceptance",
+    summary,
+    description: batch.map((c) => `- ${String(c.action)}${c.decisions ? ` (${(c.decisions as unknown[]).length} requirement(s))` : ""}`).join("\n"),
+    subject: reviewBatchSubject(batch),
+    risks: ["These decisions record that you accepted or rejected the reviewed items; later stages rely on them."],
+  };
+}
+
+/** Commands that record what the USER decided. An agent can propose and edit; it cannot record that the user accepted. */
+export function isUserDecision(command: { action: string } & Record<string, unknown>): boolean {
+  switch (command.action) {
+    case "accept-requirements":
+    case "accept-prototype":
+    case "agree-story-plan":
+    case "accept-stories":
+    case "review-stories":
+      return true;
+    case "review-requirements":
+      return (command.decisions as Array<{ acceptance?: Array<{ status?: unknown }> }>).some((d) => (d.acceptance ?? []).some((a) => a.status !== undefined));
+    case "update-story-plan":
+      return (command.operations as Array<{ op: string }>).some((o) => o.op === "review");
+    default:
+      return false;
+  }
+}
+
+function verifiedVia(command: PlanningCommand, channel: ReviewChannel | undefined): "html-review" | "approved" | null {
+  if (!channel) return null;
+  if (channel.via === "html-review") return "html-review";
+  verifyUserApproval(channel.approval, { action: REVIEW_DECISION_ACTION, subject: reviewBatchSubject(channel.batch) });
+  const mine = canonicalText(withoutVia(command as unknown as Record<string, unknown>));
+  if (!channel.batch.some((item) => canonicalText(withoutVia(item)) === mine)) {
+    throw new WorkflowError("USER_DECISION_REQUIRED", "this decision is not part of what the user approved");
+  }
+  return "approved";
+}
+
+export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningCommand, options: { now?: Date; channel?: ReviewChannel } = {}): PlanningResult {
   const now = options.now;
+  const verified = verifiedVia(rawCommand, options.channel);
+  if (isUserDecision(rawCommand as never) && !verified) {
+    throw new WorkflowError(
+      "USER_DECISION_REQUIRED",
+      `${rawCommand.action} records that the user accepted or rejected something. It cannot come from the agent: the user decides in the HTML review (praxis_review_render), or approves the decisions in the client's dialog (praxis_review_apply).`,
+    );
+  }
+  const command = ("via" in rawCommand ? { ...rawCommand, via: verified ?? "chat" } : rawCommand) as PlanningCommand;
   switch (command.action) {
     case "review-requirements":
       return applyRequirementDecisions(state, command, now);

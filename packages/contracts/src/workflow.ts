@@ -7,6 +7,7 @@ import { PlanningStateFields, ScopeSchema, WorkItemKindSchema, WorkflowModeSchem
 import { PLANNING_ACTIONS, PlanningCommandSchemas, acceptanceStatus, applyPlanningCommand, migrateWorkflowState, type PlanningCommand } from "./planning.js";
 import { humanActContent } from "./human-acts.js";
 import { verifyUserApproval, type UserApproval } from "./user-approval.js";
+import type { ReviewChannel } from "./planning.js";
 import {
   ReviewMarkSchema,
   assertStoryNarrative,
@@ -1360,7 +1361,7 @@ export function applyWorkflowCommand(
   state: WorkflowState | null,
   raw: WorkflowCommand | unknown,
   /** Set by the Runtime from the user's decision. Never part of the command: nothing an agent sends can carry it. */
-  options?: { userApproval?: UserApproval; now?: Date },
+  options?: { userApproval?: UserApproval; now?: Date; channel?: ReviewChannel },
 ): { state: WorkflowState; duplicate: boolean; result: unknown } {
   const command = WorkflowCommandSchema.parse(raw);
   if (command.action === "open") {
@@ -1373,7 +1374,7 @@ export function applyWorkflowCommand(
   }
   if (!state) throw new WorkflowError("WORKFLOW_MISSING", "open a workflow before applying commands");
   if (PLANNING_ACTIONS.has(command.action)) {
-    return applyPlanningCommand(state, command as PlanningCommand, { now: options?.now });
+    return applyPlanningCommand(state, command as PlanningCommand, { now: options?.now, channel: options?.channel });
   }
   if (command.action === "link-work-item") {
     const same = (link: WorkItemLink) =>

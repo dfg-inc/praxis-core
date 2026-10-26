@@ -35,7 +35,7 @@ export const PhaseAcceptanceSchema = z.object({
   /** What was accepted: the revision of the reviewed artifact at the time. */
   revision: z.number().int().nonnegative(),
   at: z.string(),
-  via: z.enum(["html-review", "chat", "system"]).default("chat"),
+  via: z.enum(["html-review", "approved", "chat", "system"]).default("chat"),
   /** Content fingerprint of what was accepted. The acceptance counts only while the artifact still has it. */
   fingerprint: z.string().optional(),
 });

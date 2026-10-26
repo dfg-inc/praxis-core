@@ -29,7 +29,7 @@ export const ReviewMarkSchema = z.object({
   status: z.enum(["pending", "accepted", "rejected"]).default("pending"),
   comment: z.string().optional(),
   at: z.string().optional(),
-  via: z.enum(["html-review", "chat", "system"]).optional(),
+  via: z.enum(["html-review", "approved", "chat", "system"]).optional(),
 });
 export type ReviewMark = z.infer<typeof ReviewMarkSchema>;
 

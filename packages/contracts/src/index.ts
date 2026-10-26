@@ -589,13 +589,17 @@ export {
   phaseIndex,
   prototypeFingerprint,
   requirementsFingerprint,
+  isUserDecision,
+  REVIEW_DECISION_ACTION,
+  reviewApprovalRequest,
+  reviewBatchSubject,
   reviewProgress,
   storiesFingerprint,
   storyCapabilities,
   storyPlanFingerprint,
   storyReviewProgress,
 } from "./planning.js";
-export type { CoverageGap, CoverageReport, GateResult, NextStep, PlanningCommand, PlanningResult } from "./planning.js";
+export type { CoverageGap, CoverageReport, GateResult, NextStep, PlanningCommand, PlanningResult, ReviewChannel } from "./planning.js";
 export { RepositoryIdSchema } from "./ids.js";
 export { SUPPORTED_WORKFLOW_VERSIONS } from "./workflow.js";
 export { ReviewMarkSchema, StoryCapabilitySchema, STORY_CAPABILITIES } from "./story.js";
