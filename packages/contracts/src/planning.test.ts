@@ -111,7 +111,7 @@ describe("requirements review: scope, per-criterion marks, point edits", () => {
     s = ok(s, { action: "set-requirement-scope", requirementIds: ["REQ-ORD-002"], scope: "in" });
     expect(s.stories[0].status).toBe("proposed");
     expect(s.stories[0].confirmedBehavior).toBe(false);
-    expect(s.storyPlan!.entries[0].status).toBe("planned");
+    expect(s.storyPlan!.entries[0].status).toBe("detailed");
   });
 });
 

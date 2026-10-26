@@ -413,6 +413,7 @@ export {
   WorkflowStateSchema,
   WorkflowError,
   redactPersistent,
+  redactState,
   assertTransition,
   transition,
   openLocalWorkflow,
@@ -615,3 +616,7 @@ export * from "./context-trust.js";
 
 // Briefing for continuing a work item in a new chat.
 export * from "./briefing.js";
+
+// Command discovery for agents.
+export { commandCatalog, explainCommandError } from "./command-catalog.js";
+export type { CommandInfo } from "./command-catalog.js";

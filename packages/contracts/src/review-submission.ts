@@ -33,7 +33,7 @@ const RequirementsPayload = z.object({
         statement: z.string().min(1).max(4000).optional(),
         comment: z.string().max(4000).optional(),
         criteria: z
-          .array(z.object({ id: z.string().min(1), revision: z.number().int().positive(), status: Mark.optional(), comment: z.string().max(4000).optional(), statement: z.string().min(1).max(4000).optional() }))
+          .array(z.object({ id: z.string().min(1), revision: z.number().int().positive(), from: Mark.optional(), status: Mark.optional(), comment: z.string().max(4000).optional(), statement: z.string().min(1).max(4000).optional() }))
           .default([]),
         addCriteria: z.array(z.object({ statement: z.string().min(1).max(4000) })).default([]),
         removeCriteria: z.array(z.string()).default([]),
@@ -69,7 +69,7 @@ const PlanPayload = z.object({
 });
 
 const StoriesPayload = z.object({
-  items: z.array(z.object({ storyId: StoryIdSchema, revision: z.number().int().positive(), key: z.string().min(1), status: Mark, comment: z.string().max(4000).optional() })).default([]),
+  items: z.array(z.object({ storyId: StoryIdSchema, revision: z.number().int().positive(), key: z.string().min(1), from: Mark.optional(), status: Mark, comment: z.string().max(4000).optional() })).default([]),
   stories: z
     .array(
       z.object({
@@ -99,6 +99,8 @@ export const ReviewSubmissionSchema = z.object({
   prototype: PrototypePayload.optional(),
   plan: PlanPayload.optional(),
   stories: StoriesPayload.optional(),
+  /** Gaps the user chooses not to cover (a prototype for a pure refactor, a capability a requirement does not need). Only the user may waive. */
+  waivers: z.array(z.object({ kind: z.string().min(1).max(100), requirementId: RequirementIdSchema.optional(), reason: z.string().min(3).max(1000) })).default([]),
 });
 export type ReviewSubmission = z.infer<typeof ReviewSubmissionSchema>;
 
@@ -123,6 +125,8 @@ export type SubmissionPlan = {
   /** True when the artifact itself changed since the page was rendered (items are checked one by one). */
   stale: boolean;
   summary: string[];
+  /** One line per decision, as the user would read it: what an approval dialog shows. */
+  details: string[];
 };
 
 /**
@@ -134,9 +138,10 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
   const conflicts: ReviewConflict[] = [];
   const commands: Array<Record<string, unknown>> = [];
   const summary: string[] = [];
+  const details: string[] = [];
   const stale = submission.baseFingerprint !== fingerprintFor(state, submission.view);
   if (submission.workItemId !== state.workItem.id) {
-    return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state.workItem.id}` }], stale: true, summary: [] };
+    return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state.workItem.id}` }], stale: true, summary: [], details: [] };
   }
   const via = "html-review" as const;
 
@@ -164,8 +169,20 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
           conflicts.push({ item: criterion.id, reason: `criterion changed since the review (now revision ${live.revision})` });
           continue;
         }
+        if (criterion.from !== undefined && criterion.status !== undefined && live.review.status !== criterion.from) {
+          conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} by someone else since the review (the page showed ${criterion.from})` });
+          continue;
+        }
+        const unchanged = (criterion.status === undefined || criterion.status === live.review.status) && (criterion.comment === undefined || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === undefined || criterion.statement === live.statement);
+        if (unchanged) continue;
+        details.push(`${criterion.id} '${live.statement.slice(0, 80)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== undefined ? `edit to '${criterion.statement.slice(0, 80)}'` : "", criterion.comment ? `comment '${criterion.comment.slice(0, 80)}'` : ""].filter(Boolean).join(", ")}`);
         acceptance.push({ id: criterion.id, ...(criterion.status ? { status: criterion.status } : {}), ...(criterion.comment !== undefined ? { comment: criterion.comment } : {}), ...(criterion.statement !== undefined ? { statement: criterion.statement } : {}) });
       }
+      if (item.statement !== undefined) details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 80)}'`);
+      if (item.scope !== undefined && item.scope !== current.scope) details.push(`${item.id}: scope ${current.scope} -> ${item.scope}`);
+      for (const a of item.addCriteria) details.push(`${item.id}: add criterion '${a.statement.slice(0, 80)}'`);
+      for (const r of item.removeCriteria) details.push(`${item.id}: remove criterion ${r}`);
+      if (acceptance.length === 0 && item.statement === undefined && item.scope === undefined && item.scopeNote === undefined && item.comment === undefined && item.addCriteria.length === 0 && item.removeCriteria.length === 0) continue;
       decisions.push({
         requirementId: item.id,
         ...(item.statement !== undefined ? { statement: item.statement } : {}),
@@ -186,6 +203,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       else {
         commands.push({ action: "accept-requirements", via });
         summary.push("accept all pending criteria");
+        details.push("ACCEPT every criterion still undecided and record the requirements review as accepted");
       }
     }
   }
@@ -197,12 +215,15 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       if (p.feedback.length > 0 || p.resolve.length > 0) {
         commands.push({ action: "prototype-feedback", via, items: p.feedback, resolve: p.resolve });
         summary.push(`${p.feedback.length} comment(s)`);
+        for (const f of p.feedback) details.push(`prototype comment on ${f.target}: '${f.comment.slice(0, 100)}'`);
+        for (const r of p.resolve) details.push(`prototype feedback ${r} resolved`);
       }
       if (p.accept) {
         if (stale) conflicts.push({ item: "accept prototype", reason: "the prototype changed since the review: re-open it" });
         else {
           commands.push({ action: "accept-prototype", via });
           summary.push("prototype accepted");
+          details.push(`ACCEPT prototype revision ${state.prototype.revision}`);
         }
       }
     }
@@ -223,6 +244,10 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       if (Object.keys(patch).length > 0) operations.push({ op: "update", id: entry.id, patch });
       if (entry.exclude !== undefined) operations.push({ op: "exclude", id: entry.id, reason: entry.exclude });
       if (entry.restore) operations.push({ op: "restore", id: entry.id });
+      if (entry.exclude !== undefined) details.push(`${entry.id}: exclude (${entry.exclude})`);
+      if (entry.restore) details.push(`${entry.id}: restore`);
+      if (Object.keys(patch).length > 0) details.push(`${entry.id}: edit ${Object.keys(patch).join(", ")}`);
+      if (entry.status !== undefined) details.push(`${entry.id} '${current.title}': ${entry.status.toUpperCase()}`);
       if (entry.status !== undefined) operations.push({ op: "review", id: entry.id, status: entry.status, ...(entry.comment !== undefined ? { comment: entry.comment } : {}) });
     }
     if (operations.length > 0) {
@@ -230,10 +255,11 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       summary.push(`${operations.length} plan change(s)`);
     }
     if (submission.plan.agree) {
-      if (conflicts.length > 0) conflicts.push({ item: "agree plan", reason: "not applied: part of the review could not be applied" });
+      if (conflicts.length > 0 || stale) conflicts.push({ item: "agree plan", reason: "not applied: part of the review is out of date or could not be applied; re-open it" });
       else {
         commands.push({ action: "agree-story-plan", via });
         summary.push("plan agreed");
+        details.push(`AGREE the story plan (${state.storyPlan?.entries.length ?? 0} lines, revision ${state.storyPlan?.revision})`);
       }
     }
   }
@@ -267,22 +293,40 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       }
     }
     const edited = new Set(commands.filter((c) => c.action === "update-story" || c.action === "exclude-story" || c.action === "restore-story").map((c) => String(c.id)));
-    const items = s.items.filter((item) => !edited.has(item.storyId));
+    const items = s.items.filter((item) => {
+      if (edited.has(item.storyId)) return false;
+      const live = state.stories.find((x) => x.id === item.storyId && x.status !== "superseded");
+      const current = live?.review[item.key]?.status ?? "pending";
+      if (item.from !== undefined && current !== item.from) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `already marked ${current} by someone else since the review (the page showed ${item.from})` });
+        return false;
+      }
+      if (current === item.status && (item.comment === undefined || item.comment === (live?.review[item.key]?.comment ?? ""))) return false;
+      details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment.slice(0, 80)}')` : ""}`);
+      return true;
+    });
     const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).map((x) => ({ storyId: x.storyId, revision: x.revision }));
+    for (const a of acceptStories) details.push(`${a.storyId}: ACCEPT everything in the story (revision ${a.revision})`);
     if (items.length > 0 || acceptStories.length > 0) {
       commands.push({ action: "review-stories", via, items, acceptStories });
       summary.push(`${items.length} item mark(s), ${acceptStories.length} bulk accept(s)`);
     }
     if (s.accept) {
-      if (conflicts.length > 0 || edited.size > 0) conflicts.push({ item: "accept stories", reason: "not applied: stories changed or could not be applied, review them again" });
+      if (conflicts.length > 0 || edited.size > 0 || stale) conflicts.push({ item: "accept stories", reason: "not applied: stories changed or could not be applied, review them again" });
       else {
         commands.push({ action: "accept-stories", via });
         summary.push("stories accepted");
+        details.push("ACCEPT the stories");
       }
     }
   }
 
-  return { commands, conflicts, stale, summary };
+  for (const w of submission.waivers) {
+    commands.push({ action: "waive-coverage", kind: w.kind, ...(w.requirementId ? { requirementId: w.requirementId } : {}), reason: w.reason });
+    summary.push(`waive ${w.kind}`);
+    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason.slice(0, 120)}'`);
+  }
+  return { commands, conflicts, stale, summary, details };
 }
 
 export { currentFingerprint };

@@ -331,7 +331,7 @@ function cascadeScope(state: WorkflowState, now: Now): { state: WorkflowState; e
       if (!hasScope && entry.status !== "excluded") return { ...entry, status: "excluded" as const, excludedReason: "scope: all requirements are deferred or excluded" };
       if (hasScope && entry.status === "excluded" && entry.excludedReason?.startsWith("scope:")) {
         const { excludedReason: _e, ...rest } = entry;
-        return { ...rest, status: "planned" as const };
+        return { ...rest, status: restored.includes(entry.id) ? ("detailed" as const) : ("planned" as const) };
       }
       return entry;
     });
@@ -484,6 +484,16 @@ const requirementOf = (state: WorkflowState, id: string) => {
 
 // --- requirement review ----------------------------------------------------------------------------------------
 
+/** Keeps what a revision replaces. Prototype snapshots are the most recent ten; the rest are capped together. */
+function keepArtifact(state: WorkflowState, kind: "requirement" | "prototype" | "story-plan", id: string, revision: number, value: unknown, now: Now): WorkflowState {
+  const kept = state.artifactHistory;
+  const entry = { kind, id, revision, at: iso(now), snapshot: JSON.stringify(value) };
+  const all = [...kept, entry];
+  const protos = all.filter((h) => h.kind === "prototype");
+  const drop = new Set(protos.slice(0, Math.max(0, protos.length - 10)));
+  return { ...state, artifactHistory: all.filter((h) => !drop.has(h)).slice(-150) };
+}
+
 function applyRequirementDecisions(state: WorkflowState, command: Extract<PlanningCommand, { action: "review-requirements" }>, now: Now): PlanningResult {
   let next = state;
   const changed: string[] = [];
@@ -547,6 +557,7 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
       summary.push(`${id} removed`);
     }
     if (revised) {
+      next = keepArtifact(next, "requirement", current.id, current.revision, current, now);
       requirement = { ...requirement, revision: current.revision + 1, status: "proposed" };
       contentChanged = true;
       changed.push(requirement.id);
@@ -559,7 +570,13 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
     next = cascadeScope(next, now).state;
   }
   next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ") || "marks only"}`);
-  return { state: next, duplicate: false, result: { changedRequirementIds: changed, reviewProgress: reviewProgress(next) } };
+  // The user ticking every criterion IS the acceptance of the review: no second checkbox is needed.
+  const marked = command.decisions.some((d) => d.acceptance.some((a) => a.status !== undefined));
+  if (marked && (command.via === "html-review" || command.via === "approved") && reviewProgress(next).complete && acceptanceStatus(next, "requirements_review") !== "accepted") {
+    next = recordAcceptance(next, "requirements_review", command.via, now);
+    next = { ...next, requirements: next.requirements.map((r) => (r.scope === "in" && r.status !== "superseded" ? { ...r, status: "approved" as const } : r)) };
+  }
+  return { state: next, duplicate: false, result: { changedRequirementIds: changed, reviewProgress: reviewProgress(next), accepted: acceptanceStatus(next, "requirements_review") === "accepted" } };
 }
 
 /** Verdicts, implementation units and stories that rest on a requirement are stale once it changes. */
@@ -596,7 +613,17 @@ export function reviewProgress(state: WorkflowState) {
 
 // --- prototype -------------------------------------------------------------------------------------------------
 
+/** The prototype is stored as written (mock rows and API examples need names like password or Authorization), so a value that looks like a real secret is refused instead. */
+const REAL_SECRET = /(Bearer\s+[A-Za-z0-9._~+\/-]{20,}|sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
+function assertNoRealSecrets(value: unknown, where: string): void {
+  if (typeof value === "string") {
+    if (REAL_SECRET.test(value)) throw missing("PROTOTYPE_SECRET", `${where} contains something that looks like a real secret or token; use an obviously fake value`);
+  } else if (Array.isArray(value)) value.forEach((v, i) => assertNoRealSecrets(v, `${where}[${i}]`));
+  else if (value && typeof value === "object") for (const [k, v] of Object.entries(value)) assertNoRealSecrets(v, `${where}.${k}`);
+}
+
 function validatePrototype(state: WorkflowState, prototype: Prototype): void {
+  assertNoRealSecrets({ mock: prototype.mock, endpoints: prototype.endpoints, notes: prototype.notes }, "the prototype");
   const screenIds = new Set<string>();
   for (const screen of prototype.screens) {
     if (screenIds.has(screen.id)) throw missing("PROTOTYPE_INVALID", `duplicate screen id ${screen.id}`);
@@ -638,7 +665,8 @@ function withPrototype(state: WorkflowState, prototype: Prototype, summary: stri
     status: "draft",
     history: [...(state.prototype?.history ?? []), { revision, at: iso(now), summary }].slice(-100),
   };
-  return touch({ ...state, prototype: next }, now, `prototype r${revision}: ${summary}`);
+  const kept = state.prototype ? keepArtifact(state, "prototype", state.prototype.id, state.prototype.revision, state.prototype, now) : state;
+  return touch({ ...kept, prototype: next }, now, `prototype r${revision}: ${summary}`);
 }
 
 function applyPrototypeOps(state: WorkflowState, operations: z.infer<typeof PrototypeOperation>[]): Prototype {
@@ -772,7 +800,8 @@ function withPlan(state: WorkflowState, entries: StoryPlanEntry[], summary: stri
     entries,
     history: [...(state.storyPlan?.history ?? []), { revision, at: iso(now), summary }].slice(-100),
   };
-  return touch({ ...state, storyPlan: plan }, now, `story plan r${revision}: ${summary}`);
+  const kept = state.storyPlan ? keepArtifact(state, "story-plan", "plan", state.storyPlan.revision, state.storyPlan, now) : state;
+  return touch({ ...kept, storyPlan: plan }, now, `story plan r${revision}: ${summary}`);
 }
 
 // --- story editing -------------------------------------------------------------------------------------------------
@@ -894,6 +923,23 @@ export function phaseIndex(phase: Phase): number {
 export type GateResult = { ok: boolean; missing: string[]; warnings: string[] };
 
 /** What must be true before the work item may enter `to`. Gates are enforced in guided mode and reported in classic mode. */
+/** Services that can never be ordered because they depend on each other. */
+function implementationOrderOf(state: WorkflowState): string[] {
+  const ids = state.services.map((s) => s.id);
+  const done = new Set<string>();
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (const s of state.services) {
+      if (!done.has(s.id) && s.dependsOn.filter((d) => ids.includes(d)).every((d) => done.has(d))) {
+        done.add(s.id);
+        progressed = true;
+      }
+    }
+  }
+  return ids.filter((id) => !done.has(id));
+}
+
 export function phaseGates(state: WorkflowState, to: Phase): GateResult {
   const missingItems: string[] = [];
   const warnings: string[] = [];
@@ -936,6 +982,8 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
         if (repo && repo.status !== "inspected") warnings.push(`repository ${repo.id} has not been inspected`);
       }
       for (const service of state.services) for (const dep of service.dependsOn) if (!state.services.some((s) => s.id === dep)) missingItems.push(`service ${service.id} depends on unknown ${dep}`);
+      const cyc = implementationOrderOf(state);
+      need(cyc.length === 0, `services depend on each other in a cycle: ${cyc.join(", ")}`);
       for (const repo of state.repositories) {
         const assigned = activeStories(state).some((s) => s.repositoryIds.includes(repo.id)) || activeRequirements(state).some((r) => r.repositoryIds.includes(repo.id));
         need(!assigned || state.services.some((s) => s.repositoryId === repo.id), `repository ${repo.id} has stories or requirements assigned but no service (set-service with repositoryId): nothing would be implemented there`);
@@ -947,6 +995,11 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
     }
     case "delivery":
       need(state.verdicts.some((v) => v.scope === "feature" && v.verdict !== "FAIL" && !v.stale), "a current feature verdict that is not FAIL");
+      // A feature verdict is only as good as the services under it: each one needs its own implementation and a passing verdict.
+      for (const service of state.services) {
+        need(state.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
+        need(service.status === "approved" || service.status === "completed" || state.verdicts.some((v) => v.scope === "service" && v.scopeId === service.id && v.verdict !== "FAIL" && !v.stale), `service ${service.id} has no current non-FAIL verdict`);
+      }
       break;
     default:
       break;
@@ -1029,11 +1082,11 @@ export function nextStep(state: WorkflowState): NextStep {
       return {
         ...base,
         role: "ba",
-        action: progress.complete ? "advance-to-prototype" : "review-requirements",
-        summary: progress.complete ? "All criteria are accepted: move to the prototype." : `Review requirements in HTML: ${progress.accepted}/${progress.criteria} criteria accepted, ${progress.pending} pending, ${progress.rejected} rejected.`,
+        action: progress.complete && acceptanceStatus(state, "requirements_review") === "accepted" ? "advance-to-prototype" : "review-requirements",
+        summary: progress.complete && acceptanceStatus(state, "requirements_review") === "accepted" ? "All criteria are accepted: move to the prototype." : progress.complete ? "Every criterion is marked, but the review is not recorded as accepted: ask the user to open the review again and accept." : `Review requirements in HTML: ${progress.accepted}/${progress.criteria} criteria accepted, ${progress.pending} pending, ${progress.rejected} rejected.`,
         tools: ["praxis_review_render", "praxis_review_apply"],
         skills: ["praxis-ba:requirements-review"],
-        userDecision: !progress.complete,
+        userDecision: !(progress.complete && acceptanceStatus(state, "requirements_review") === "accepted"),
       };
     case "prototype":
       return {
@@ -1122,6 +1175,7 @@ export function isUserDecision(command: { action: string } & Record<string, unkn
     case "agree-story-plan":
     case "accept-stories":
     case "review-stories":
+    case "waive-coverage":
       return true;
     case "review-requirements":
       return (command.decisions as Array<{ acceptance?: Array<{ status?: unknown }> }>).some((d) => (d.acceptance ?? []).some((a) => a.status !== undefined));
@@ -1188,7 +1242,7 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
     }
     case "set-prototype": {
       const { prototype } = command;
-      const parsed = PrototypeSchema.omit({ revision: true, status: true, history: true, feedback: true }).parse({ id: "PROTO-1", tokens: { colors: {}, fonts: {}, sources: [] }, ...prototype });
+      const parsed = PrototypeSchema.omit({ revision: true, status: true, history: true, feedback: true }).parse({ id: "PROTO-1", styles: { colors: {}, fonts: {}, sources: [] }, ...prototype });
       const next = withPrototype(state, { ...parsed, feedback: state.prototype?.feedback ?? [], history: [], revision: 1, status: "draft" } as Prototype, command.summary ?? "prototype set", now);
       return { state: next, duplicate: false, result: { revision: next.prototype!.revision, screens: next.prototype!.screens.length } };
     }

@@ -349,6 +349,12 @@ export type WorkflowState = z.infer<typeof WorkflowStateSchema>;
 const SECRET_KEY =
   /token|secret|password|authorization|api[_-]?key|private[_-]?key/i;
 
+/** What the store writes. The prototype is kept as written: mock rows and API examples legitimately contain names like password or Authorization (real secrets are refused when the prototype is set). */
+export function redactState<T extends { prototype?: unknown }>(state: T): T {
+  const { prototype, ...rest } = state;
+  return { ...redactPersistent(rest), ...(prototype === undefined ? {} : { prototype }) } as T;
+}
+
 export function redactPersistent<T>(value: T): T {
   if (Array.isArray(value)) return value.map((item) => redactPersistent(item)) as T;
   if (value && typeof value === "object") {
@@ -1405,6 +1411,9 @@ export function applyWorkflowCommand(
     return { state: next, duplicate: false, result: { requirementId: command.id } };
   }
   if (command.action === "set-service") {
+    if (command.service.repositoryId && !state.repositories.some((r) => r.id === command.service.repositoryId)) {
+      throw new WorkflowError("REPOSITORY_NOT_FOUND", `service ${command.service.id} names repository ${command.service.repositoryId}, which is not registered (register-repository first)`);
+    }
     const previous = state.services.find((service) => service.id === command.service.id);
     const approving = command.service.status === "approved" || command.service.status === "completed";
     const unchanged = previous !== undefined && fingerprintPayload(previous) === fingerprintPayload(command.service);
@@ -1505,6 +1514,9 @@ export function applyWorkflowCommand(
     return { state: next, duplicate: false, result: { decisionId: command.id, confirmed: command.confirmed } };
   }
   if (command.action === "record-implementation") {
+    if (state.mode === "guided" && !state.services.some((s) => s.id === command.serviceId)) {
+      throw new WorkflowError("SERVICE_NOT_FOUND", `service ${command.serviceId} is not part of this work item (set-service first): an implementation record needs a service`);
+    }
     const implementationUnits = [
       ...state.implementationUnits.filter((unit) => unit.id !== command.id),
       {

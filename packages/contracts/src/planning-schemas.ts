@@ -368,5 +368,7 @@ export const PlanningStateFields = {
   storyHistory: z.array(StoryHistoryEntrySchema).default([]),
   sessionLog: z.array(SessionNoteSchema).default([]),
   waivers: z.array(CoverageWaiverSchema).default([]),
+  /** Earlier content of requirements, the prototype and the story plan (JSON text), so a revision never loses what it replaced. */
+  artifactHistory: z.array(z.object({ kind: z.enum(["requirement", "prototype", "story-plan"]), id: z.string(), revision: z.number().int().positive(), at: z.string(), snapshot: z.string() })).default([]),
   updatedAt: z.string().optional(),
 };
