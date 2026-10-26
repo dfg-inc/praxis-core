@@ -80,7 +80,7 @@ export function requirementsFingerprint(state: WorkflowState): string {
 
 /** What the user agrees to when they agree a contract: its content, not its status. */
 export function contractsFingerprint(state: WorkflowState): string {
-  return hash(state.contracts.map(({ status: _s, agreement: _a, ...content }) => content));
+  return hash(state.contracts.map(({ status: _s, agreement: _a, everAgreed: _e, ...content }) => content));
 }
 
 export function prototypeFingerprint(prototype: Prototype | undefined): string {
@@ -468,7 +468,7 @@ export const PlanningCommandSchemas = [
   z.object({ action: z.literal("register-repository"), repository: RepositorySchema.pick({ id: true, name: true }).extend({ role: z.string().default(""), localPath: z.string().optional(), remoteUrl: z.string().optional(), branch: z.string().optional(), notes: z.string().optional() }) }),
   z.object({ action: z.literal("assign-repositories"), repositoryIds: z.array(RepositoryIdSchema).min(1), storyIds: z.array(StoryIdSchema).default([]), requirementIds: z.array(RequirementIdSchema).default([]), serviceIds: z.array(z.string()).default([]) }),
   z.object({ action: z.literal("record-repository-inspection"), repositoryId: RepositoryIdSchema, inspection: RepositoryInspectionSchema }),
-  z.object({ action: z.literal("set-contract"), via: Via, contract: ServiceContractSchema.omit({ agreement: true }) }),
+  z.object({ action: z.literal("set-contract"), via: Via, contract: ServiceContractSchema.omit({ agreement: true, everAgreed: true }) }),
   z.object({ action: z.literal("set-mode"), mode: WorkflowModeSchema, reason: z.string().optional() }),
   z.object({ action: z.literal("remove-contract"), via: Via, id: z.string().min(1) }),
   z.object({ action: z.literal("record-impact"), impact: ImpactSchema.omit({ revision: true, recordedAt: true }) }),
@@ -1585,11 +1585,11 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
       if (!state.services.some((s) => s.id === contract.providerServiceId)) throw missing("SERVICE_NOT_FOUND", `provider service ${contract.providerServiceId} not found`);
       for (const id of contract.consumerServiceIds) if (!state.services.some((s) => s.id === id)) throw missing("SERVICE_NOT_FOUND", `consumer service ${id} not found`);
       const previous = state.contracts.find((c) => c.id === contract.id);
-      const stripped = (c: { status?: string; agreement?: unknown }) => { const { status: _s, agreement: _a, ...rest } = c; return hash(rest); };
+      const stripped = (c: { status?: string; agreement?: unknown; everAgreed?: boolean }) => { const { status: _s, agreement: _a, everAgreed: _e, ...rest } = c; return hash(rest); };
       // A user agreement belongs to the content they agreed to: a changed contract is proposed again.
       const agreedNow = contract.status === "agreed";
       const kept = previous?.status === "agreed" && !agreedNow && stripped(previous) === stripped(contract);
-      const next1 = { ...contract, status: agreedNow || kept ? ("agreed" as const) : ("proposed" as const), ...(agreedNow ? { agreement: { at: iso(now), via: command.via === "approved" ? ("approved" as const) : ("html-review" as const) } } : kept && previous?.agreement ? { agreement: previous.agreement } : {}) };
+      const next1 = { ...contract, ...(agreedNow || previous?.everAgreed ? { everAgreed: true } : {}), status: agreedNow || kept ? ("agreed" as const) : ("proposed" as const), ...(agreedNow ? { agreement: { at: iso(now), via: command.via === "approved" ? ("approved" as const) : ("html-review" as const) } } : kept && previous?.agreement ? { agreement: previous.agreement } : {}) };
       const contracts = [...state.contracts.filter((c) => c.id !== contract.id), next1];
       return { state: touch({ ...state, contracts }, now, `contract ${contract.id} set`), duplicate: false, result: { contractId: contract.id } };
     }
@@ -1597,7 +1597,7 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
       const doomed = state.contracts.find((c) => c.id === command.id);
       if (!doomed) throw missing("CONTRACT_NOT_FOUND", `contract ${command.id} not found`);
       // Removing what the user agreed would let implementation continue with nothing agreed: that is the user's call.
-      if (doomed.status === "agreed" && !verified) throw new WorkflowError("USER_DECISION_REQUIRED", `contract ${command.id} was agreed by the user; removing it is their decision, not the agent's`);
+      if ((doomed.status === "agreed" || doomed.everAgreed) && !verified) throw new WorkflowError("USER_DECISION_REQUIRED", `contract ${command.id} was agreed by the user; removing it is their decision, not the agent's`);
       return { state: touch({ ...state, contracts: state.contracts.filter((c) => c.id !== command.id) }, now, `contract ${command.id} removed`), duplicate: false, result: { removed: command.id } };
     }
     case "record-impact": {

@@ -112,6 +112,8 @@ export const ServiceContractSchema = z.object({
   status: z.enum(["proposed", "agreed"]).default("proposed"),
   /** Who agreed it: only the user can (see isUserDecision). Absent while proposed. */
   agreement: z.object({ at: z.string(), via: z.enum(["html-review", "approved", "system"]) }).optional(),
+  /** The user agreed this contract at some point. Kept when it becomes proposed again, so it cannot be deleted by the agent. */
+  everAgreed: z.boolean().optional(),
 });
 export type ServiceContract = z.infer<typeof ServiceContractSchema>;
 

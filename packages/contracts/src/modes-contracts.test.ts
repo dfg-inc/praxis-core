@@ -139,8 +139,8 @@ describe("what the user agreed cannot be dropped or left behind by the agent", (
     const s = agreedItem();
     expect(() => run(s, { action: "remove-contract", id: "C-1" })).toThrow(/agreed by the user/);
     expect(run(s, { action: "remove-contract", id: "C-1" }, U).contracts).toEqual([]);
-    const proposed = run(s, { action: "set-contract", contract: { ...s.contracts[0], schemaRef: "x.json", status: "proposed" } });
-    expect(run(proposed, { action: "remove-contract", id: "C-1" }).contracts).toEqual([]);
+    const never = run(s, { action: "set-contract", contract: { id: "C-9", name: "never agreed", providerServiceId: "svc-api", consumerServiceIds: ["svc-web"] } });
+    expect(run(never, { action: "remove-contract", id: "C-9" }).contracts.map((c) => c.id)).toEqual(["C-1"]);
     const plan = submissionToCommands(s, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "contracts", workItemId: s.workItem.id, baseFingerprint: contractsFp(s), contracts: { agree: [], remove: ["C-1"] } });
     expect(plan.commands).toEqual([{ action: "remove-contract", via: "html-review", id: "C-1" }]);
     expect(plan.details[0]).toMatch(/REMOVE contract C-1/);
@@ -159,3 +159,29 @@ describe("what the user agreed cannot be dropped or left behind by the agent", (
   });
 });
 import { contractsFingerprint as contractsFp } from "./index.js";
+
+describe("N1: an agreed contract cannot be laundered away by changing it first", () => {
+  it("after the agent changes an agreed contract it is proposed again but still cannot be removed by the agent", () => {
+    const base = (() => {
+      let s = run(null, { action: "open", projectId: "p", title: "Orders", request: "r" });
+      s = run(s, { action: "add-requirement", id: "REQ-ORD-001", statement: "View orders", acceptanceCriteria: ["List shows orders"] });
+      const svc = (id: string, deps: string[]) => ({ action: "set-service", service: { id, name: id, kind: "module", responsibilities: ["x"], requirementIds: ["REQ-ORD-001"], dependsOn: deps, status: "in_progress" } });
+      s = run(s, svc("a", []));
+      s = run(s, svc("b", ["a"]));
+      s = run(s, { action: "set-contract", contract: { id: "C-1", name: "c", providerServiceId: "a", consumerServiceIds: ["b"] } });
+      return run(s, { action: "set-contract", contract: { ...s.contracts[0], status: "agreed" } }, U);
+    })();
+    const reproposed = run(base, { action: "set-contract", contract: { ...base.contracts[0], schemaRef: "v2.json", status: "proposed" } });
+    expect(reproposed.contracts[0]).toMatchObject({ status: "proposed", everAgreed: true });
+    expect(() => run(reproposed, { action: "remove-contract", id: "C-1" })).toThrow(/agreed by the user/);
+    expect(run(reproposed, { action: "remove-contract", id: "C-1" }, U).contracts).toEqual([]);
+    // a contract the user never agreed stays removable by the agent
+    const fresh = run(base, { action: "set-contract", contract: { id: "C-2", name: "d", providerServiceId: "a", consumerServiceIds: ["b"], status: "proposed" } });
+    expect(run(fresh, { action: "remove-contract", id: "C-2" }).contracts.map((c) => c.id)).toEqual(["C-1"]);
+  });
+  it("the open result says when an item is classic", () => {
+    const res = applyWorkflowCommand(null, { action: "open", projectId: "p", title: "t", request: "r", mode: "classic" }, { now: NOW });
+    expect((res.result as { note?: string }).note).toMatch(/classic/);
+    expect((applyWorkflowCommand(null, { action: "open", projectId: "p", title: "t", request: "r" }, { now: NOW }).result as { mode: string }).mode).toBe("guided");
+  });
+});

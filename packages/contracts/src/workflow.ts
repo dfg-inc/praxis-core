@@ -1381,7 +1381,7 @@ export function applyWorkflowCommand(
   if (command.action === "open") {
     if (state) return { state, duplicate: true, result: { workflowId: state.workflowId } };
     const opened = openLocalWorkflow(command);
-    return { state: opened, duplicate: false, result: { workflowId: opened.workflowId, workItemId: opened.workItem.id } };
+    return { state: opened, duplicate: false, result: { workflowId: opened.workflowId, workItemId: opened.workItem.id, mode: opened.mode, ...(opened.mode === "classic" ? { note: "This work item is classic: stage gates, plan-before-stories and coverage checks are not enforced (user decisions still are). Tell the user." } : {}) } };
   }
   if (command.action === "select-work-item") {
     throw new WorkflowError("EXECUTION_REQUIRED", "select-work-item is resolved by the workflow store");
