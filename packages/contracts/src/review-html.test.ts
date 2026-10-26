@@ -297,7 +297,7 @@ describe("HTML story plan and stories review", () => {
     expect(storyReviewProgress(next).complete).toBe(true);
   });
 
-  it("editing story text through the review creates a new revision and drops that story's marks", () => {
+  it("editing story text through the review creates a new revision (marks sent in the same submission are not applied)", () => {
     const s = withStories();
     const p = page(s, "stories");
     p.doc.querySelector<HTMLInputElement>('[data-key="step:0"] input[value=accepted]')!.click();

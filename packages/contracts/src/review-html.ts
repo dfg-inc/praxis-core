@@ -432,7 +432,7 @@ ${out ? `<p class="meta">Excluded: ${esc(story.excludedReason ?? "")}</p><label 
     .join("");
   const body = `${staleBanner(state, "stories_review")}
 <div class="card"><div class="kv"><span class="muted">Stories</span><span>${progress.stories}</span><span class="muted">Items</span><span>${progress.items}</span><span class="muted">Accepted</span><span>${progress.accepted}</span><span class="muted">Rejected</span><span>${progress.rejected}</span><span class="muted">Undecided</span><span>${progress.pending}</span></div>
-<p class="meta">Editing a story's text creates a new revision; marks on that story start over. Marks on other stories are kept.</p></div>
+<p class="meta">Editing a story creates a new revision. Items you did not change keep their marks; an item whose text changed starts over, and so does the story's confirmation.</p></div>
 ${cards || `<p class="muted">No stories yet.</p>`}`;
   return shell(state, "stories", "User stories review", body, {}, options, `<label class="marks"><input type="checkbox" id="accept-stories"> Accept the stories</label>`);
 }
