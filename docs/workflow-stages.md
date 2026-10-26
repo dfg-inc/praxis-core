@@ -22,7 +22,9 @@ request -> discovery -> requirements -> requirements_review -> prototype -> stor
 
 `praxis_workflow_status` returns the current `phase`, a deterministic `next` step (action, tools, skills) and a `briefing`. `advance-phase` refuses a stage whose conditions are not met and says what is missing. `return-to-phase` (with a reason) goes back; acceptances after that stage become stale, nothing is deleted.
 
-**Modes.** A work item opened with `mode: "guided"` enforces the gates above (for example, stories only after an agreed plan). The BA skills open new work items that way. A work item opened without a mode (the default, kept so alpha.48 flows keep working) and every work item created before this version record the stage but enforce nothing new.
+**Modes.** A new work item is `guided` by default: the gates above are enforced (stories only after an agreed plan, stages entered only when their conditions hold). Work items created by alpha.48 are read as `classic`: stages are recorded, nothing new is enforced, and they keep working unchanged; their mode is never changed automatically. `set-mode` switches an item: to `guided` is the agent's to propose (nothing is deleted; the result lists the stories without a plan line and the stages the user has not accepted yet); back to `classic` switches the gates off, so only the user can do it (in the review page flow or the approval dialog).
+
+**Contracts.** The architect proposes cross-service contracts; only the user agrees one (contracts review page, or an approved dialog decision). Implementation across services waits for it, and changing an agreed contract makes it proposed again.
 
 ## Why the state is JSON, and what you read instead
 
