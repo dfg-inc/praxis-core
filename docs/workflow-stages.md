@@ -24,6 +24,23 @@ request -> discovery -> requirements -> requirements_review -> prototype -> stor
 
 **Modes.** A work item opened with `mode: "guided"` enforces the gates above (for example, stories only after an agreed plan). Work items created before this version, and any opened with `mode: "classic"`, record the stage but enforce nothing new.
 
+## Why the state is JSON, and what you read instead
+
+The workflow state is stored as JSON in `.praxis/workflow/` because it is the one form that every Praxis tool can validate against a schema, version, migrate, diff in Git and read from another session without interpretation. It is internal: you never read or edit it. What you read and decide in is HTML (the reviews above) or the chat. If a page is lost, it is regenerated from the state; if the state and a page disagree, the state wins.
+
+## What Praxis adds over Claude Code with skills alone
+
+Skills tell a model what to do; they cannot make it true. Praxis adds what a skill cannot:
+
+- **Durable, structured state** that survives the chat: requirements, criteria, stories and their revisions, decisions, the prototype, the plan, repositories, verdicts. A new chat continues from records, not from memory.
+- **Gates you cannot talk past.** A stage is refused until its conditions hold (for example no detailed stories before an agreed plan, no development stage with a repository that has stories but no service).
+- **Your decisions are yours.** Accepting criteria, the prototype, the plan or stories can be recorded only by your own action, never by the agent. Confirming a story, an architecture decision and approving a service are separate approvals; Git and Jira writes need your approval of the exact change.
+- **Traceability and staleness.** Requirement, criterion, prototype element, plan line, story, service, repository and verdict are linked by stable ids. Changing something marks what depended on it stale instead of leaving old approvals standing.
+- **Independent verification.** Quality executes and records evidence per service and for the feature; green unit tests and developer claims are not evidence.
+- **Several repositories as one piece of work**, with contracts, order and per-repository status.
+
+If you only need a one-off answer, Claude Code with skills is enough. Praxis is for work that has to survive several sessions, several roles and several repositories, and stay checkable.
+
 ## HTML reviews
 
 `praxis_review_render` writes a self-contained HTML page (no network, no external scripts) under `.praxis/workflow/reviews/<work item>/` and serves a live copy on `127.0.0.1` with a one-time token. Your Save in that page records your decisions directly. If the page cannot save, Copy or Download produces a decisions file, which `praxis_review_apply` records **after you approve exactly those decisions in the client's dialog**.
