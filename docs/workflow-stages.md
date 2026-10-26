@@ -67,7 +67,7 @@ The state that survives is what is recorded in the work item: requirements, crit
 
 ## Known limits
 
-- Coverage compares the capabilities that requirements, criteria and prototype elements imply with the capability labels on stories (and what the story text implies); a label that does not match the content is not detected.
+- Coverage compares the capabilities that requirements, criteria and prototype elements imply with the capability labels on stories (and keywords in the story text); a label that does not match the story's real content is not detected, so a create-only story labelled "view" passes.
 - An agent that has an unrestricted shell on your machine acts as you there (it could drive your browser or read local files). The review page and the dialog protect against an agent that only has the Praxis tools.
 - The instruction-file scanner is a heuristic over a list of English phrases and known file names; it is an aid, not a guarantee. Praxis never returns those files' contents, but text in names and in the values of style files can still reach the agent in small, filtered forms.
 - Two pages saving the same criterion: the second is reported as a conflict only if the criterion was marked differently after the page was opened.

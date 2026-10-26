@@ -175,12 +175,12 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         }
         const unchanged = (criterion.status === undefined || criterion.status === live.review.status) && (criterion.comment === undefined || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === undefined || criterion.statement === live.statement);
         if (unchanged) continue;
-        details.push(`${criterion.id} '${live.statement.slice(0, 80)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== undefined ? `edit to '${criterion.statement.slice(0, 80)}'` : "", criterion.comment ? `comment '${criterion.comment.slice(0, 80)}'` : ""].filter(Boolean).join(", ")}`);
+        details.push(`${criterion.id} '${live.statement.slice(0, 400)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== undefined ? `edit to '${criterion.statement.slice(0, 400)}'` : "", criterion.comment ? `comment '${criterion.comment.slice(0, 400)}'` : ""].filter(Boolean).join(", ")}`);
         acceptance.push({ id: criterion.id, ...(criterion.status ? { status: criterion.status } : {}), ...(criterion.comment !== undefined ? { comment: criterion.comment } : {}), ...(criterion.statement !== undefined ? { statement: criterion.statement } : {}) });
       }
-      if (item.statement !== undefined) details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 80)}'`);
+      if (item.statement !== undefined) details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 400)}'`);
       if (item.scope !== undefined && item.scope !== current.scope) details.push(`${item.id}: scope ${current.scope} -> ${item.scope}`);
-      for (const a of item.addCriteria) details.push(`${item.id}: add criterion '${a.statement.slice(0, 80)}'`);
+      for (const a of item.addCriteria) details.push(`${item.id}: add criterion '${a.statement.slice(0, 400)}'`);
       for (const r of item.removeCriteria) details.push(`${item.id}: remove criterion ${r}`);
       if (acceptance.length === 0 && item.statement === undefined && item.scope === undefined && item.scopeNote === undefined && item.comment === undefined && item.addCriteria.length === 0 && item.removeCriteria.length === 0) continue;
       decisions.push({
@@ -215,7 +215,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       if (p.feedback.length > 0 || p.resolve.length > 0) {
         commands.push({ action: "prototype-feedback", via, items: p.feedback, resolve: p.resolve });
         summary.push(`${p.feedback.length} comment(s)`);
-        for (const f of p.feedback) details.push(`prototype comment on ${f.target}: '${f.comment.slice(0, 100)}'`);
+        for (const f of p.feedback) details.push(`prototype comment on ${f.target}: '${f.comment.slice(0, 400)}'`);
         for (const r of p.resolve) details.push(`prototype feedback ${r} resolved`);
       }
       if (p.accept) {
@@ -302,7 +302,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         return false;
       }
       if (current === item.status && (item.comment === undefined || item.comment === (live?.review[item.key]?.comment ?? ""))) return false;
-      details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment.slice(0, 80)}')` : ""}`);
+      details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment.slice(0, 400)}')` : ""}`);
       return true;
     });
     const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).map((x) => ({ storyId: x.storyId, revision: x.revision }));
@@ -324,7 +324,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
   for (const w of submission.waivers) {
     commands.push({ action: "waive-coverage", kind: w.kind, ...(w.requirementId ? { requirementId: w.requirementId } : {}), reason: w.reason });
     summary.push(`waive ${w.kind}`);
-    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason.slice(0, 120)}'`);
+    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason.slice(0, 400)}'`);
   }
   return { commands, conflicts, stale, summary, details };
 }

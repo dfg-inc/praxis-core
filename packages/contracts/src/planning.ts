@@ -623,7 +623,7 @@ function assertNoRealSecrets(value: unknown, where: string): void {
 }
 
 function validatePrototype(state: WorkflowState, prototype: Prototype): void {
-  assertNoRealSecrets({ mock: prototype.mock, endpoints: prototype.endpoints, notes: prototype.notes }, "the prototype");
+  assertNoRealSecrets(prototype, "the prototype");
   const screenIds = new Set<string>();
   for (const screen of prototype.screens) {
     if (screenIds.has(screen.id)) throw missing("PROTOTYPE_INVALID", `duplicate screen id ${screen.id}`);
