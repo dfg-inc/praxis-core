@@ -379,7 +379,7 @@ const RequirementDecision = z.object({
   removeAcceptance: z.array(z.string()).default([]),
 });
 
-const PrototypeInput = PrototypeSchema.omit({ revision: true, status: true, history: true, feedback: true }).partial({ id: true, tokens: true });
+const PrototypeInput = PrototypeSchema.omit({ revision: true, status: true, history: true, feedback: true }).partial({ id: true, styles: true });
 const PrototypeOperation = z.discriminatedUnion("op", [
   z.object({ op: z.literal("set-meta"), title: z.string().min(1).optional(), notes: z.string().optional(), startScreen: z.string().optional(), roles: z.array(z.string()).optional() }),
   z.object({ op: z.literal("add-screen"), screen: PrototypeScreenSchema }),
@@ -390,7 +390,7 @@ const PrototypeOperation = z.discriminatedUnion("op", [
   z.object({ op: z.literal("remove-element"), screenId: z.string(), id: z.string() }),
   z.object({ op: z.literal("set-mock"), collection: MockCollectionSchema }),
   z.object({ op: z.literal("remove-mock"), id: z.string() }),
-  z.object({ op: z.literal("set-tokens"), tokens: PrototypeTokensSchema }),
+  z.object({ op: z.literal("set-tokens"), styles: PrototypeTokensSchema }),
   z.object({ op: z.literal("set-endpoint"), endpoint: ApiEndpointSchema }),
   z.object({ op: z.literal("remove-endpoint"), id: z.string() }),
   z.object({ op: z.literal("link"), screenId: z.string(), elementId: z.string(), requirementIds: z.array(RequirementIdSchema).optional(), acIds: z.array(z.string()).optional() }),
@@ -695,7 +695,7 @@ function applyPrototypeOps(state: WorkflowState, operations: z.infer<typeof Prot
         p = { ...p, mock: p.mock.filter((c) => c.id !== op.id) };
         break;
       case "set-tokens":
-        p = { ...p, tokens: op.tokens };
+        p = { ...p, styles: op.styles };
         break;
       case "set-endpoint":
         p = { ...p, endpoints: [...p.endpoints.filter((e) => e.id !== op.endpoint.id), op.endpoint] };

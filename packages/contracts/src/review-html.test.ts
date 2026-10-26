@@ -226,7 +226,7 @@ describe("HTML prototype review", () => {
 
   it("styles come from tokens and unsafe values are dropped", () => {
     let s = withPrototype(base());
-    s = ok(s, { action: "update-prototype", operations: [{ op: "set-tokens", tokens: { colors: { primary: "#112233", evil: "red;}</style><script>alert(1)</script>" }, fonts: {}, sources: [{ file: "src/theme.css" }] } }] });
+    s = ok(s, { action: "update-prototype", operations: [{ op: "set-tokens", styles: { colors: { primary: "#112233", evil: "red;}</style><script>alert(1)</script>" }, fonts: {}, sources: [{ file: "src/theme.css" }] } }] });
     const { html } = page(s, "prototype");
     expect(html).toContain("--p-primary:#112233");
     expect(html).not.toContain("alert(1)");

@@ -305,11 +305,11 @@ export function renderPrototypeReview(state: WorkflowState, options: RenderRevie
     return shell(state, "prototype", "Prototype review", `<p class="muted">There is no prototype yet. Ask Claude to build one from the accepted requirements.</p>`, {}, options, "");
   }
   const vars = [
-    ...Object.entries(proto.tokens.colors).filter(([, v]) => COLOR_OK.test(v)).map(([k, v]) => `--p-${k.replace(/[^\w-]/g, "")}:${v}`),
-    ...(proto.tokens.fonts.body && COLOR_OK.test(proto.tokens.fonts.body.replace(/['"]/g, "")) ? [`--p-font:${proto.tokens.fonts.body}`] : []),
-    ...(proto.tokens.radius && COLOR_OK.test(proto.tokens.radius) ? [`--p-radius:${proto.tokens.radius}`] : []),
+    ...Object.entries(proto.styles.colors).filter(([, v]) => COLOR_OK.test(v)).map(([k, v]) => `--p-${k.replace(/[^\w-]/g, "")}:${v}`),
+    ...(proto.styles.fonts.body && COLOR_OK.test(proto.styles.fonts.body.replace(/['"]/g, "")) ? [`--p-font:${proto.styles.fonts.body}`] : []),
+    ...(proto.styles.radius && COLOR_OK.test(proto.styles.radius) ? [`--p-radius:${proto.styles.radius}`] : []),
   ].join(";");
-  const tokenNote = proto.tokens.sources.length > 0 ? `Styles read from ${proto.tokens.sources.map((s) => esc(s.file)).join(", ")}.` : "Neutral styles: no application styles were found, so the look is generic.";
+  const tokenNote = proto.styles.sources.length > 0 ? `Styles read from ${proto.styles.sources.map((s) => esc(s.file)).join(", ")}.` : "Neutral styles: no application styles were found, so the look is generic.";
   const traceRows = [
     ...proto.screens.flatMap((s) => s.elements.filter((e) => e.requirementIds.length || e.acIds.length).map((e) => `<tr><td>${esc(s.id)}#${esc(e.id)}</td><td>${esc(e.label || e.kind)}</td><td>${esc([...e.requirementIds, ...e.acIds].join(", "))}</td></tr>`)),
     ...proto.endpoints.map((e) => `<tr><td>${esc(e.method)} ${esc(e.path)}</td><td>${esc(e.summary)}</td><td>${esc([...e.requirementIds, ...e.acIds].join(", "))}</td></tr>`),

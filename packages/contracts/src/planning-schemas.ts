@@ -76,7 +76,7 @@ export const RepositoryInspectionSchema = z.object({
   entries: z.array(z.object({ path: z.string(), note: z.string().optional() })).default([]),
   frontend: z
     .object({
-      tokensFound: z.boolean(),
+      hasStyles: z.boolean(),
       styleFiles: z.array(z.string()).default([]),
       componentDirs: z.array(z.string()).default([]),
     })
@@ -249,7 +249,7 @@ export const PrototypeTokensSchema = z.object({
   fonts: z.record(z.string(), z.string()).default({}),
   radius: z.string().optional(),
   spacing: z.string().optional(),
-  /** Files the tokens were read from. Empty means neutral defaults were used and the prototype says so. */
+  /** Files the styles were read from. Empty means neutral defaults were used and the prototype says so. */
   sources: z.array(z.object({ repositoryId: z.string().optional(), file: z.string(), note: z.string().optional() })).default([]),
 });
 export type PrototypeTokens = z.infer<typeof PrototypeTokensSchema>;
@@ -271,7 +271,7 @@ export const PrototypeSchema = z.object({
   revision: z.number().int().positive(),
   status: z.enum(["draft", "accepted"]).default("draft"),
   notes: z.string().default(""),
-  tokens: PrototypeTokensSchema.default({ colors: {}, fonts: {}, sources: [] }),
+  styles: PrototypeTokensSchema.default({ colors: {}, fonts: {}, sources: [] }),
   screens: z.array(PrototypeScreenSchema).default([]),
   startScreen: z.string().optional(),
   mock: z.array(MockCollectionSchema).default([]),
