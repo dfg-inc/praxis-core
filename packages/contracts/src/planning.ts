@@ -1047,8 +1047,8 @@ export function nextStep(state: WorkflowState): NextStep {
       return {
         ...base,
         role: "ba",
-        action: !state.storyPlan ? "write-story-plan" : acceptanceStatus(state, "story_plan") === "accepted" ? "detail-stories" : "review-story-plan",
-        summary: !state.storyPlan ? "Write a short story plan: one line per story, what it covers, which REQ and AC." : acceptanceStatus(state, "story_plan") === "accepted" ? "Plan agreed: write the detailed stories." : "Review and agree the story plan.",
+        action: !state.storyPlan ? "write-story-plan" : acceptanceStatus(state, "story_plan") !== "accepted" ? "review-story-plan" : state.storyPlan.entries.every((e) => e.status !== "planned") ? "advance-to-stories-review" : "detail-stories",
+        summary: !state.storyPlan ? "Write a short story plan: one line per story, what it covers, which REQ and AC." : acceptanceStatus(state, "story_plan") !== "accepted" ? "Review and agree the story plan." : state.storyPlan.entries.every((e) => e.status !== "planned") ? "Every planned story is detailed: move on to the stories review." : `Plan agreed: write the detailed stories (${state.storyPlan.entries.filter((e) => e.status === "planned").length} left).`,
         tools: ["praxis_workflow_apply", "praxis_review_render"],
         skills: ["praxis-ba:story-plan"],
         userDecision: Boolean(state.storyPlan) && acceptanceStatus(state, "story_plan") !== "accepted",

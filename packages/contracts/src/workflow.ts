@@ -15,6 +15,7 @@ import {
   CoverageEntrySchema,
   missingRepositoryPrompts,
   rollupStoryVerdict,
+  StoryCapabilitySchema,
   StoryIdSchema,
   UserStorySchema,
 } from "./story.js";
@@ -1314,6 +1315,11 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     assumptionIds: z.array(z.string()).default([]),
     unresolvedDecisionIds: z.array(z.string()).default([]),
     serviceIds: z.array(z.string()).default([]),
+    /** Short name shown in the plan and in reviews. */
+    title: z.string().min(1).optional(),
+    capabilities: z.array(StoryCapabilitySchema).default([]),
+    screenRefs: z.array(z.string()).default([]),
+    repositoryIds: z.array(z.string()).default([]),
     confirmedBehavior: z.boolean(),
   }),
   z.object({
@@ -1545,8 +1551,16 @@ export function applyWorkflowCommand(
         throw new WorkflowError("STORY_NOT_IN_PLAN", `story ${command.id} is not a line of the agreed plan; add it to the plan first (update-story-plan)`);
       }
     }
+    const entry = state.storyPlan?.entries.find((item) => item.id === command.id);
+    // A detailed story keeps what the agreed plan line already said about it unless the command says otherwise.
+    const inherit = <T>(given: T[], planned: T[] | undefined): T[] => (given.length > 0 ? given : (planned ?? []));
     const story = UserStorySchema.parse({
       ...command,
+      title: command.title ?? entry?.title,
+      capabilities: inherit(command.capabilities, entry?.capabilities),
+      screenRefs: inherit(command.screenRefs, entry?.screenRefs),
+      repositoryIds: inherit(command.repositoryIds, entry?.repositoryIds),
+      serviceIds: inherit(command.serviceIds, entry?.serviceIds),
       revision: 1,
       confirmedBehavior: false,
       status: "proposed",

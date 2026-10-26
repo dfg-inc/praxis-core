@@ -512,3 +512,19 @@ describe("migration from contract 1.0.0 (alpha.48)", () => {
     expect(next.repositories).toHaveLength(1);
   });
 });
+
+describe("add-story keeps what it is given and what the plan said", () => {
+  it("stores title, capabilities, screens and repositories, and inherits them from the agreed plan line", () => {
+    let s = ok(open(), { action: "add-requirement", id: "REQ-ORD-001", statement: "Managers can view and search orders", acceptanceCriteria: ["The list shows all orders", "A manager can search by number"] });
+    s = accepted(s);
+    s = ok(s, { action: "set-story-plan", entries: [{ id: "US-ORD-001", title: "View and search", implementation: "list page", userGets: "orders", requirementIds: ["REQ-ORD-001"], capabilities: ["view", "search", "states"], screenRefs: ["list"], repositoryIds: [] }] });
+    s = ok(s, { action: "agree-story-plan", via: "html-review" });
+    s = ok(s, story("US-ORD-001", ["REQ-ORD-001"], "As a manager, I want to see orders, so that I can work."));
+    const detailed = s.stories[0];
+    expect(detailed.title).toBe("View and search");
+    expect(detailed.capabilities).toEqual(["view", "search", "states"]);
+    expect(detailed.screenRefs).toEqual(["list"]);
+    const explicit = ok(accepted(withRequirements(open("classic"))), story("US-ORD-009", ["REQ-ORD-001"], "As a manager, I want x, so that y.", { title: "Mine", capabilities: ["edit", "permissions"], screenRefs: ["detail#status"], repositoryIds: [] }));
+    expect(explicit.stories[0]).toMatchObject({ title: "Mine", capabilities: ["edit", "permissions"], screenRefs: ["detail#status"] });
+  });
+});
