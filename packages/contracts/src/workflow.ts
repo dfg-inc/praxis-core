@@ -440,6 +440,8 @@ export function openLocalWorkflow(input: {
     },
     mode: input.mode ?? "guided",
     phase: "request",
+    // Opening in classic mode is visible in the record the next chat and the user read first.
+    ...(input.mode === "classic" ? { sessionLog: [{ at: new Date().toISOString(), summary: "opened in classic mode: stage gates, plan-before-stories and coverage checks are not enforced (user decisions still are)" }] } : {}),
     requirements: [],
     services: [],
     handoffs: [],

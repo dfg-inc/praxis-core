@@ -7,7 +7,7 @@ import { WorkflowCommandSchema } from "./workflow.js";
  * and a minimal working example for the ones whose shape is not obvious. Built from the same schemas the reducer parses,
  * so it cannot drift.
  */
-export type CommandInfo = { action: string; required: string[]; optional: string[]; userOnly: boolean; example?: Record<string, unknown> };
+export type CommandInfo = { action: string; required: string[]; optional: string[]; userOnly: boolean; /** Commands that are the user's only in one case. */ userOnlyWhen?: string; example?: Record<string, unknown> };
 
 const optionalish = (type: z.ZodTypeAny): boolean => type instanceof z.ZodOptional || type instanceof z.ZodDefault || (type instanceof z.ZodNullable && optionalish(type.unwrap()));
 
@@ -49,7 +49,8 @@ export function commandCatalog(): CommandInfo[] {
     } catch {
       userOnly = false;
     }
-    return { action, required, optional, userOnly, ...(EXAMPLES[action] ? { example: EXAMPLES[action] } : {}) };
+    const userOnlyWhen = ({ "set-contract": "contract.status is agreed", "set-mode": "mode is classic", "remove-contract": "the contract was agreed by the user", "review-requirements": "a criterion status is set (marks)", "update-story-plan": "an operation is review" } as Record<string, string>)[action];
+    return { action, required, optional, userOnly: userOnly || userOnlyWhen !== undefined ? userOnly : false, ...(userOnlyWhen ? { userOnlyWhen } : {}), ...(EXAMPLES[action] ? { example: EXAMPLES[action] } : {}) };
   });
 }
 

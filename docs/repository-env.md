@@ -6,6 +6,8 @@ A repository file is something an agent can write, so it must not decide how Pra
 - `PRAXIS_GIT_PROVIDER`
 - `PRAXIS_WORK_PACKAGE_MAX_HOURS`
 
+Each allowed key must also have a value of the right shape (a project key like `PRX`, a numeric id, a field id, `github` or `gitlab`, a short number): a value with path, query or query-language syntax is refused and listed by the doctor. Only regular files up to 64 KB are read (a FIFO, a device, a link or a huge file is skipped), and values from one repository's file apply only to calls for that repository: they are taken back before the next call loads another repository's file. Lines may use `export`, quotes, CRLF line ends, a BOM and trailing ` # comments`.
+
 Everything else is not loaded: approval modes (`PRAXIS_APPROVAL_*`, so `trusted-client` and `host-permission` cannot be enabled from a repository), test switches (`PRAXIS_TEST_*`, `PRAXIS_FIXTURE_*`), the state location (`PRAXIS_STATE_HOME`), `PRAXIS_SKIP_DOTENV`, every URL, e-mail and credential (`PRAXIS_JIRA_BASE_URL`, `*_TOKEN`, `PRAXIS_GITLAB_*`, `PRAXIS_GITHUB_*`), Quality service settings, and any non-Praxis variable such as `PATH`, `BROWSER`, `NODE_OPTIONS`, `LD_PRELOAD` or `GIT_ASKPASS`. The doctor lists the refused `PRAXIS_*` names (never their values).
 
 Order of precedence: the operator's real environment (extension settings or shell) always wins; among the three files the first one read wins. Praxis does not read nested `.env` files, `.project` or `.praxis/` files for these settings.
