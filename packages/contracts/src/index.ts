@@ -600,3 +600,8 @@ export { RepositoryIdSchema } from "./ids.js";
 export { SUPPORTED_WORKFLOW_VERSIONS } from "./workflow.js";
 export { ReviewMarkSchema, StoryCapabilitySchema, STORY_CAPABILITIES } from "./story.js";
 export type { ReviewMark, StoryCapability } from "./story.js";
+
+// Standard HTML reviews and how their decisions come back.
+export * from "./review-submission.js";
+export { renderReview, renderRequirementsReview, renderPrototypeReview, renderStoryPlanReview, renderStoriesReview } from "./review-html.js";
+export type { RenderReviewOptions } from "./review-html.js";
