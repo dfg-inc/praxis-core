@@ -70,6 +70,8 @@ export const RepositoryInspectionSchema = z.object({
   branch: z.string().optional(),
   summary: z.string(),
   frameworks: z.array(z.string()).default([]),
+  /** Agent-instruction files found (CLAUDE.md, AGENTS.md, skills, rules). Listed, never followed. */
+  instructionFiles: z.array(z.string()).default([]),
   /** Paths the inspection actually looked at. */
   entries: z.array(z.object({ path: z.string(), note: z.string().optional() })).default([]),
   frontend: z

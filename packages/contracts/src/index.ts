@@ -605,3 +605,6 @@ export type { ReviewMark, StoryCapability } from "./story.js";
 export * from "./review-submission.js";
 export { renderReview, renderRequirementsReview, renderPrototypeReview, renderStoryPlanReview, renderStoriesReview } from "./review-html.js";
 export type { RenderReviewOptions } from "./review-html.js";
+
+// Instruction precedence, deterministic skill plan, untrusted-content handling.
+export * from "./context-trust.js";
