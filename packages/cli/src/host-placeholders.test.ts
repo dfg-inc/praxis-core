@@ -73,12 +73,25 @@ describe("doctor with Claude Desktop placeholders", () => {
     expect(process.env.UNRELATED_TEMPLATE).toBe("${user_config.other}");
   });
 
-  it("lets a repository .env value replace a host placeholder", () => {
+  // Deliberate change after the alpha.48 behaviour (security review): a repository file can fill a blank host setting only for
+  // allowlisted per-project naming settings. A URL or a credential from a file the agent can write could redirect a request
+  // that carries the operator's real token, so those come only from the extension settings or the shell.
+  it("lets a repository .env value replace a host placeholder for an allowlisted setting", () => {
     const repo = tmpRepo();
-    writeFileSync(join(repo, ".env.praxis"), "PRAXIS_GITLAB_BASE_URL=https://gitlab.example.test\n");
-    process.env.PRAXIS_GITLAB_BASE_URL = "${user_config.gitlab_base_url}";
+    writeFileSync(join(repo, ".env.praxis"), "PRAXIS_JIRA_PROJECT_KEY=PRX\n");
+    process.env.PRAXIS_JIRA_PROJECT_KEY = "${user_config.jira_project_key}";
     loadPraxisDotenv(repo);
-    expect(process.env.PRAXIS_GITLAB_BASE_URL).toBe("https://gitlab.example.test");
+    expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("PRX");
+  });
+
+  it("does not let a repository .env fill a blank host setting that carries a URL or a credential", () => {
+    const repo = tmpRepo();
+    writeFileSync(join(repo, ".env.praxis"), "PRAXIS_GITLAB_BASE_URL=https://evil.example.test\nPRAXIS_JIRA_BASE_URL=https://evil.example.test\n");
+    process.env.PRAXIS_GITLAB_BASE_URL = "${user_config.gitlab_base_url}";
+    const operatorJira = process.env.PRAXIS_JIRA_BASE_URL;
+    loadPraxisDotenv(repo);
+    expect(process.env.PRAXIS_GITLAB_BASE_URL).toBeUndefined(); // the placeholder is scrubbed, the file value is refused
+    expect(process.env.PRAXIS_JIRA_BASE_URL).toBe(operatorJira); // never the file's value
   });
 
   it("scrubs placeholders even when dotenv loading is disabled", () => {
@@ -122,12 +135,14 @@ describe("REQ-CFG-001 acceptance criteria", () => {
     }
   });
 
-  it("AC-03: a real value in .env (not only .env.praxis) replaces the placeholder", () => {
+  it("AC-03: a real value in .env (not only .env.praxis) replaces the placeholder, for allowlisted settings; a credential never comes from a repository file", () => {
     const repo = tmpRepo();
-    writeFileSync(join(repo, ".env"), "PRAXIS_GITLAB_TOKEN=glpat-real-value-for-test\n");
+    writeFileSync(join(repo, ".env"), "PRAXIS_JIRA_PROJECT_KEY=ABC\nPRAXIS_GITLAB_TOKEN=glpat-real-value-for-test\n");
+    process.env.PRAXIS_JIRA_PROJECT_KEY = "${user_config.jira_project_key}";
     process.env.PRAXIS_GITLAB_TOKEN = "${user_config.gitlab_token}";
     loadPraxisDotenv(repo);
-    expect(process.env.PRAXIS_GITLAB_TOKEN).toBe("glpat-real-value-for-test");
+    expect(process.env.PRAXIS_JIRA_PROJECT_KEY).toBe("ABC");
+    expect(process.env.PRAXIS_GITLAB_TOKEN).toBeUndefined();
   });
 
   it("AC-04: values that only contain a placeholder shape are left alone", () => {

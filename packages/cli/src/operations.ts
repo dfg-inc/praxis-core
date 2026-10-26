@@ -246,17 +246,34 @@ export function scrubUnexpandedPlaceholders(env: NodeJS.ProcessEnv = process.env
 let hostPlaceholdersIgnored: string[] = [];
 
 /**
- * Keys that decide how a mutation is approved. Repository files are writable by the agent, so
- * they must never supply these: only the operator's real environment can.
+ * What a repository file may configure: an explicit allowlist, not "everything with a PRAXIS_ prefix". Repository files are
+ * writable by the agent, so they must never supply anything that decides how an action is approved, where credentials go,
+ * which program runs, or where Praxis keeps its journal. Those come only from the operator's real environment (the extension
+ * settings or the shell). Allowed here: Jira issue-type and field names for this project, the project key, the Git provider
+ * choice and the work-package time box: non-secret naming that is legitimately per-project and cannot redirect a request,
+ * carry a credential, run code or relax an approval.
  */
-const DOTENV_FORBIDDEN_PREFIXES = [
-  "PRAXIS_APPROVAL_",
-  "PRAXIS_ALLOW_",
-  "PRAXIS_FIXTURE_",
-  "PRAXIS_TEST_",
-  "PRAXIS_REVIEW_",
-  "PRAXIS_STATE_HOME",
-];
+const DOTENV_ALLOWED_KEYS = new Set([
+  "PRAXIS_JIRA_PROJECT_KEY",
+  "PRAXIS_JIRA_EPIC_TYPE",
+  "PRAXIS_JIRA_EPIC_TYPE_ID",
+  "PRAXIS_JIRA_STORY_TYPE",
+  "PRAXIS_JIRA_STORY_TYPE_ID",
+  "PRAXIS_JIRA_TASK_TYPE",
+  "PRAXIS_JIRA_TASK_TYPE_ID",
+  "PRAXIS_JIRA_BUG_TYPE",
+  "PRAXIS_JIRA_BUG_TYPE_ID",
+  "PRAXIS_JIRA_WORK_PACKAGE_TYPE",
+  "PRAXIS_JIRA_STORY_POINTS_FIELD",
+  "PRAXIS_JIRA_ARCHITECT_ESTIMATE_FIELD",
+  "PRAXIS_GIT_PROVIDER",
+  "PRAXIS_WORK_PACKAGE_MAX_HOURS",
+]);
+const DOTENV_ALLOWED_PREFIXES = ["PRAXIS_JIRA_TRANSITION_"];
+
+export function dotenvKeyAllowed(key: string): boolean {
+  return DOTENV_ALLOWED_KEYS.has(key) || DOTENV_ALLOWED_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
 
 let dotenvRejected: string[] = [];
 
@@ -266,9 +283,7 @@ export function dotenvRejectedKeys(): string[] {
 }
 
 function dotenvKeyForbidden(key: string): boolean {
-  // A repository file may only configure Praxis. Anything else (BROWSER, NODE_OPTIONS, LD_PRELOAD, GIT_*, PATH ...) would let a file the agent can write change how the Runtime's own child processes behave.
-  if (!key.startsWith("PRAXIS_")) return true;
-  return DOTENV_FORBIDDEN_PREFIXES.some((prefix) => key.startsWith(prefix));
+  return !dotenvKeyAllowed(key);
 }
 
 export function loadPraxisDotenv(repo: string): void {
@@ -286,7 +301,8 @@ export function loadPraxisDotenv(repo: string): void {
       const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
       if (!m) continue;
       if (dotenvKeyForbidden(m[1]!)) {
-        if (!dotenvRejected.includes(m[1]!)) dotenvRejected = [...dotenvRejected, m[1]!].sort();
+        // only Praxis-looking keys are worth reporting; the product's own variables (DATABASE_URL ...) are simply not loaded
+        if (m[1]!.startsWith("PRAXIS_") && !dotenvRejected.includes(m[1]!)) dotenvRejected = [...dotenvRejected, m[1]!].sort();
         continue;
       }
       if (process.env[m[1]!]) continue;
