@@ -32,8 +32,8 @@ function jsonForScript(value: unknown): string {
 }
 
 const CSS = `
-:root{--bg:#fff;--fg:#1d2330;--muted:#5d6678;--line:#d9dde6;--card:#f7f8fb;--accent:#2457d6;--ok:#17803d;--bad:#b42318;--warn:#a15c00;--okbg:#e7f6ec;--badbg:#fdeceb}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#14171f;--fg:#e6e9f0;--muted:#9aa3b5;--line:#2c3242;--card:#1c202b;--accent:#7aa2ff;--ok:#5ad08a;--bad:#ff8a80;--warn:#ffc266;--okbg:#14301f;--badbg:#3a1a18}}
+:root{--bg:#fff;--fg:#1d2330;--muted:#5d6678;--line:#d9dde6;--card:#f7f8fb;--accent:#2457d6;--ok:#17803d;--bad:#b42318;--warn:#a15c00;--okbg:#e7f6ec;--badbg:#fdeceb;--on-accent:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#14171f;--fg:#e6e9f0;--muted:#9aa3b5;--line:#2c3242;--card:#1c202b;--accent:#7aa2ff;--ok:#5ad08a;--bad:#ff8a80;--warn:#ffc266;--okbg:#14301f;--badbg:#3a1a18;--on-accent:#0b1020}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:980px;margin:0 auto;padding:16px 16px 120px}
 h1{font-size:22px;margin:8px 0}h2{font-size:17px;margin:0}h3{font-size:14px;margin:12px 0 4px}
@@ -46,7 +46,7 @@ h1{font-size:22px;margin:8px 0}h2{font-size:17px;margin:0}h3{font-size:14px;marg
 textarea,input[type=text],select{width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
 textarea{min-height:44px;resize:vertical}
 button{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .ac{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;padding:8px 0;border-top:1px solid var(--line)}
 .marks{display:flex;gap:10px;align-items:center;font-size:13px}.marks label{display:flex;gap:4px;align-items:center;cursor:pointer}
@@ -145,7 +145,7 @@ function showOut(text){var o=$('#out');o.style.display='block';$('textarea',o).v
 function summary(s){return JSON.stringify(s,null,2)}
 $('#btn-save').addEventListener('click',function(){
   var s=collect();var text=summary(s);
-  if(!D.saveUrl){showOut(text);toast('No live connection: copy or download the decisions and give them to Claude (praxis review apply).',false);return}
+  if(!D.saveUrl){showOut(text);toast('No live connection: copy or download the decisions and give them to Claude: it records them with praxis_review_apply after you approve them in the dialog.',false);return}
   toast('Saving...',false);
   fetch(D.saveUrl,{method:'POST',headers:{'content-type':'application/json','x-praxis-review-token':D.token||''},body:JSON.stringify(s)}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(x){
     if(!x.ok){showOut(text);toast('Not saved ('+(x.j&&x.j.error||'error')+'). Decisions are below: copy them to Claude.',true);return}
