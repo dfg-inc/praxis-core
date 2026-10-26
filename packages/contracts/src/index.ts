@@ -608,3 +608,6 @@ export type { RenderReviewOptions } from "./review-html.js";
 
 // Instruction precedence, deterministic skill plan, untrusted-content handling.
 export * from "./context-trust.js";
+
+// Briefing for continuing a work item in a new chat.
+export * from "./briefing.js";
