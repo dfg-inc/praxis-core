@@ -1,9 +1,14 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import { z } from "zod";
+import { WorkflowError } from "./errors.js";
+import { RequirementIdSchema } from "./ids.js";
+import { PlanningStateFields, ScopeSchema, WorkItemKindSchema, WorkflowModeSchema } from "./planning-schemas.js";
+import { PLANNING_ACTIONS, PlanningCommandSchemas, acceptanceStatus, applyPlanningCommand, migrateWorkflowState, type PlanningCommand } from "./planning.js";
 import { humanActContent } from "./human-acts.js";
 import { verifyUserApproval, type UserApproval } from "./user-approval.js";
 import {
+  ReviewMarkSchema,
   assertStoryNarrative,
   ChangeRecordSchema,
   CoverageEntrySchema,
@@ -19,7 +24,9 @@ import {
  * bidirectional handoffs, traceability, and capability routing.
  */
 
-export const WORKFLOW_CONTRACT_VERSION = "1.0.0";
+export const WORKFLOW_CONTRACT_VERSION = "1.1.0";
+/** Contract versions a saved state may carry. 1.0.0 states load unchanged (every 1.1.0 field has a default) and are migrated on read. */
+export const SUPPORTED_WORKFLOW_VERSIONS = ["1.0.0", "1.1.0"] as const;
 
 export const WorkflowStageSchema = z.enum([
   "draft",
@@ -67,9 +74,7 @@ export const QualityVerdictSchema = z.enum([
 export type QualityVerdict = z.infer<typeof QualityVerdictSchema>;
 
 /** Stable requirement id. Accepts legacy canon ids and source-independent REQ ids. */
-export const RequirementIdSchema = z
-  .string()
-  .regex(/^(REQ-[A-Z][A-Z0-9]*-\d{3,}|[A-Z][A-Z0-9]*-(?:FR|NFR|BR)\d+)$/);
+export { RequirementIdSchema };
 
 export const WorkItemSourceSchema = z.enum([
   "local",
@@ -93,14 +98,7 @@ const TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
   completed: ["changes_requested"],
 };
 
-export class WorkflowError extends Error {
-  readonly code: string;
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = "WorkflowError";
-    this.code = code;
-  }
-}
+export { WorkflowError };
 
 export const WorkItemRelationSchema = z.enum(["depends-on", "blocks", "relates-to", "derived-from"]);
 
@@ -130,6 +128,8 @@ export const WorkItemSchema = z.object({
   status: WorkflowStageSchema,
   revision: z.number().int().nonnegative(),
   links: z.array(WorkItemLinkSchema).optional(),
+  /** A new feature, a change to existing behaviour, an extension, a fix or a technical change across services. */
+  kind: WorkItemKindSchema.default("feature"),
 });
 export type WorkItem = z.infer<typeof WorkItemSchema>;
 
@@ -138,6 +138,8 @@ export const AcceptanceCriterionSchema = z.object({
   requirementId: RequirementIdSchema,
   statement: z.string().min(1),
   revision: z.number().int().positive(),
+  /** The user's decision about this one criterion. */
+  review: ReviewMarkSchema.default({ status: "pending" }),
 });
 export type AcceptanceCriterion = z.infer<typeof AcceptanceCriterionSchema>;
 
@@ -149,6 +151,11 @@ export const RequirementSchema = z.object({
   acceptanceCriteria: z.array(AcceptanceCriterionSchema),
   serviceIds: z.array(z.string()),
   assumptionIds: z.array(z.string()),
+  /** "in" is the current scope; "deferred" and "excluded" take the requirement out of what stories and development must cover. */
+  scope: ScopeSchema.default("in"),
+  scopeNote: z.string().optional(),
+  repositoryIds: z.array(z.string()).default([]),
+  comment: z.string().optional(),
 });
 export type Requirement = z.infer<typeof RequirementSchema>;
 
@@ -165,6 +172,8 @@ export const ServiceSchema = z.object({
     "external",
   ]),
   repository: z.string().optional(),
+  /** The registered repository this service lives in. */
+  repositoryId: z.string().optional(),
   localPath: z.string().optional(),
   remoteUrl: z.string().optional(),
   branch: z.string().optional(),
@@ -186,7 +195,7 @@ export const ArtifactRefSchema = z.object({
 
 export const RoleHandoffSchema = z.object({
   contract: z.literal("praxis.role.handoff"),
-  version: z.literal(WORKFLOW_CONTRACT_VERSION),
+  version: z.enum(SUPPORTED_WORKFLOW_VERSIONS),
   workflowId: z.string().min(1),
   workItemId: z.string().min(1),
   handoffId: z.string().min(1),
@@ -277,7 +286,7 @@ export type Capability = z.infer<typeof CapabilitySchema>;
 
 export const WorkflowStateSchema = z.object({
   contract: z.literal("praxis.workflow.state"),
-  version: z.literal(WORKFLOW_CONTRACT_VERSION),
+  version: z.enum(SUPPORTED_WORKFLOW_VERSIONS),
   workflowId: z.string().min(1),
   projectId: z.string().min(1),
   workItem: WorkItemSchema,
@@ -331,6 +340,7 @@ export const WorkflowStateSchema = z.object({
       note: z.string(),
     }),
   ),
+  ...PlanningStateFields,
 });
 export type WorkflowState = z.infer<typeof WorkflowStateSchema>;
 
@@ -400,6 +410,8 @@ export function openLocalWorkflow(input: {
   request: string;
   /** Sequence within the title slug. The store picks the next free one when ids collide. */
   sequence?: number;
+  mode?: z.infer<typeof WorkflowModeSchema>;
+  changeKind?: z.infer<typeof WorkItemKindSchema>;
 }): WorkflowState {
   const workItemId = workItemIdFor(input.title, input.sequence ?? 1);
   const workflowId = `WF-${workItemId}`;
@@ -416,7 +428,10 @@ export function openLocalWorkflow(input: {
       ...(input.jiraIssueKey ? { jiraIssueKey: input.jiraIssueKey } : {}),
       status: "draft",
       revision: 1,
+      kind: input.changeKind ?? "feature",
     },
+    mode: input.mode ?? "classic",
+    phase: "request",
     requirements: [],
     services: [],
     handoffs: [],
@@ -460,7 +475,10 @@ export function addRequirement(
       requirementId: id,
       statement,
       revision: 1,
+      review: { status: "pending" as const },
     })),
+    scope: "in",
+    repositoryIds: [],
   };
   return { ...state, requirements: [...state.requirements, requirement] };
 }
@@ -706,14 +724,15 @@ export function exportWorkflowSnapshot(state: WorkflowState) {
 
 export function renderWorkflowSnapshotHtml(state: WorkflowState): string {
   const snapshot = exportWorkflowSnapshot(state);
+  const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const decisions = snapshot.decisions
     .map(
       (decision) =>
-        `<li>${decision.id}: ${decision.statement} rationale=${decision.rationale ?? ""} notes=${decision.notes ?? ""}</li>`,
+        `<li>${esc(decision.id)}: ${esc(decision.statement)} rationale=${esc(decision.rationale ?? "")} notes=${esc(decision.notes ?? "")}</li>`,
     )
     .join("");
-  const questions = snapshot.openQuestions.map((item) => `<li>${item}</li>`).join("");
-  return `<section><h1>Decisions</h1><ul>${decisions}</ul><h1>Open questions</h1><ul>${questions}</ul><p>${snapshot.notes ?? ""}</p></section>`;
+  const questions = snapshot.openQuestions.map((item) => `<li>${esc(item)}</li>`).join("");
+  return `<section><h1>Decisions</h1><ul>${decisions}</ul><h1>Open questions</h1><ul>${questions}</ul><p>${esc(snapshot.notes ?? "")}</p></section>`;
 }
 
 export function createHandoff(
@@ -1165,6 +1184,10 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     source: WorkItemSourceSchema.optional(),
     jiraIssueKey: z.string().min(1).optional(),
     sequence: z.number().int().positive().optional(),
+    /** guided enforces the stage gates (requirements accepted, prototype, story plan, ...); classic keeps the alpha.48 behaviour. */
+    mode: WorkflowModeSchema.optional(),
+    /** feature, change to existing behaviour, extension, fix or technical change. */
+    changeKind: WorkItemKindSchema.optional(),
   }),
   z.object({
     // Resolved by the workflow store, which owns the index of work items.
@@ -1316,6 +1339,7 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     action: z.literal("record-change"),
     change: ChangeRecordSchema,
   }),
+  ...PlanningCommandSchemas,
   z.object({
     action: z.literal("quality-check"),
     requirementId: RequirementIdSchema,
@@ -1336,7 +1360,7 @@ export function applyWorkflowCommand(
   state: WorkflowState | null,
   raw: WorkflowCommand | unknown,
   /** Set by the Runtime from the user's decision. Never part of the command: nothing an agent sends can carry it. */
-  options?: { userApproval?: UserApproval },
+  options?: { userApproval?: UserApproval; now?: Date },
 ): { state: WorkflowState; duplicate: boolean; result: unknown } {
   const command = WorkflowCommandSchema.parse(raw);
   if (command.action === "open") {
@@ -1348,6 +1372,9 @@ export function applyWorkflowCommand(
     throw new WorkflowError("EXECUTION_REQUIRED", "select-work-item is resolved by the workflow store");
   }
   if (!state) throw new WorkflowError("WORKFLOW_MISSING", "open a workflow before applying commands");
+  if (PLANNING_ACTIONS.has(command.action)) {
+    return applyPlanningCommand(state, command as PlanningCommand, { now: options?.now });
+  }
   if (command.action === "link-work-item") {
     const same = (link: WorkItemLink) =>
       link.repository === command.target.repository &&
@@ -1507,6 +1534,16 @@ export function applyWorkflowCommand(
     if (state.stories.some((story) => story.id === command.id && story.status !== "superseded")) {
       throw new WorkflowError("DUPLICATE_STORY", `story ${command.id} already exists`);
     }
+    if (state.mode === "guided") {
+      // Detailed stories come after an agreed plan, one per planned line: no dozens of stories before the plan is checked.
+      const entry = state.storyPlan?.entries.find((item) => item.id === command.id);
+      if (acceptanceStatus(state, "story_plan") !== "accepted") {
+        throw new WorkflowError("STORY_PLAN_NOT_AGREED", "write and agree the story plan first (set-story-plan, then agree-story-plan); detailed stories follow the agreed plan");
+      }
+      if (!entry || entry.status === "excluded") {
+        throw new WorkflowError("STORY_NOT_IN_PLAN", `story ${command.id} is not a line of the agreed plan; add it to the plan first (update-story-plan)`);
+      }
+    }
     const story = UserStorySchema.parse({
       ...command,
       revision: 1,
@@ -1514,8 +1551,11 @@ export function applyWorkflowCommand(
       status: "proposed",
       stale: false,
     });
+    const planned = state.storyPlan
+      ? { ...state.storyPlan, entries: state.storyPlan.entries.map((entry) => (entry.id === story.id ? { ...entry, status: "detailed" as const } : entry)) }
+      : undefined;
     return {
-      state: { ...state, stories: [...state.stories, story] },
+      state: { ...state, stories: [...state.stories, story], ...(planned ? { storyPlan: planned } : {}) },
       duplicate: false,
       result: { storyId: story.id, confirmedBehavior: story.confirmedBehavior },
     };

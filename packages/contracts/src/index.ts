@@ -570,3 +570,33 @@ export type {
   UserApproval,
   UserApprovalChannel,
 } from "./user-approval.js";
+
+// Planning: stages, scope and review, prototype, story plan, story editing, repositories, impact, next step.
+export * from "./planning-schemas.js";
+export {
+  PlanningCommandSchemas,
+  PLANNING_ACTIONS,
+  analyzeStoryCoverage,
+  acceptanceStatus,
+  applyPlanningCommand,
+  currentFingerprint,
+  expectedCapabilities,
+  inferCapabilities,
+  inferPhase,
+  migrateWorkflowState,
+  nextStep,
+  phaseGates,
+  phaseIndex,
+  prototypeFingerprint,
+  requirementsFingerprint,
+  reviewProgress,
+  storiesFingerprint,
+  storyCapabilities,
+  storyPlanFingerprint,
+  storyReviewProgress,
+} from "./planning.js";
+export type { CoverageGap, CoverageReport, GateResult, NextStep, PlanningCommand, PlanningResult } from "./planning.js";
+export { RepositoryIdSchema } from "./ids.js";
+export { SUPPORTED_WORKFLOW_VERSIONS } from "./workflow.js";
+export { ReviewMarkSchema, StoryCapabilitySchema, STORY_CAPABILITIES } from "./story.js";
+export type { ReviewMark, StoryCapability } from "./story.js";

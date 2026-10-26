@@ -1,11 +1,9 @@
 import { z } from "zod";
 
-const RequirementIdSchema = z
-  .string()
-  .regex(/^(REQ-[A-Z][A-Z0-9]*-\d{3,}|[A-Z][A-Z0-9]*-(?:FR|NFR|BR)\d+)$/);
+import { RequirementIdSchema, StoryIdSchema, type StoryId } from "./ids.js";
 
-export const StoryIdSchema = z.string().regex(/^US-[A-Z][A-Z0-9]*-\d{3,}$/);
-export type StoryId = z.infer<typeof StoryIdSchema>;
+export { StoryIdSchema };
+export type { StoryId };
 
 export const STORY_NARRATIVE =
   /^As a [^,]+, I want [^,]+, so that .+/i;
@@ -25,6 +23,32 @@ export const StoryCriterionSchema = z.object({
   when: z.string().min(1),
   then: z.string().min(1),
 });
+
+/** What a user decided about one item (an acceptance criterion, a story item). Records who/where, never a security claim. */
+export const ReviewMarkSchema = z.object({
+  status: z.enum(["pending", "accepted", "rejected"]).default("pending"),
+  comment: z.string().optional(),
+  at: z.string().optional(),
+  via: z.enum(["html-review", "chat", "system"]).optional(),
+});
+export type ReviewMark = z.infer<typeof ReviewMarkSchema>;
+
+/** What a story lets the user do. Used to check that a feature is not only "create" stories. */
+export const STORY_CAPABILITIES = [
+  "view",
+  "search",
+  "filter",
+  "create",
+  "edit",
+  "delete",
+  "validation",
+  "error",
+  "permissions",
+  "states",
+  "other",
+] as const;
+export const StoryCapabilitySchema = z.enum(STORY_CAPABILITIES);
+export type StoryCapability = z.infer<typeof StoryCapabilitySchema>;
 
 export const UserStorySchema = z.object({
   id: StoryIdSchema,
@@ -46,9 +70,19 @@ export const UserStorySchema = z.object({
   unresolvedDecisionIds: z.array(z.string()).default([]),
   serviceIds: z.array(z.string()).default([]),
   revision: z.number().int().positive(),
-  status: z.enum(["proposed", "confirmed", "superseded"]),
+  status: z.enum(["proposed", "confirmed", "superseded", "excluded"]),
   confirmedBehavior: z.boolean(),
   stale: z.boolean().default(false),
+  /** Short title shown in the story plan and in reviews. */
+  title: z.string().optional(),
+  capabilities: z.array(StoryCapabilitySchema).default([]),
+  /** Prototype screens/elements this story covers. */
+  screenRefs: z.array(z.string()).default([]),
+  /** Registered repositories this story is implemented in. */
+  repositoryIds: z.array(z.string()).default([]),
+  excludedReason: z.string().optional(),
+  /** Review marks by item key: "ac:<id>", "step:<n>", "alt:<n>", "neg:<n>", "edge:<n>", "rule:<n>", "result:<n>". */
+  review: z.record(z.string(), ReviewMarkSchema).default({}),
 });
 export type UserStory = z.infer<typeof UserStorySchema>;
 
