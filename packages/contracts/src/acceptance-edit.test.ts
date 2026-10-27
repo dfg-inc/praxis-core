@@ -166,3 +166,29 @@ describe("the command catalog tells an agent which command changes one criterion
     expect(catalog.find((c) => c.action === "revise-requirement")!.use).toMatch(/revise-acceptance/);
   });
 });
+
+describe("blank text and unchanged scope", () => {
+  it("a blank statement is refused and trailing whitespace is not a change", () => {
+    const s = reviewed();
+    expect(() => run(s, { action: "revise-acceptance", edits: [{ id: AC6, statement: "   " }] })).toThrow();
+    const same = run(s, { action: "revise-acceptance", edits: [{ id: AC6, statement: `${ac(s, AC6).statement}\n` }] });
+    expect(same.duplicate).toBe(true);
+    expect(same.state).toBe(s);
+  });
+
+  it("set-requirement-scope to the scope it already has is a no-op", () => {
+    const s = reviewed();
+    const r = run(s, { action: "set-requirement-scope", requirementIds: ["REQ-ORD-002"], scope: "in" });
+    expect(r.duplicate).toBe(true);
+    expect(r.state).toBe(s);
+    const moved = run(s, { action: "set-requirement-scope", requirementIds: ["REQ-ORD-002"], scope: "deferred" });
+    expect(moved.duplicate).toBe(false);
+  });
+
+  it("an edit on a superseded requirement's criterion is refused", () => {
+    const s = reviewed();
+    const gone = { ...s, requirements: s.requirements.map((r) => (r.id === "REQ-ORD-002" ? { ...r, status: "superseded" as const } : r)) };
+    expect(() => run(gone, { action: "revise-acceptance", edits: [{ id: AC6, statement: "x" }] })).toThrow(/not an acceptance criterion/);
+  });
+});
+

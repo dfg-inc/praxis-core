@@ -372,11 +372,11 @@ const AcDecision = z.object({
   id: z.string().min(1),
   status: ReviewStatus.optional(),
   comment: z.string().optional(),
-  statement: z.string().min(1).optional(),
+  statement: z.string().trim().min(1).optional(),
 });
 const RequirementDecision = z.object({
   requirementId: RequirementIdSchema,
-  statement: z.string().min(1).optional(),
+  statement: z.string().trim().min(1).optional(),
   scope: ScopeSchema.optional(),
   scopeNote: z.string().optional(),
   comment: z.string().optional(),
@@ -445,7 +445,7 @@ const NewStoryFromOriginal = StoryPatch.extend({
 export const PlanningCommandSchemas = [
   z.object({ action: z.literal("review-requirements"), via: Via, decisions: z.array(RequirementDecision).min(1) }),
   /** Changes the text of single acceptance criteria by their stable id; nothing else is touched. */
-  z.object({ action: z.literal("revise-acceptance"), edits: z.array(z.object({ id: z.string().min(1), statement: z.string().min(1), expectedRevision: z.number().int().positive().optional() })).min(1) }),
+  z.object({ action: z.literal("revise-acceptance"), edits: z.array(z.object({ id: z.string().min(1), statement: z.string().trim().min(1), expectedRevision: z.number().int().positive().optional() })).min(1) }),
   z.object({ action: z.literal("accept-requirements"), via: Via, requirementIds: z.array(RequirementIdSchema).optional() }),
   z.object({ action: z.literal("set-requirement-scope"), requirementIds: z.array(RequirementIdSchema).min(1), scope: ScopeSchema, note: z.string().optional() }),
   z.object({ action: z.literal("set-prototype"), prototype: PrototypeInput, summary: z.string().optional() }),
@@ -1354,6 +1354,12 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
           command.requirementIds.includes(r.id) && r.status !== "superseded" ? { ...r, scope: command.scope, ...(command.note !== undefined ? { scopeNote: command.note } : {}), revision: r.scope === command.scope ? r.revision : r.revision + 1 } : r,
         ),
       };
+      const same = command.requirementIds.every((id) => {
+        const before = state.requirements.find((r) => r.id === id)!;
+        const after = next.requirements.find((r) => r.id === id)!;
+        return before.status === "superseded" || (before.scope === after.scope && before.scopeNote === after.scopeNote);
+      });
+      if (same) return { state, duplicate: true, result: { scope: command.scope, noChange: true, excludedStories: [], restoredStories: [], reviewProgress: reviewProgress(state) } };
       const cascade = cascadeScope(next, now);
       next = touch(cascade.state, now, `scope ${command.scope}: ${command.requirementIds.join(", ")}${command.note ? ` (${command.note})` : ""}`);
       return { state: next, duplicate: false, result: { scope: command.scope, excludedStories: cascade.excluded, restoredStories: cascade.restored, reviewProgress: reviewProgress(next) } };
