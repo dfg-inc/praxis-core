@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
+import { parseStrict } from "./command-strict.js";
+import { canonicalText } from "./human-acts.js";
 import { RequirementIdSchema, StoryIdSchema } from "./ids.js";
 import {
   contractsFingerprint,
@@ -8,7 +11,7 @@ import {
   storiesFingerprint,
   storyPlanFingerprint,
 } from "./planning.js";
-import { ScopeSchema } from "./planning-schemas.js";
+import { ScopeSchema, type StoryPlanEntry } from "./planning-schemas.js";
 import type { WorkflowState } from "./workflow.js";
 
 /**
@@ -33,6 +36,10 @@ const RequirementsPayload = z.object({
         scopeNote: z.string().max(2000).optional(),
         statement: z.string().min(1).max(4000).optional(),
         comment: z.string().max(4000).optional(),
+        /** What the page showed for the fields it sends back: a changed live value is a conflict, never an overwrite. */
+        fromScope: ScopeSchema.optional(),
+        fromScopeNote: z.string().max(2000).optional(),
+        fromComment: z.string().max(4000).optional(),
         criteria: z
           .array(z.object({ id: z.string().min(1), revision: z.number().int().positive(), from: Mark.optional(), fromComment: z.string().max(4000).optional(), status: Mark.optional(), comment: z.string().max(4000).optional(), statement: z.string().min(1).max(4000).optional() }))
           .default([]),
@@ -63,6 +70,8 @@ const PlanPayload = z.object({
         userGets: z.string().min(1).max(4000).optional(),
         exclude: z.string().min(1).max(2000).optional(),
         restore: z.boolean().optional(),
+        /** planEntryBase of the line as the page showed it (see there). */
+        base: z.string().max(100).optional(),
       }),
     )
     .default([]),
@@ -95,6 +104,8 @@ export const ReviewSubmissionSchema = z.object({
   workItemId: z.string().min(1),
   /** Fingerprint of the artifact when the page was rendered. */
   baseFingerprint: z.string().min(1),
+  /** reviewStamp of what the page showed. A save whose stamp is not the live one is from an out-of-date page. */
+  baseStamp: z.string().max(100).optional(),
   submittedAt: z.string().optional(),
   requirements: RequirementsPayload.optional(),
   prototype: PrototypePayload.optional(),
@@ -108,6 +119,26 @@ export const ReviewSubmissionSchema = z.object({
   waivers: z.array(z.object({ kind: z.string().min(1).max(100), requirementId: RequirementIdSchema.optional(), reason: z.string().min(3).max(1000) })).default([]),
 });
 export type ReviewSubmission = z.infer<typeof ReviewSubmissionSchema>;
+
+/**
+ * What a plan line looked like when the page showed it: every field the page can edit, with the status and the remark.
+ * The page sends it back as `base`; a different live value means the line changed after the page was opened.
+ */
+export function planEntryBase(entry: StoryPlanEntry): string {
+  const text = JSON.stringify([entry.title, entry.implementation, entry.userGets, entry.status, entry.excludedReason ?? "", entry.review.status, entry.review.comment ?? ""]);
+  return createHash("sha256").update(text).digest("hex").slice(0, 24);
+}
+
+/**
+ * Everything a review page shows and lets the user change: the artifacts with their marks and remarks. It changes whenever
+ * any of that changes, which the content fingerprints deliberately do not (a mark is not content). The page sends it back
+ * as `baseStamp`: equal means nothing the page showed has moved; different means every field the save changes must carry
+ * the value the page showed for it.
+ */
+export function reviewStamp(state: WorkflowState, view: ReviewView): string {
+  const slice = view === "requirements" ? state.requirements : view === "story-plan" ? state.storyPlan : view === "contracts" ? state.contracts : view === "prototype" ? state.prototype : state.stories;
+  return createHash("sha256").update(canonicalText({ view, mode: state.mode, slice })).digest("hex").slice(0, 24);
+}
 
 export function fingerprintFor(state: WorkflowState, view: ReviewView): string {
   switch (view) {
@@ -141,7 +172,7 @@ export type SubmissionPlan = {
  * one item does not discard the others, and each is subject to the reducer's own checks and gates.
  */
 export function submissionToCommands(state: WorkflowState, raw: unknown): SubmissionPlan {
-  const submission = ReviewSubmissionSchema.parse(raw);
+  const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
   const conflicts: ReviewConflict[] = [];
   const commands: Array<Record<string, unknown>> = [];
   const summary: string[] = [];
@@ -151,6 +182,13 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
     return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state.workItem.id}` }], stale: true, summary: [], details: [] };
   }
   const via = "html-review" as const;
+  /**
+   * What the page showed is no longer what is stored (or the file does not say what it showed). Everything it saves must then carry
+   * what the page showed for each field it changes, or it is refused: a missing base value never lets an old page through.
+   */
+  const outdated = submission.baseStamp === undefined || submission.baseStamp !== reviewStamp(state, submission.view);
+  const reload = "reload the page and decide again";
+  const unbased = (what: string) => `this page is out of date and does not say what it showed for ${what}: ${reload}`;
 
   if (submission.view === "requirements" && submission.requirements) {
     const decisions: Array<Record<string, unknown>> = [];
@@ -161,9 +199,24 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         continue;
       }
       const textChanged = item.statement !== undefined || item.criteria.some((c) => c.statement !== undefined) || item.addCriteria.length > 0 || item.removeCriteria.length > 0 || (item.scope !== undefined && item.scope !== current.scope);
-      const remarkChanged = item.comment !== undefined || (item.scopeNote !== undefined && item.scopeNote !== (current.scopeNote ?? ""));
-      if (current.revision !== item.revision && (textChanged || remarkChanged)) {
-        conflicts.push({ item: item.id, reason: `edited since the review (now revision ${current.revision}, the page showed ${item.revision}): re-open the review` });
+      const commentChanged = item.comment !== undefined && item.comment !== (current.comment ?? "");
+      const noteChanged = item.scopeNote !== undefined && item.scopeNote !== (current.scopeNote ?? "");
+      const scopeChanged = item.scope !== undefined && item.scope !== current.scope;
+      if (current.revision !== item.revision && (textChanged || commentChanged || noteChanged)) {
+        conflicts.push({ item: item.id, reason: `edited since you opened this page (now revision ${current.revision}, the page showed ${item.revision}): ${reload}` });
+        continue;
+      }
+      const staleField = (changed: boolean, sent: unknown, from: unknown, live: unknown, what: string) => {
+        if (!changed) return null;
+        if (from === undefined) return outdated ? unbased(`${item.id} ${what}`) : null;
+        return from !== live ? `${item.id}: the ${what} changed since you opened this page (now "${String(live ?? "").slice(0, 120)}"): ${reload}` : null;
+      };
+      const fieldConflict =
+        staleField(scopeChanged, item.scope, item.fromScope, current.scope, "scope") ??
+        staleField(noteChanged, item.scopeNote, item.fromScopeNote, current.scopeNote ?? "", "scope note") ??
+        staleField(commentChanged, item.comment, item.fromComment, current.comment ?? "", "remark");
+      if (fieldConflict) {
+        conflicts.push({ item: item.id, reason: fieldConflict });
         continue;
       }
       const acceptance: Array<Record<string, unknown>> = [];
@@ -177,12 +230,23 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
           conflicts.push({ item: criterion.id, reason: `criterion changed since you opened this page (now revision ${live.revision}, the page showed ${criterion.revision}): reload the page; your edit to it was not saved` });
           continue;
         }
-        if (criterion.fromComment !== undefined && criterion.comment !== undefined && (live.review.comment ?? "") !== criterion.fromComment) {
-          conflicts.push({ item: criterion.id, reason: `the remark changed since you opened this page (now "${(live.review.comment ?? "").slice(0, 120)}"): reload the page; your remark was not saved` });
+        const liveComment = live.review.comment ?? "";
+        const commentEdit = criterion.comment !== undefined && criterion.comment !== liveComment;
+        if (commentEdit && criterion.fromComment === undefined && outdated) {
+          conflicts.push({ item: criterion.id, reason: unbased(`the remark on ${criterion.id}`) });
+          continue;
+        }
+        if (criterion.fromComment !== undefined && criterion.comment !== undefined && liveComment !== criterion.fromComment) {
+          conflicts.push({ item: criterion.id, reason: `the remark changed since you opened this page (now "${liveComment.slice(0, 120)}"): ${reload}; your remark was not saved` });
+          continue;
+        }
+        const statusEdit = criterion.status !== undefined && criterion.status !== live.review.status;
+        if (statusEdit && criterion.from === undefined && outdated) {
+          conflicts.push({ item: criterion.id, reason: unbased(`the decision on ${criterion.id}`) });
           continue;
         }
         if (criterion.from !== undefined && criterion.status !== undefined && live.review.status !== criterion.from) {
-          conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} since you opened this page (the page showed ${criterion.from}): reload the page; your decision was not saved` });
+          conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} since you opened this page (the page showed ${criterion.from}): ${reload}; your decision was not saved` });
           continue;
         }
         const unchanged = (criterion.status === undefined || criterion.status === live.review.status) && (criterion.comment === undefined || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === undefined || criterion.statement === live.statement);
@@ -251,6 +315,15 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         conflicts.push({ item: entry.id, reason: "the plan line no longer exists" });
         continue;
       }
+      const edits = (entry.title !== undefined && entry.title !== current.title) || (entry.implementation !== undefined && entry.implementation !== current.implementation) || (entry.userGets !== undefined && entry.userGets !== current.userGets) || entry.exclude !== undefined || entry.restore === true || (entry.status !== undefined && entry.status !== current.review.status) || (entry.status !== undefined && entry.comment !== undefined && entry.comment !== (current.review.comment ?? ""));
+      if (edits && entry.base === undefined && outdated) {
+        conflicts.push({ item: entry.id, reason: unbased(`plan line ${entry.id}`) });
+        continue;
+      }
+      if (edits && entry.base !== undefined && entry.base !== planEntryBase(current)) {
+        conflicts.push({ item: entry.id, reason: `the plan line changed since you opened this page: ${reload}; your edit was not saved` });
+        continue;
+      }
       const patch: Record<string, unknown> = {};
       if (entry.title !== undefined && entry.title !== current.title) patch.title = entry.title;
       if (entry.implementation !== undefined && entry.implementation !== current.implementation) patch.implementation = entry.implementation;
@@ -316,19 +389,32 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the story changed since you opened this page (now revision ${liveStory.revision}, the page showed ${item.revision}): reload the page; your mark was not saved` });
         return false;
       }
-      if (item.fromComment !== undefined && item.comment !== undefined && (live?.review[item.key]?.comment ?? "") !== item.fromComment) {
-        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the remark changed since you opened this page: reload the page; your remark was not saved` });
+      const itemComment = live?.review[item.key]?.comment ?? "";
+      if (item.comment !== undefined && item.comment !== itemComment && item.fromComment === undefined && outdated) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: unbased(`the remark on ${item.storyId} ${item.key}`) });
+        return false;
+      }
+      if (item.fromComment !== undefined && item.comment !== undefined && itemComment !== item.fromComment) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the remark changed since you opened this page: ${reload}; your remark was not saved` });
+        return false;
+      }
+      if (item.status !== current && item.from === undefined && outdated) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: unbased(`the decision on ${item.storyId} ${item.key}`) });
         return false;
       }
       if (item.from !== undefined && current !== item.from) {
-        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `already marked ${current} by someone else since the review (the page showed ${item.from})` });
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `already marked ${current} since you opened this page (the page showed ${item.from}): ${reload}; your decision was not saved` });
         return false;
       }
       if (current === item.status && (item.comment === undefined || item.comment === (live?.review[item.key]?.comment ?? ""))) return false;
       details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment.slice(0, 400)}')` : ""}`);
       return true;
     });
-    const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).map((x) => ({ storyId: x.storyId, revision: x.revision }));
+    const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).filter((x) => {
+      if (!outdated) return true;
+      conflicts.push({ item: x.storyId, reason: `accept-all is not applied from an out-of-date page (marks may have changed since): ${reload}` });
+      return false;
+    }).map((x) => ({ storyId: x.storyId, revision: x.revision }));
     for (const a of acceptStories) details.push(`${a.storyId}: ACCEPT everything in the story (revision ${a.revision})`);
     if (items.length > 0 || acceptStories.length > 0) {
       commands.push({ action: "review-stories", via, items: items.map(({ from: _from, fromComment: _fromComment, ...rest }) => rest), acceptStories });
@@ -367,6 +453,10 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       const contract = state.contracts.find((c) => c.id === id);
       if (!contract) {
         conflicts.push({ item: id, reason: "the contract no longer exists" });
+        continue;
+      }
+      if (stale) {
+        conflicts.push({ item: id, reason: `the contracts changed since you opened this page: ${reload}, so you remove what is there now` });
         continue;
       }
       commands.push({ action: "remove-contract", via, id });

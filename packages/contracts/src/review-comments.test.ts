@@ -198,7 +198,7 @@ describe("stale saves of requirement-level remarks and whitespace in stored text
     };
     const plan = submissionToCommands(changed, submission);
     expect(plan.commands).toHaveLength(0);
-    expect(plan.conflicts[0].reason).toMatch(/edited since the review/);
+    expect(plan.conflicts[0].reason).toMatch(/edited since you opened this page/);
   });
 
   it("a stored criterion with trailing whitespace is not 'edited' by the same text, and the repeat needs no approval", () => {

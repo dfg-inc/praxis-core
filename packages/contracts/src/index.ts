@@ -612,6 +612,8 @@ export type { ReviewMark, StoryCapability } from "./story.js";
 
 // Standard HTML reviews and how their decisions come back.
 export * from "./review-submission.js";
+export { parseStrict, unknownParameters } from "./command-strict.js";
+export { canonicalText } from "./human-acts.js";
 export { renderReview, renderRequirementsReview, renderPrototypeReview, renderStoryPlanReview, renderStoriesReview } from "./review-html.js";
 export type { RenderReviewOptions } from "./review-html.js";
 

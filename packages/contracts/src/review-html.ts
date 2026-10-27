@@ -1,4 +1,4 @@
-import { fingerprintFor, type ReviewView } from "./review-submission.js";
+import { fingerprintFor, planEntryBase, reviewStamp, type ReviewView } from "./review-submission.js";
 import { reviewProgress, storyReviewProgress, analyzeStoryCoverage, acceptanceStatus } from "./planning.js";
 import type { WorkflowState } from "./workflow.js";
 
@@ -80,15 +80,15 @@ function val(el){return el?el.value.trim():''}
 function num(el){return parseInt(el.getAttribute('data-rev'),10)}
 function markOf(root,name){var c=$('input[name="'+name+'"]:checked',root);return c?c.value:null}
 function collect(){
-  var s={contract:'praxis.review.submission',version:1,reviewId:D.reviewId,view:D.view,workItemId:D.workItemId,baseFingerprint:D.baseFingerprint,submittedAt:new Date().toISOString()};
+  var s={contract:'praxis.review.submission',version:1,reviewId:D.reviewId,view:D.view,workItemId:D.workItemId,baseFingerprint:D.baseFingerprint,baseStamp:D.baseStamp,submittedAt:new Date().toISOString()};
   if(D.view==='requirements'){
     var reqs=[];
     $$('[data-req]').forEach(function(card){
       var id=card.getAttribute('data-req');var item={id:id,revision:num(card),criteria:[],addCriteria:[],removeCriteria:[]};var touched=false;
       var st=$('[data-f=statement]',card);if(st&&val(st)!==(st.getAttribute('data-initial')||'').trim()){item.statement=val(st);touched=true}
-      var sc=$('[data-f=scope]',card);if(sc&&sc.value!==(sc.getAttribute('data-initial')||'').trim()){item.scope=sc.value;touched=true}
-      var sn=$('[data-f=scopeNote]',card);if(sn&&val(sn)!==(sn.getAttribute('data-initial')||'').trim()){item.scopeNote=val(sn);touched=true}
-      var rc=$('[data-f=comment]',card);if(rc&&val(rc)!==''){item.comment=val(rc);touched=true}
+      var sc=$('[data-f=scope]',card);if(sc&&sc.value!==(sc.getAttribute('data-initial')||'').trim()){item.scope=sc.value;item.fromScope=(sc.getAttribute('data-initial')||'').trim();touched=true}
+      var sn=$('[data-f=scopeNote]',card);if(sn&&val(sn)!==(sn.getAttribute('data-initial')||'').trim()){item.scopeNote=val(sn);item.fromScopeNote=(sn.getAttribute('data-initial')||'').trim();touched=true}
+      var rc=$('[data-f=comment]',card);if(rc&&val(rc)!==(rc.getAttribute('data-initial')||'').trim()){item.comment=val(rc);item.fromComment=(rc.getAttribute('data-initial')||'').trim();touched=true}
       $$('[data-ac]',card).forEach(function(row){
         var aid=row.getAttribute('data-ac');
         if($('[data-f=remove]',row)&&$('[data-f=remove]',row).checked){item.removeCriteria.push(aid);touched=true;return}
@@ -111,7 +111,7 @@ function collect(){
   if(D.view==='story-plan'){
     var es=[];
     $$('[data-entry]').forEach(function(card){
-      var id=card.getAttribute('data-entry');var e={id:id};var ch=false;
+      var id=card.getAttribute('data-entry');var e={id:id,base:card.getAttribute('data-base')};var ch=false;
       var m=markOf(card,'m-'+id);if(m&&m!==card.getAttribute('data-initial-status')){e.status=m;ch=true}
       var cm=$('[data-f=comment]',card);if(cm&&val(cm)){e.comment=val(cm);ch=true}
       ['title','implementation','userGets'].forEach(function(f){var t=$('[data-f='+f+']',card);if(t&&val(t)!==(t.getAttribute('data-initial')||'').trim()){e[f]=val(t);ch=true}});
@@ -243,6 +243,7 @@ function shell(state: WorkflowState, view: ReviewView, title: string, body: stri
     view,
     workItemId: state.workItem.id,
     baseFingerprint: fingerprintFor(state, view),
+    baseStamp: reviewStamp(state, view),
     saveUrl: options.saveUrl,
     token: options.token,
     ...data,
@@ -302,7 +303,7 @@ export function renderRequirementsReview(state: WorkflowState, options: RenderRe
 <h3>Acceptance criteria <button type="button" data-accept-card>Accept all in this requirement</button></h3>
 ${criteria || `<p class="muted">No acceptance criteria yet.</p>`}
 <label class="meta">Add criteria (one per line)<textarea data-f="add-ac"></textarea></label>
-<label class="meta">Comment on the requirement<input type="text" data-f="comment"></label>
+<label class="meta">Comment on the requirement<input type="text" data-f="comment" data-initial="${esc(req.comment ?? "")}" value="${esc(req.comment ?? "")}"></label>
 </section>`;
     })
     .join("");
@@ -376,7 +377,7 @@ export function renderStoryPlanReview(state: WorkflowState, options: RenderRevie
   const cards = plan.entries
     .map((e) => {
       const out = e.status === "excluded";
-      return `<section class="card${out ? " out" : ""}" data-entry="${esc(e.id)}" data-initial-status="${esc(e.review.status)}">
+      return `<section class="card${out ? " out" : ""}" data-entry="${esc(e.id)}" data-initial-status="${esc(e.review.status)}" data-base="${planEntryBase(e)}">
 <div class="row"><h2 class="grow">${esc(e.id)} ${pill(e.status, out ? "warn" : e.status === "detailed" ? "ok" : "")}</h2>${marks(`m-${e.id}`, e.review.status)}</div>
 <label class="meta">Title<input type="text" data-f="title" data-initial="${esc(e.title)}" value="${esc(e.title)}"></label>
 <label class="meta">What is implemented<textarea data-f="implementation" data-initial="${esc(e.implementation)}">${esc(e.implementation)}</textarea></label>
