@@ -151,15 +151,22 @@ export function reviewStamp(state: WorkflowState, view: ReviewView): string {
  * with their revisions and scope, the artifacts' revisions, the stories, the contracts and the waivers on record.
  */
 export function workStateStamp(state: WorkflowState): string {
+  // everything a decision about the whole item can depend on, marks and remarks included
   const slice = {
     mode: state.mode,
     phase: state.phase,
-    requirements: state.requirements.map((r) => [r.id, r.revision, r.scope, r.status]),
-    prototype: state.prototype ? [state.prototype.revision, state.prototype.status] : null,
-    plan: state.storyPlan ? [state.storyPlan.revision, state.storyPlan.status] : null,
-    stories: state.stories.map((x) => [x.id, x.revision, x.status]),
-    contracts: state.contracts.map((c) => [c.id, c.status]),
-    waivers: state.waivers.map((w) => [w.kind, w.requirementId ?? null, w.reason]),
+    phaseAcceptance: state.phaseAcceptance,
+    requirements: state.requirements,
+    prototype: state.prototype ?? null,
+    plan: state.storyPlan ?? null,
+    stories: state.stories,
+    contracts: state.contracts,
+    waivers: state.waivers,
+    services: state.services.map((x) => [x.id, x.status, x.repositoryId ?? null]),
+    repositories: state.repositories.map((x) => [x.id, x.status]),
+    decisions: state.decisions.map((x) => [x.id, x.revision, x.confirmed]),
+    verdicts: state.verdicts.map((x) => [x.id, x.verdict, x.stale]),
+    implementation: state.implementationUnits.map((x) => [x.id, x.stale]),
   };
   return createHash("sha256").update(canonicalText(slice)).digest("hex").slice(0, 24);
 }
@@ -199,6 +206,8 @@ export type SubmissionPlan = {
   summary: string[];
   /** One line per decision, as the user would read it: what an approval dialog shows. */
   details: string[];
+  /** A command in the plan changes, stales, excludes or restores a story: the details say how, and a handed-over file then needs the person's approval. */
+  affectsStories: boolean;
 };
 
 /**
@@ -213,9 +222,12 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
   const details: string[] = [];
   const stale = submission.baseFingerprint !== fingerprintFor(state, submission.view);
   if (submission.workItemId !== state.workItem.id) {
-    return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state.workItem.id}` }], stale: true, summary: [], details: [] };
+    return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state.workItem.id}` }], stale: true, summary: [], details: [], affectsStories: false };
   }
   const via = "html-review" as const;
+  /** True when a command in the plan changes, stales, excludes or restores a story (shown in the details, and gates a handed-over file). */
+  let affectsStories = false;
+  const editedPlan = new Map<string, Record<string, unknown>>();
   /**
    * What the page showed is no longer what is stored (or the file does not say what it showed). Everything it saves must then carry
    * what the page showed for each field it changes, or it is refused: a missing base value never lets an old page through.
@@ -285,15 +297,22 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         }
         const unchanged = (criterion.status === undefined || criterion.status === live.review.status) && (criterion.comment === undefined || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === undefined || criterion.statement === live.statement);
         if (unchanged) continue;
-        details.push(`${criterion.id} '${live.statement.slice(0, 400)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== undefined ? `edit to '${criterion.statement.slice(0, 400)}'` : "", criterion.comment !== undefined && criterion.comment !== (live.review.comment ?? "") ? (criterion.comment ? `comment '${criterion.comment.slice(0, 400)}'` : "clear the comment") + (live.review.comment ? ` (now '${live.review.comment.slice(0, 200)}')` : "") : ""].filter(Boolean).join(", ")}`);
+        details.push(`${criterion.id} '${live.statement}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== undefined ? `edit to '${criterion.statement}'` : "", criterion.comment !== undefined && criterion.comment !== (live.review.comment ?? "") ? (criterion.comment ? `comment '${criterion.comment}'` : "clear the comment") + (live.review.comment ? ` (now '${live.review.comment}')` : "") : ""].filter(Boolean).join(", ")}`);
         acceptance.push({ id: criterion.id, ...(criterion.status ? { status: criterion.status } : {}), ...(criterion.comment !== undefined ? { comment: criterion.comment } : {}), ...(criterion.statement !== undefined ? { statement: criterion.statement } : {}) });
       }
-      if (item.statement !== undefined) details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 400)}'`);
-      if (item.comment) details.push(`${item.id}: comment '${item.comment.slice(0, 400)}'`);
-      if (item.scopeNote !== undefined && item.scopeNote !== (current.scopeNote ?? "")) details.push(`${item.id}: scope note '${item.scopeNote.slice(0, 400)}'`);
+      if (item.statement !== undefined) details.push(`${item.id}: edit statement '${current.statement}' -> '${item.statement}'`);
+      if (item.comment) details.push(`${item.id}: comment '${item.comment}'`);
+      if (item.scopeNote !== undefined && item.scopeNote !== (current.scopeNote ?? "")) details.push(`${item.id}: scope note '${item.scopeNote}'`);
       if (item.scope !== undefined && item.scope !== current.scope) details.push(`${item.id}: scope ${current.scope} -> ${item.scope}`);
-      for (const a of item.addCriteria) details.push(`${item.id}: add criterion '${a.statement.slice(0, 400)}'`);
+      for (const a of item.addCriteria) details.push(`${item.id}: add criterion '${a.statement}'`);
       for (const r of item.removeCriteria) details.push(`${item.id}: remove criterion ${r}`);
+      const reworded = item.statement !== undefined && item.statement !== current.statement || item.criteria.some((c) => c.statement !== undefined && c.statement !== current.acceptanceCriteria.find((x) => x.id === c.id)?.statement) || item.addCriteria.length > 0 || item.removeCriteria.length > 0 || scopeChanged;
+      const resting = state.stories.filter((x) => x.status !== "superseded" && x.requirementIds.includes(item.id));
+      if (reworded && resting.length > 0) {
+        details.push(`${item.id}: this change affects stories ${resting.map((x) => x.id).join(", ")}: they are marked stale and their confirmation is withdrawn${scopeChanged ? `; moving the requirement to scope '${item.scope}' also excludes or restores them and their plan lines` : ""}`);
+        affectsStories = true;
+      }
+      if (item.comment === "" && current.comment) details.push(`${item.id}: CLEAR the comment ('${current.comment}')`);
       if (acceptance.length === 0 && item.statement === undefined && item.scope === undefined && item.scopeNote === undefined && item.comment === undefined && item.addCriteria.length === 0 && item.removeCriteria.length === 0) continue;
       decisions.push({
         requirementId: item.id,
@@ -327,7 +346,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       if (p.feedback.length > 0 || p.resolve.length > 0) {
         commands.push({ action: "prototype-feedback", via, items: p.feedback, resolve: p.resolve });
         summary.push(`${p.feedback.length} comment(s)`);
-        for (const f of p.feedback) details.push(`prototype comment on ${f.target}: '${f.comment.slice(0, 400)}'`);
+        for (const f of p.feedback) details.push(`prototype comment on ${f.target}: '${f.comment}'`);
         for (const r of p.resolve) details.push(`prototype feedback ${r} resolved`);
       }
       if (p.accept) {
@@ -367,8 +386,16 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       if (entry.restore) operations.push({ op: "restore", id: entry.id });
       if (entry.exclude !== undefined) details.push(`${entry.id}: exclude (${entry.exclude})`);
       if (entry.restore) details.push(`${entry.id}: restore`);
-      if (Object.keys(patch).length > 0) details.push(`${entry.id}: edit ${Object.keys(patch).join(", ")}`);
-      if (entry.status !== undefined) details.push(`${entry.id} '${current.title}': ${entry.status.toUpperCase()}`);
+      for (const [field, value] of Object.entries(patch)) details.push(`${entry.id}: EDIT ${field}: '${String((current as Record<string, unknown>)[field] ?? "")}' -> '${String(value)}'`);
+      if (entry.status !== undefined) details.push(`${entry.id} '${String(patch.title ?? current.title)}': ${entry.status.toUpperCase()}${entry.comment ? ` ('${entry.comment}')` : ""}`);
+      if (entry.exclude !== undefined || entry.restore) {
+        const storyOf = state.stories.find((x) => x.id === entry.id && x.status !== "superseded");
+        if (storyOf) {
+          details.push(`${entry.id}: the story ${entry.id} (revision ${storyOf.revision}) is ${entry.exclude !== undefined ? "excluded" : "restored"} together with its plan line`);
+          affectsStories = true;
+        }
+      }
+      if (Object.keys(patch).length > 0) editedPlan.set(entry.id, patch);
       if (entry.status !== undefined) operations.push({ op: "review", id: entry.id, status: entry.status, ...(entry.comment !== undefined ? { comment: entry.comment } : {}) });
     }
     if (operations.length > 0) {
@@ -380,7 +407,11 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       else {
         commands.push({ action: "agree-story-plan", via });
         summary.push("plan agreed");
-        details.push(`AGREE the story plan (${state.storyPlan?.entries.length ?? 0} lines, revision ${state.storyPlan?.revision})`);
+        details.push(`AGREE the story plan as it will be after the edits above (${state.storyPlan?.entries.length ?? 0} lines):`);
+        for (const e of state.storyPlan?.entries ?? []) {
+          const edit = (editedPlan.get(e.id) ?? {}) as Record<string, string>;
+          details.push(`  ${e.id} '${edit.title ?? e.title}' - implements: ${edit.implementation ?? e.implementation} - the user gets: ${edit.userGets ?? e.userGets}${e.status === "excluded" ? " (excluded)" : ""}`);
+        }
       }
     }
   }
@@ -400,13 +431,13 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       if (story.narrative !== undefined || story.objective !== undefined) {
         commands.push({ action: "update-story", id: story.storyId, patch: { ...(story.narrative !== undefined ? { narrative: story.narrative } : {}), ...(story.objective !== undefined ? { objective: story.objective } : {}) }, reason: "edited in the review" });
         summary.push(`${story.storyId} edited`);
-        details.push(`${story.storyId} (revision ${current.revision}): EDIT${story.narrative !== undefined ? ` narrative '${current.narrative.slice(0, 120)}' -> '${story.narrative.slice(0, 400)}'` : ""}${story.objective !== undefined ? ` objective '${current.objective.slice(0, 120)}' -> '${story.objective.slice(0, 400)}'` : ""}; marks on this story start over and its confirmation is withdrawn`);
+        details.push(`${story.storyId} (revision ${current.revision}): EDIT${story.narrative !== undefined ? ` narrative '${current.narrative}' -> '${story.narrative}'` : ""}${story.objective !== undefined ? ` objective '${current.objective}' -> '${story.objective}'` : ""}; marks on this story start over and its confirmation is withdrawn`);
         continue; // the revision moved: marks for this story would be stale, the user reviews it again
       }
       if (story.exclude !== undefined) {
         commands.push({ action: "exclude-story", id: story.storyId, reason: story.exclude });
         summary.push(`${story.storyId} excluded`);
-        details.push(`${story.storyId}: EXCLUDE from scope (${story.exclude.slice(0, 400)})`);
+        details.push(`${story.storyId}: EXCLUDE from scope (${story.exclude})`);
         continue;
       }
       if (story.restore) {
@@ -444,7 +475,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         return false;
       }
       if (current === item.status && (item.comment === undefined || item.comment === (live?.review[item.key]?.comment ?? ""))) return false;
-      details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment.slice(0, 400)}')` : ""}`);
+      details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment}')` : ""}`);
       return true;
     });
     const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).filter((x) => {
@@ -482,7 +513,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       const { status: _s, agreement: _a, ...content } = contract;
       commands.push({ action: "set-contract", via, contract: { ...content, status: "agreed" } });
       summary.push(`contract ${id} agreed`);
-      details.push(`AGREE contract ${id} '${contract.name}': provider ${contract.providerServiceId}, consumers ${contract.consumerServiceIds.join(", ") || "none"}${contract.schemaRef ? `, schema ${contract.schemaRef}` : ""}${contract.description ? `, description '${contract.description.slice(0, 400)}'` : ""}${contract.requirementIds.length ? `, requirements ${contract.requirementIds.join(" ")}` : ""}${contract.storyIds.length ? `, stories ${contract.storyIds.join(" ")}` : ""}`);
+      details.push(`AGREE contract ${id} '${contract.name}': provider ${contract.providerServiceId}, consumers ${contract.consumerServiceIds.join(", ") || "none"}${contract.schemaRef ? `, schema ${contract.schemaRef}` : ""}${contract.description ? `, description '${contract.description}'` : ""}${contract.requirementIds.length ? `, requirements ${contract.requirementIds.join(" ")}` : ""}${contract.storyIds.length ? `, stories ${contract.storyIds.join(" ")}` : ""}`);
     }
   }
   if (submission.view === "contracts" && submission.contracts) {
@@ -524,9 +555,9 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
     }
     commands.push({ action: "waive-coverage", kind: w.kind, ...(w.requirementId ? { requirementId: w.requirementId } : {}), reason: w.reason });
     summary.push(`waive ${w.kind}`);
-    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason.slice(0, 400)}'`);
+    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason}'`);
   }
-  return { commands, conflicts, stale, summary, details };
+  return { commands, conflicts, stale, summary, details, affectsStories };
 }
 
 export { currentFingerprint };

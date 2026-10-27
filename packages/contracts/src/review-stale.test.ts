@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
-import { applyWorkflowCommand, needsApprovalWhenHandedOver, renderReview, reviewStamp, submissionToCommands, workStateStamp, type ReviewView, type WorkflowState } from "./index.js";
+import { applyWorkflowCommand, fingerprintFor, needsApprovalWhenHandedOver, planEntryBase, renderReview, reviewStamp, submissionToCommands, workStateStamp, type ReviewView, type WorkflowState } from "./index.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
 const LATER = new Date("2026-10-26T11:00:00.000Z");
@@ -271,5 +271,48 @@ describe("what a handed-over file changes is what the dialog shows", () => {
       expect(needsApprovalWhenHandedOver({ action, mode: "guided", decisions: [] })).toBe(true);
     }
     expect(needsApprovalWhenHandedOver({ action: "prototype-feedback" })).toBe(false);
+  });
+});
+
+describe("the dialog shows what will be applied: full text, the plan as agreed, the cascade", () => {
+  const planFile = (state: WorkflowState, entries: Array<Record<string, unknown>>, agree = false) => ({ contract: "praxis.review.submission", version: 1, reviewId: "r", view: "story-plan", workItemId: state.workItem.id, baseFingerprint: fingerprintFor(state, "story-plan"), baseStamp: reviewStamp(state, "story-plan"), plan: { entries, agree } });
+
+  it("a plan edit shows the old and the new text, and the agreement lists the plan as it will be after the edit", () => {
+    const s = planned();
+    const entry = s.storyPlan!.entries[0];
+    const result = plan(s, planFile(s, [{ id: entry.id, base: planEntryBase(entry), implementation: "EVIL: delete all orders endpoint" }], true));
+    const text = result.details.join("\n");
+    expect(text).toContain("EDIT implementation: 'List page' -> 'EVIL: delete all orders endpoint'");
+    expect(text).toMatch(/AGREE the story plan as it will be after the edits above/);
+    expect(text).toContain("implements: EVIL: delete all orders endpoint");
+  });
+
+  it("long text is shown in full, never cut", () => {
+    const s = withStories();
+    const long = `As a manager, I want ${"x".repeat(900)} HOSTILE-TAIL, so that I work.`;
+    const result = plan(s, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "stories", workItemId: s.workItem.id, baseFingerprint: "x", baseStamp: reviewStamp(s, "stories"), stories: { items: [], stories: [{ storyId: "US-ORD-001", revision: 1, narrative: long }], accept: false } });
+    expect(result.details.join("\n")).toContain("HOSTILE-TAIL");
+  });
+
+  it("a requirement change that reaches stories says so and is marked as affecting them (so a handed-over file needs the dialog)", () => {
+    const s = withStories();
+    const rev = s.requirements.find((r) => r.id === "REQ-ORD-001")!.revision;
+    const file = { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: s.workItem.id, baseFingerprint: "x", baseStamp: reviewStamp(s, "requirements"), requirements: { requirements: [{ id: "REQ-ORD-001", revision: rev, scope: "excluded", fromScope: "in", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } };
+    const result = plan(s, file);
+    expect(result.affectsStories).toBe(true);
+    expect(result.details.join("\n")).toMatch(/affects stories US-ORD-001.*confirmation is withdrawn.*excludes or restores/);
+    // an edit that touches no story does not
+    const none = plan(s, { ...file, requirements: { requirements: [{ id: "REQ-ORD-002", revision: s.requirements.find((r) => r.id === "REQ-ORD-002")!.revision, comment: "note", fromComment: "", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } });
+    expect(none.affectsStories).toBe(false);
+  });
+
+  it("the work-item stamp moves with marks, remarks and acceptances, so an old baseState cannot carry a waiver", () => {
+    const s = base();
+    const stamp = workStateStamp(s);
+    const marked = ok(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "rejected", comment: "no" }] }] }, LATER);
+    expect(workStateStamp(marked)).not.toBe(stamp);
+    const stale = plan(marked, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: s.workItem.id, baseFingerprint: "x", baseStamp: reviewStamp(marked, "requirements"), baseState: stamp, waivers: [{ kind: "prototype", reason: "pure refactor, nothing to show" }] });
+    expect(stale.commands).toHaveLength(0);
+    expect(reasons(stale)).toMatch(/work item changed since/);
   });
 });

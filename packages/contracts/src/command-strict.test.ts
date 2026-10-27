@@ -72,23 +72,43 @@ describe("real commands: a stray key deep inside is refused, nothing is silently
 
 describe("audit: no agent-facing command schema has an ambiguous object union", () => {
   // The strict walk judges a plain union by the option that leaves the fewest unknown keys, while zod parses with the first
-  // option that matches. They differ only for a union of overlapping object options. None exists in a command; this keeps it so.
-  it("every non-discriminated union reachable from WorkflowCommandSchema has at most one object option", async () => {
+  // option that matches. They differ only for a union of overlapping object-like options. None exists in a command; this keeps it so.
+  const strip = (schema: z.ZodTypeAny): z.ZodTypeAny => {
+    let current = schema;
+    for (let i = 0; i < 16; i += 1) {
+      if (current instanceof z.ZodOptional || current instanceof z.ZodNullable) current = current.unwrap();
+      else if (current instanceof z.ZodDefault) current = current.removeDefault();
+      else if (current instanceof z.ZodEffects) current = current.innerType();
+      else if (current instanceof z.ZodBranded) current = current.unwrap();
+      else if (current instanceof z.ZodReadonly || current instanceof z.ZodCatch) current = current._def.innerType;
+      else if (current instanceof z.ZodPipeline) current = current._def.in;
+      else if (current instanceof z.ZodLazy) current = current.schema;
+      else break;
+    }
+    return current;
+  };
+  const objectLike = (schema: z.ZodTypeAny): boolean => {
+    const node = strip(schema);
+    return node instanceof z.ZodObject || node instanceof z.ZodRecord || node instanceof z.ZodIntersection || node instanceof z.ZodTuple || node instanceof z.ZodArray;
+  };
+
+  it("every non-discriminated union reachable from WorkflowCommandSchema has at most one object-like option; z.unknown / z.any fields are listed", async () => {
     const { WorkflowCommandSchema } = await import("./index.js");
     const seen = new Set<unknown>();
     const offenders: string[] = [];
+    const open: string[] = [];
     const visit = (schema: z.ZodTypeAny, path: string): void => {
       if (!schema || seen.has(schema)) return;
       seen.add(schema);
-      const def = (schema as { _def: Record<string, unknown> })._def;
-      if (schema instanceof z.ZodUnion) {
-        const objects = (schema.options as z.ZodTypeAny[]).filter((o) => o instanceof z.ZodObject);
-        if (objects.length > 1) offenders.push(path);
-      }
-      for (const value of Object.values(def)) {
+      const node = strip(schema);
+      if (node !== schema) visit(node, path);
+      if (node instanceof z.ZodUnion && (node.options as z.ZodTypeAny[]).filter(objectLike).length > 1) offenders.push(path);
+      if (node instanceof z.ZodUnknown || node instanceof z.ZodAny) open.push(path);
+      const def = (node as { _def: Record<string, unknown> })._def;
+      for (const [key, value] of Object.entries(def)) {
         const list = Array.isArray(value) ? value : [value];
         list.forEach((item, i) => {
-          if (item instanceof z.ZodType) visit(item, `${path}/${String(i)}`);
+          if (item instanceof z.ZodType) visit(item, `${path}/${key}${list.length > 1 ? i : ""}`);
           else if (typeof item === "function") {
             try {
               const out = (item as () => unknown)();
@@ -103,5 +123,19 @@ describe("audit: no agent-facing command schema has an ambiguous object union", 
     visit(WorkflowCommandSchema, "command");
     expect(offenders).toEqual([]);
     expect(seen.size).toBeGreaterThan(100); // the walk really went through the schema
+    // free-form fields accept any keys by design; a new one must be reviewed on purpose
+    // today: the example request and response bodies of a prototype API endpoint (free-form JSON on purpose)
+    expect(open.every((path) => /prototype\.endpoints\/type\.(request|responses\/type\.example)$/.test(path))).toBe(true);
+  });
+
+  it("the audit itself catches an ambiguous union, a lazy one and a wrapped one", () => {
+    const A = z.object({ id: z.string() });
+    const B = z.object({ id: z.string(), extra: z.string() });
+    const ambiguous = z.object({ v: z.union([A, B.optional().unwrap()]) });
+    expect((ambiguous.shape.v as z.ZodUnion<[typeof A, typeof B]>).options.filter(objectLike)).toHaveLength(2);
+    const wrapped = z.union([A.default({ id: "x" }), B.transform((v) => v)]);
+    expect(wrapped.options.filter(objectLike)).toHaveLength(2);
+    const lazy = z.union([z.lazy(() => A), z.lazy(() => B)]);
+    expect(lazy.options.filter(objectLike)).toHaveLength(2);
   });
 });
