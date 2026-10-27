@@ -284,11 +284,25 @@ describe("HTML story plan and stories review", () => {
     expect(rows.length).toBe(1 + 2 + 1);
     p.doc.querySelector<HTMLInputElement>('[data-key="step:0"] input[value=accepted]')!.click();
     p.doc.querySelector<HTMLInputElement>('[data-key="ac:US-ORD-001-AC-01"] input[value=rejected]')!.click();
+    (p.doc.querySelector('[data-key="ac:US-ORD-001-AC-01"] [data-f=comment]') as HTMLInputElement).value = "what does a viewer see?";
     const { next, plan } = applyPlan(s, p.decisions());
     expect(plan.conflicts).toEqual([]);
+    expect(next.stories[0].review["ac:US-ORD-001-AC-01"].comment).toBe("what does a viewer see?");
     expect(next.stories[0].review["step:0"].status).toBe("accepted");
     expect(next.stories[0].review["ac:US-ORD-001-AC-01"].status).toBe("rejected");
     expect(storyReviewProgress(next)).toMatchObject({ accepted: 1, rejected: 1, pending: 2 });
+  });
+
+  it("a story remark written in another tab after this page was opened is not overwritten", () => {
+    const s = withStories();
+    const p = page(s, "stories");
+    p.doc.querySelector<HTMLInputElement>('[data-key="step:0"] input[value=accepted]')!.click();
+    (p.doc.querySelector('[data-key="step:0"] [data-f=comment]') as HTMLInputElement).value = "tab B";
+    const submission = p.decisions();
+    const other = applyWorkflowCommand(s, { action: "review-stories", via: "html-review", items: [{ storyId: "US-ORD-001", revision: 1, key: "step:0", status: "accepted", comment: "tab A" }], acceptStories: [] }, { now: NOW, channel: { via: "html-review" } }).state;
+    const plan = submissionToCommands(other, submission);
+    expect(plan.commands).toHaveLength(0);
+    expect(plan.conflicts[0].reason).toMatch(/remark changed since you opened this page.*reload/i);
   });
 
   it("accepting a whole story marks all its items", () => {
