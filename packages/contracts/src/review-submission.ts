@@ -34,7 +34,7 @@ const RequirementsPayload = z.object({
         statement: z.string().min(1).max(4000).optional(),
         comment: z.string().max(4000).optional(),
         criteria: z
-          .array(z.object({ id: z.string().min(1), revision: z.number().int().positive(), from: Mark.optional(), status: Mark.optional(), comment: z.string().max(4000).optional(), statement: z.string().min(1).max(4000).optional() }))
+          .array(z.object({ id: z.string().min(1), revision: z.number().int().positive(), from: Mark.optional(), fromComment: z.string().max(4000).optional(), status: Mark.optional(), comment: z.string().max(4000).optional(), statement: z.string().min(1).max(4000).optional() }))
           .default([]),
         addCriteria: z.array(z.object({ statement: z.string().min(1).max(4000) })).default([]),
         removeCriteria: z.array(z.string()).default([]),
@@ -172,12 +172,16 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
           conflicts.push({ item: criterion.id, reason: "the criterion no longer exists" });
           continue;
         }
-        if (live.revision !== criterion.revision && criterion.statement === undefined) {
-          conflicts.push({ item: criterion.id, reason: `criterion changed since the review (now revision ${live.revision})` });
+        if (live.revision !== criterion.revision) {
+          conflicts.push({ item: criterion.id, reason: `criterion changed since you opened this page (now revision ${live.revision}, the page showed ${criterion.revision}): reload the page; your edit to it was not saved` });
+          continue;
+        }
+        if (criterion.fromComment !== undefined && criterion.comment !== undefined && (live.review.comment ?? "") !== criterion.fromComment) {
+          conflicts.push({ item: criterion.id, reason: `the remark changed since you opened this page (now "${(live.review.comment ?? "").slice(0, 120)}"): reload the page; your remark was not saved` });
           continue;
         }
         if (criterion.from !== undefined && criterion.status !== undefined && live.review.status !== criterion.from) {
-          conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} by someone else since the review (the page showed ${criterion.from})` });
+          conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} since you opened this page (the page showed ${criterion.from}): reload the page; your decision was not saved` });
           continue;
         }
         const unchanged = (criterion.status === undefined || criterion.status === live.review.status) && (criterion.comment === undefined || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === undefined || criterion.statement === live.statement);

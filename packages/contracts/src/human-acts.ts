@@ -8,12 +8,13 @@ import type { ApprovalRequest } from "./user-approval.js";
  * approval (see user-approval.ts) that names the act, the thing acted on and its exact content, and each is its own
  * kind of decision, so approving one never authorizes another.
  */
-export type HumanAct = "confirm-story" | "confirm-decision" | "approve-service";
+export type HumanAct = "confirm-story" | "confirm-decision" | "approve-service" | "revise-acceptance";
 
 export const HUMAN_ACT_KIND = {
   "confirm-story": "story_behavior",
   "confirm-decision": "architecture_decision",
   "approve-service": "quality_verdict",
+  "revise-acceptance": "requirement_acceptance",
 } as const satisfies Record<HumanAct, DecisionKind>;
 
 export function canonicalText(value: unknown): string {

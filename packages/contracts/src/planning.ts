@@ -510,7 +510,7 @@ function keepArtifact(state: WorkflowState, kind: "requirement" | "prototype" | 
   return { ...state, artifactHistory: kept2 };
 }
 
-function applyRequirementDecisions(state: WorkflowState, command: Extract<PlanningCommand, { action: "review-requirements" }>, now: Now): PlanningResult {
+function applyRequirementDecisions(state: WorkflowState, command: Extract<PlanningCommand, { action: "review-requirements" }>, now: Now, approvedRewording = false): PlanningResult {
   let next = state;
   const changed: string[] = [];
   const summary: string[] = [];
@@ -545,6 +545,9 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
       const before = criterion;
       if (ac.statement !== undefined && ac.statement !== criterion.statement) {
         const old = criterion.review;
+        if (command.via === "chat" && !approvedRewording && old.status === "accepted") {
+          throw new WorkflowError("USER_DECISION_REQUIRED", `${ac.id} is accepted by the user; an agent does not reword it through review-requirements. Use revise-acceptance: the user is asked to approve the new wording in the client's dialog.`);
+        }
         // the decision the text had stays readable (with its reason) after the text is revised and the item goes back to pending
         const previous = old.status !== "pending" || old.comment ? { status: old.status, ...(old.comment ? { comment: old.comment } : {}), ...(old.at ? { at: old.at } : {}), ...(old.via ? { via: old.via } : {}), revision: criterion.revision } : old.previous;
         criterion = { ...criterion, statement: ac.statement, revision: criterion.revision + 1, review: { status: "pending", ...(previous ? { previous } : {}) } };
@@ -599,6 +602,9 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
     }
     for (const id of decision.removeAcceptance) {
       if (!requirement.acceptanceCriteria.some((c) => c.id === id)) throw missing("MISSING_ACCEPTANCE_CRITERION", `${id} is not an acceptance criterion of ${requirement.id}`);
+      if (command.via === "chat" && requirement.acceptanceCriteria.find((c) => c.id === id)!.review.status === "accepted") {
+        throw new WorkflowError("USER_DECISION_REQUIRED", `${id} is accepted by the user; an agent does not remove it. The user removes it in the review page.`);
+      }
       requirement.acceptanceCriteria = requirement.acceptanceCriteria.filter((c) => c.id !== id);
       revised = true;
       summary.push(`${id} removed`);
@@ -1298,7 +1304,7 @@ export function modeSwitchReport(state: WorkflowState, to: "classic" | "guided")
   };
 }
 
-export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningCommand, options: { now?: Date; channel?: ReviewChannel } = {}): PlanningResult {
+export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningCommand, options: { now?: Date; channel?: ReviewChannel; /** Set by the contract once the user's approval of a rewording was verified. */ approvedRewording?: boolean } = {}): PlanningResult {
   const now = options.now;
   const verified = verifiedVia(rawCommand, options.channel);
   if (isUserDecision(rawCommand as never) && !verified) {
@@ -1312,6 +1318,7 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
     case "review-requirements":
       return applyRequirementDecisions(state, command, now);
     case "revise-acceptance": {
+      if (!options.approvedRewording) throw new WorkflowError("APPROVAL_REQUIRED", "revise-acceptance runs only through applyWorkflowCommand, after the user's approval was verified");
       const seen = new Set<string>();
       const byRequirement = new Map<string, Array<{ id: string; statement: string }>>();
       for (const edit of command.edits) {
@@ -1326,7 +1333,7 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
         byRequirement.set(owner.id, [...(byRequirement.get(owner.id) ?? []), { id: edit.id, statement: edit.statement }]);
       }
       const decisions = [...byRequirement].map(([requirementId, acceptance]) => ({ requirementId, acceptance, addAcceptance: [], removeAcceptance: [] })) as Array<z.input<typeof RequirementDecision>>;
-      return applyRequirementDecisions(state, { action: "review-requirements", via: "chat", decisions: decisions.map((d) => RequirementDecision.parse(d)) }, now);
+      return applyRequirementDecisions(state, { action: "review-requirements", via: "chat", decisions: decisions.map((d) => RequirementDecision.parse(d)) }, now, true);
     }
     case "accept-requirements": {
       const ids = command.requirementIds ?? inScope(state).map((r) => r.id as string);

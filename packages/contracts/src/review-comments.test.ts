@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { submissionToCommands } from "./review-submission.js";
 import { acceptanceStatus, applyWorkflowCommand, phaseGates, requirementsFingerprint, ReviewMarkSchema, WorkflowStateSchema, type WorkflowState } from "./index.js";
 
 const T1 = new Date("2026-10-26T10:00:00.000Z");
@@ -131,5 +132,58 @@ describe("alpha.48 compatibility", () => {
     const s = decide(seeded(), { status: "rejected", comment: "old" }, T1);
     const roundTrip = WorkflowStateSchema.parse(JSON.parse(JSON.stringify(s)));
     expect(roundTrip.requirements[0].acceptanceCriteria[1].review.comment).toBe("old");
+  });
+});
+
+describe("two tabs of the same review: a stale save never overwrites fresher data", () => {
+  const AC1 = "REQ-ORD-002-AC-01";
+  const page = (state: WorkflowState, criteria: Array<Record<string, unknown>>) => ({
+    contract: "praxis.review.submission",
+    version: 1,
+    reviewId: "r1",
+    view: "requirements",
+    workItemId: state.workItem.id,
+    baseFingerprint: "old",
+    requirements: { requirements: [{ id: "REQ-ORD-002", revision: state.requirements[0].revision, criteria, addCriteria: [], removeCriteria: [] }], acceptAll: false },
+  });
+  const plan = (state: WorkflowState, criteria: Array<Record<string, unknown>>) => submissionToCommands(state, page(state, criteria));
+  const save = (state: WorkflowState, criteria: Array<Record<string, unknown>>) => {
+    let s = state;
+    for (const command of plan(state, criteria).commands) s = applyWorkflowCommand(s, command, { now: T3, channel: { via: "html-review" } }).state;
+    return s;
+  };
+
+  it("tab B's comment is refused when tab A changed the remark after B was opened", () => {
+    const opened = seeded(); // both tabs open here: the remark is empty
+    const afterA = save(opened, [{ id: AC1, revision: 1, comment: "tab A's remark", fromComment: "" }]);
+    expect(afterA.requirements[0].acceptanceCriteria[0].review.comment).toBe("tab A's remark");
+    const bPlan = plan(afterA, [{ id: AC1, revision: 1, comment: "tab B's remark", fromComment: "" }]);
+    expect(bPlan.commands).toHaveLength(0);
+    expect(bPlan.conflicts[0].reason).toMatch(/remark changed since you opened this page.*reload/i);
+    expect(save(afterA, [{ id: AC1, revision: 1, comment: "tab B's remark", fromComment: "" }]).requirements[0].acceptanceCriteria[0].review.comment).toBe("tab A's remark");
+  });
+
+  it("tab B's decision is refused when tab A decided differently; a repeat of the same decision is not a conflict", () => {
+    const opened = seeded();
+    const afterA = save(opened, [{ id: AC1, revision: 1, from: "pending", status: "rejected" }]);
+    const b = plan(afterA, [{ id: AC1, revision: 1, from: "pending", status: "accepted" }]);
+    expect(b.commands).toHaveLength(0);
+    expect(b.conflicts[0].reason).toMatch(/already marked rejected since you opened this page.*reload/i);
+    expect(save(afterA, [{ id: AC1, revision: 1, from: "pending", status: "accepted" }]).requirements[0].acceptanceCriteria[0].review.status).toBe("rejected");
+  });
+
+  it("an edit of the wording is refused when the criterion was reworded after the page was opened", () => {
+    const opened = seeded();
+    const afterA = applyWorkflowCommand(opened, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-002", acceptance: [{ id: AC1, statement: "A's wording" }] }] }, { now: T2, channel: { via: "html-review" } }).state;
+    const b = plan(afterA, [{ id: AC1, revision: 1, statement: "B's wording" }]);
+    expect(b.commands).toHaveLength(0);
+    expect(b.conflicts.length).toBeGreaterThan(0);
+  });
+
+  it("a save that touches other criteria still applies them and reports only the conflicting one", () => {
+    const opened = seeded();
+    const afterA = save(opened, [{ id: AC1, revision: 1, comment: "A", fromComment: "" }]);
+    const b = save(afterA, [{ id: AC1, revision: 1, comment: "B", fromComment: "" }, { id: AC2, revision: 1, from: "pending", status: "accepted" }]);
+    expect(b.requirements[0].acceptanceCriteria.map((c) => [c.review.status, c.review.comment])).toEqual([["pending", "A"], ["accepted", undefined]]);
   });
 });

@@ -98,6 +98,8 @@ describe("HTML requirements review", () => {
     ta.value = "Managers can view, search and filter orders";
     const submission = ReviewSubmissionSchema.parse(p.decisions());
     expect(submission.view).toBe("requirements");
+    // the page tells the server what it showed, so a stale save can be recognised
+    expect(submission.requirements!.requirements[0].criteria.find((c) => c.id === "REQ-ORD-001-AC-02")).toMatchObject({ from: "pending", fromComment: "", comment: "also by phone" });
     const { next, plan } = applyPlan(s, submission);
     expect(plan.conflicts).toEqual([]);
     const req = next.requirements[0];

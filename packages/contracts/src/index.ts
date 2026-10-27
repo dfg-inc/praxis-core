@@ -439,6 +439,7 @@ export {
   diagnoseCompatibility,
   WorkflowCommandSchema,
   parseWorkflowCommand,
+  dryRunCommand,
   commandFingerprint,
   applyWorkflowCommand,
   storyContentFingerprint,

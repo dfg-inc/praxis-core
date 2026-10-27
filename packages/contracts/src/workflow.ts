@@ -564,7 +564,7 @@ export function canonicalValue(value: unknown): unknown {
 }
 
 export type HumanActRequest = {
-  action: "confirm-story" | "confirm-decision" | "approve-service";
+  action: "confirm-story" | "confirm-decision" | "approve-service" | "revise-acceptance";
   targetId: string;
   /** Exactly what the approval must bind. */
   content: string;
@@ -636,6 +636,33 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
         `Content fingerprint: ${contentFingerprint}`,
       ].filter(Boolean).join("\n"),
       risks: ["Confirming records the decision as accepted. It does not confirm stories, authorize implementation or approve any service."],
+    };
+  }
+  if (command.action === "revise-acceptance") {
+    // The user approves the exact rewording. A repeat of the stored text asks for nothing; an unknown id is the reducer's error to report.
+    const rows: Array<{ id: string; requirementId: string; revision: number; status: string; comment?: string; from: string; to: string }> = [];
+    for (const edit of command.edits) {
+      const owner = state.requirements.find((r) => r.status !== "superseded" && r.acceptanceCriteria.some((c) => c.id === edit.id));
+      const criterion = owner?.acceptanceCriteria.find((c) => c.id === edit.id);
+      if (!owner || !criterion) return null;
+      if (criterion.statement !== edit.statement) rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...(criterion.review.comment ? { comment: criterion.review.comment } : {}), from: criterion.statement, to: edit.statement });
+    }
+    if (rows.length === 0) return null;
+    const content = humanActContent("revise-acceptance", { workItemId: state.workItem.id, edits: rows });
+    const accepted = rows.filter((row) => row.status === "accepted");
+    return {
+      action: "revise-acceptance",
+      targetId: rows.map((row) => row.id).join(","),
+      content,
+      planId: idFor("revise-acceptance", content),
+      role: "ba",
+      summary: `Reword ${rows.length} acceptance criterion(a): ${rows.map((row) => row.id).join(", ")}`,
+      description: [
+        ...rows.map((row) => [`${row.id} (revision ${row.revision} -> ${row.revision + 1}, now ${row.status.toUpperCase()}${row.comment ? `, your remark: "${row.comment}"` : ""}):`, `  from: ${row.from}`, `  to:   ${row.to}`].join("\n")),
+        accepted.length ? `WARNING: ${accepted.map((row) => row.id).join(", ")} ${accepted.length === 1 ? "is" : "are"} ACCEPTED by you. Approving withdraws that acceptance: the criterion returns to pending and you decide again.` : "",
+        "Each reworded criterion returns to pending; its earlier decision and remark stay readable as 'previous'. No other criterion changes.",
+      ].filter(Boolean).join("\n"),
+      risks: ["Rewording a criterion changes what you reviewed: it returns to pending and the requirement's stories, verdicts and implementation records become stale."],
     };
   }
   if (command.action === "set-service") {
@@ -1385,6 +1412,14 @@ export function commandFingerprint(command: WorkflowCommand): string {
   return fingerprintPayload(command);
 }
 
+/** What a command would do, computed without any approval and never written: lets a preview show the exact result before the user is asked. */
+export function dryRunCommand(state: WorkflowState, raw: unknown): { duplicate: boolean; result: unknown } {
+  const command = parseWorkflowCommand(raw);
+  if (!PLANNING_ACTIONS.has(command.action)) throw new WorkflowError("DRY_RUN_UNSUPPORTED", `${command.action} has no dry run`);
+  const out = applyPlanningCommand(state, command as PlanningCommand, { approvedRewording: true });
+  return { duplicate: out.duplicate, result: out.result };
+}
+
 export function applyWorkflowCommand(
   state: WorkflowState | null,
   raw: WorkflowCommand | unknown,
@@ -1405,6 +1440,16 @@ export function applyWorkflowCommand(
     throw new WorkflowError("EXECUTION_REQUIRED", "select-work-item is resolved by the workflow store");
   }
   if (!state) throw new WorkflowError("WORKFLOW_MISSING", "open a workflow before applying commands");
+  if (command.action === "revise-acceptance") {
+    const request = humanActRequest(state, command);
+    if (request) {
+      if (!options?.userApproval) {
+        throw new WorkflowError("APPROVAL_REQUIRED", "rewording acceptance criteria needs the user's approval: preview it, let the user approve in the client's dialog, then apply. An agent cannot approve it, and in a client without a dialog it is not executed.");
+      }
+      verifyUserApproval(options.userApproval, { action: "revise-acceptance", subject: request.content });
+    }
+    return applyPlanningCommand(state, command as PlanningCommand, { now: options?.now, channel: options?.channel, approvedRewording: true });
+  }
   if (PLANNING_ACTIONS.has(command.action)) {
     return applyPlanningCommand(state, command as PlanningCommand, { now: options?.now, channel: options?.channel });
   }

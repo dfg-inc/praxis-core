@@ -94,7 +94,7 @@ function collect(){
         if($('[data-f=remove]',row)&&$('[data-f=remove]',row).checked){item.removeCriteria.push(aid);touched=true;return}
         var c={id:aid,revision:num(row)};var ch=false;
         var m=markOf(row,'m-'+aid);if(m&&m!==row.getAttribute('data-initial-status')){c.status=m;c.from=row.getAttribute('data-initial-status');ch=true}
-        var cm=$('[data-f=ac-comment]',row);if(cm&&val(cm)!==cm.getAttribute('data-initial')){c.comment=val(cm);ch=true}
+        var cm=$('[data-f=ac-comment]',row);if(cm&&val(cm)!==cm.getAttribute('data-initial')){c.comment=val(cm);c.fromComment=cm.getAttribute('data-initial')||'';ch=true}
         var ts=$('[data-f=ac-statement]',row);if(ts&&val(ts)!==ts.getAttribute('data-initial')){c.statement=val(ts);ch=true}
         if(ch){item.criteria.push(c);touched=true}
       });
@@ -154,7 +154,7 @@ $('#btn-save').addEventListener('click',function(){
   fetch(D.saveUrl,{method:'POST',headers:{'content-type':'application/json','x-praxis-review-token':D.token||''},body:JSON.stringify(s)}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(x){
     if(!x.ok){showOut(text);toast('Not saved ('+(x.j&&x.j.error||'error')+'). Decisions are below: copy them to Claude.',true);return}
     var c=(x.j.conflicts||[]).length;
-    toast('Saved: '+(x.j.applied||0)+' change(s) applied'+(c?', '+c+' conflict(s): '+x.j.conflicts.map(function(k){return k.item+' ('+k.reason+')'}).join('; '):'')+'. Reload to see the new revision.',c>0);
+    toast(c?('Saved: '+(x.j.applied||0)+' change(s) applied. NOT saved, '+c+' conflict(s) - this page is out of date: '+x.j.conflicts.map(function(k){return k.item+' ('+k.reason+')'}).join('; ')+'. Reload the page to see the current state, then decide again.'):('Saved: '+(x.j.applied||0)+' change(s) applied. Reload to see the new revision.'),c>0);
   }).catch(function(){showOut(text);toast('Cannot reach Praxis (the review session ended). Decisions are below: copy them to Claude.',true)})
 });
 $('#btn-copy').addEventListener('click',function(){var t=summary(collect());showOut(t);if(navigator.clipboard){navigator.clipboard.writeText(t).then(function(){toast('Copied.',false)},function(){toast('Select and copy the text below.',false)})}else toast('Select and copy the text below.',false)});

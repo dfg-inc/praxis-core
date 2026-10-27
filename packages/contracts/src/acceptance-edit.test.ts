@@ -1,11 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { applyWorkflowCommand, commandCatalog, parseWorkflowCommand, reviewProgress, type WorkflowState } from "./index.js";
+import { beforeAll, describe, expect, it } from "vitest";
+import { approvalFor } from "./human-act-testing.js";
+import { applyWorkflowCommand, commandCatalog, humanActRequest, parseWorkflowCommand, reviewProgress, type WorkflowState } from "./index.js";
 
 const T1 = new Date("2026-10-26T10:00:00.000Z");
 const T2 = new Date("2026-10-26T11:00:00.000Z");
 const T3 = new Date("2026-10-26T12:00:00.000Z");
-const run = (state: WorkflowState | null, command: Record<string, unknown>, now = T3, channel?: { via: "html-review" }) =>
-  applyWorkflowCommand(state, command, { now, ...(channel ? { channel } : {}) });
+beforeAll(() => {
+  process.env.PRAXIS_TEST_APPROVALS = "1";
+});
+/** Applies a command as the Runtime would: a rewording carries the approval the user gave in the dialog (omit it with `approve: false`). */
+const run = (state: WorkflowState | null, command: Record<string, unknown>, now = T3, channel?: { via: "html-review" }, approve = true) => {
+  const userApproval = approve && state && command.action === "revise-acceptance" ? (() => { try { return approvalFor(state, command).userApproval; } catch { return undefined; } })() : undefined;
+  return applyWorkflowCommand(state, command, { now, ...(channel ? { channel } : {}), ...(userApproval ? { userApproval } : {}) });
+};
 const AC6 = "REQ-ORD-002-AC-06";
 const AC5 = "REQ-ORD-005-AC-05";
 const NEW6 = "В боковой панели отображается только текущий статус заказа. История изменений статуса в панели не выводится";
@@ -164,6 +171,49 @@ describe("the command catalog tells an agent which command changes one criterion
     expect(entry.example).toBeDefined();
     expect(entry.use).toMatch(/stable id/);
     expect(catalog.find((c) => c.action === "revise-requirement")!.use).toMatch(/revise-acceptance/);
+  });
+});
+
+describe("the user's approval protects wording the user already decided on", () => {
+  it("an agent cannot reword a criterion without the user's approval: APPROVAL_REQUIRED, nothing changes", () => {
+    const s = reviewed();
+    for (const id of [AC6, "REQ-ORD-002-AC-01"]) {
+      expect(() => run(s, { action: "revise-acceptance", edits: [{ id, statement: "agent wording" }] }, T3, undefined, false)).toThrow(/needs the user's approval/);
+    }
+    expect(criteria(s).find((c) => c.id === "REQ-ORD-002-AC-01")!.revision).toBe(1);
+  });
+
+  it("an approval of another wording, another criterion or an earlier state does not verify", () => {
+    const s = reviewed();
+    const approved = approvalFor(s, { action: "revise-acceptance", edits: [{ id: AC6, statement: "what the user was shown" }] }).userApproval;
+    const apply = (command: Record<string, unknown>, state = s) => applyWorkflowCommand(state, command, { now: T3, userApproval: approved });
+    expect(() => apply({ action: "revise-acceptance", edits: [{ id: AC6, statement: "something else" }] })).toThrow();
+    expect(() => apply({ action: "revise-acceptance", edits: [{ id: "REQ-ORD-002-AC-01", statement: "what the user was shown" }] })).toThrow();
+    // the same wording is fine ...
+    const after = apply({ action: "revise-acceptance", edits: [{ id: AC6, statement: "what the user was shown" }] }).state;
+    expect(ac(after, AC6).statement).toBe("what the user was shown");
+    // ... but not once the criterion changed after the approval was given
+    const moved = run(s, { action: "revise-acceptance", edits: [{ id: AC6, statement: "another edit first" }] }).state;
+    expect(() => apply({ action: "revise-acceptance", edits: [{ id: AC6, statement: "what the user was shown" }] }, moved)).toThrow();
+  });
+
+  it("review-requirements cannot be used by an agent to reword an accepted criterion or remove it; a rejected one still can", () => {
+    const s = reviewed();
+    const agent = (acceptance: object[], extra: object = {}) => run(s, { action: "review-requirements", via: "chat", decisions: [{ requirementId: "REQ-ORD-002", acceptance, ...extra }] });
+    expect(() => agent([{ id: "REQ-ORD-002-AC-01", statement: "sneaky" }])).toThrow(/accepted by the user/);
+    expect(() => agent([], { removeAcceptance: ["REQ-ORD-002-AC-01"] })).toThrow(/accepted by the user/);
+    expect(ac(agent([{ id: AC6, statement: "fix for the rejected one" }]).state, AC6).revision).toBe(2);
+  });
+
+  it("the request names the criteria, the old and new text and warns about accepted ones", () => {
+    const s = reviewed();
+    const request = humanActRequest(s, parseWorkflowCommand({ action: "revise-acceptance", edits: [{ id: AC6, statement: "new six" }, { id: "REQ-ORD-002-AC-01", statement: "new one" }] }))!;
+    expect(request.action).toBe("revise-acceptance");
+    expect(request.description).toContain("new six");
+    expect(request.description).toContain("REQ-ORD-002-AC-01");
+    expect(request.description).toMatch(/WARNING: REQ-ORD-002-AC-01 is ACCEPTED/);
+    expect(request.description).toContain("Не нравится решение");
+    expect(humanActRequest(s, parseWorkflowCommand({ action: "revise-acceptance", edits: [{ id: AC6, statement: ac(s, AC6).statement }] }))).toBeNull();
   });
 });
 
