@@ -552,6 +552,9 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
         const statusChanged = ac.status !== undefined && ac.status !== old.status;
         const nextComment = ac.comment !== undefined ? (ac.comment === "" ? undefined : ac.comment) : old.comment;
         const commentChanged = ac.comment !== undefined && nextComment !== old.comment;
+        if (commentChanged && command.via === "chat" && old.comment && (old.commentVia === "html-review" || old.commentVia === "approved" || (old.commentVia === undefined && old.via !== undefined && old.via !== "chat"))) {
+          throw new WorkflowError("USER_DECISION_REQUIRED", `${ac.id} carries a remark the user wrote; only the user changes or clears it (in the review page). Propose a new text for the criterion instead.`);
+        }
         // `at`/`via` describe the STATUS decision: they move only when the status moves, never because a comment was edited
         const decided = statusChanged ? { at: iso(now), via: command.via } : { ...(old.at ? { at: old.at } : {}), ...(old.via ? { via: old.via } : {}) };
         const commented = commentChanged ? { commentAt: iso(now), commentVia: command.via } : { ...(old.commentAt ? { commentAt: old.commentAt } : {}), ...(old.commentVia ? { commentVia: old.commentVia } : {}) };
@@ -1301,7 +1304,7 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
         ...next,
         requirements: next.requirements.map((r) =>
           ids.includes(r.id) && r.scope === "in" && r.status !== "superseded"
-            ? { ...r, status: "approved" as const, acceptanceCriteria: r.acceptanceCriteria.map((c) => (c.review.status === "pending" ? { ...c, review: { status: "accepted" as const, at: iso(now), via: command.via } } : c)) }
+            ? { ...r, status: "approved" as const, acceptanceCriteria: r.acceptanceCriteria.map((c) => (c.review.status === "pending" ? { ...c, review: { ...c.review, status: "accepted" as const, at: iso(now), via: command.via } } : c)) }
             : r,
         ),
       };

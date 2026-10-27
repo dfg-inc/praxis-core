@@ -182,7 +182,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         }
         const unchanged = (criterion.status === undefined || criterion.status === live.review.status) && (criterion.comment === undefined || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === undefined || criterion.statement === live.statement);
         if (unchanged) continue;
-        details.push(`${criterion.id} '${live.statement.slice(0, 400)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== undefined ? `edit to '${criterion.statement.slice(0, 400)}'` : "", criterion.comment ? `comment '${criterion.comment.slice(0, 400)}'` : ""].filter(Boolean).join(", ")}`);
+        details.push(`${criterion.id} '${live.statement.slice(0, 400)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== undefined ? `edit to '${criterion.statement.slice(0, 400)}'` : "", criterion.comment !== undefined && criterion.comment !== (live.review.comment ?? "") ? (criterion.comment ? `comment '${criterion.comment.slice(0, 400)}'` : "clear the comment") + (live.review.comment ? ` (now '${live.review.comment.slice(0, 200)}')` : "") : ""].filter(Boolean).join(", ")}`);
         acceptance.push({ id: criterion.id, ...(criterion.status ? { status: criterion.status } : {}), ...(criterion.comment !== undefined ? { comment: criterion.comment } : {}), ...(criterion.statement !== undefined ? { statement: criterion.statement } : {}) });
       }
       if (item.statement !== undefined) details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 400)}'`);

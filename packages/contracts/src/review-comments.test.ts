@@ -65,6 +65,22 @@ describe("a user's review remark is stored, dated per kind of change, and logged
     expect(review(s).at).toBeUndefined();
   });
 
+  it("the agent cannot replace or clear a remark the user wrote", () => {
+    const s = decide(seeded(), { status: "rejected", comment: "user remark" }, T2);
+    for (const comment of ["", "agent overwrite"]) {
+      expect(() => run(s, { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", acceptance: [{ id: AC2, comment }] }] }, T3)).toThrow(/only the user changes or clears it/);
+    }
+    // proposing new text is still the agent's, and the remark survives as `previous`
+    const edited = run(s, { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", acceptance: [{ id: AC2, statement: "Export is capped" }] }] }, T3);
+    expect(edited.requirements[0].acceptanceCriteria[1].review.previous?.comment).toBe("user remark");
+  });
+
+  it("accept-all keeps a comment typed on a pending criterion", () => {
+    let s = decide(seeded(), { comment: "keep me" }, T2);
+    s = run(s, { action: "accept-requirements", via: "html-review" }, T3, { via: "html-review" });
+    expect(review(s)).toMatchObject({ status: "accepted", comment: "keep me" });
+  });
+
   it("a requirement comment and a scope note are logged too", () => {
     const s = run(seeded(), { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-002", comment: "overall", scopeNote: "later" }] }, T2, { via: "html-review" });
     expect(lastNote(s)).toContain("REQ-ORD-002 comment changed");

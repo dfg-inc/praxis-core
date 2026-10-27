@@ -289,7 +289,7 @@ export function renderRequirementsReview(state: WorkflowState, options: RenderRe
         .map(
           (ac) => `<div class="ac" data-ac="${esc(ac.id)}" data-rev="${ac.revision}" data-initial-status="${esc(ac.review.status)}">
 <div><strong>${esc(ac.id)}</strong></div>
-<div><textarea data-f="ac-statement" data-initial="${esc(ac.statement)}" aria-label="Text of ${esc(ac.id)}">${esc(ac.statement)}</textarea>${ac.review.previous ? `\n<div class="meta" data-previous>Before this revision: ${esc(ac.review.previous.status)}${ac.review.previous.comment ? ` - "${esc(ac.review.previous.comment)}"` : ""}</div>` : ""}
+<div><textarea data-f="ac-statement" data-initial="${esc(ac.statement)}" aria-label="Text of ${esc(ac.id)}">${esc(ac.statement)}</textarea>${ac.review.previous && ac.review.status === "pending" ? `\n<div class="meta" data-previous>Before this revision: ${esc(ac.review.previous.status)}${ac.review.previous.comment ? ` - "${esc(ac.review.previous.comment)}"` : ""}</div>` : ""}
 <div class="row" style="margin-top:4px">${marks(`m-${ac.id}`, ac.review.status)}<input type="text" data-f="ac-comment" data-initial="${esc(ac.review.comment ?? "")}" placeholder="Comment" value="${esc(ac.review.comment ?? "")}" aria-label="Comment on ${esc(ac.id)}" style="flex:1;min-width:160px">
 <label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>`,
         )
