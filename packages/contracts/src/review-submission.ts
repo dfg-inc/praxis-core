@@ -277,7 +277,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       summary.push(`${decisions.length} requirement(s) with decisions`);
     }
     if (submission.requirements.acceptAll) {
-      if (conflicts.length > 0 || stale) conflicts.push({ item: "accept all", reason: "not applied: part of the review is out of date, re-open it" });
+      if (conflicts.length > 0 || stale || outdated) conflicts.push({ item: "accept all", reason: `not applied: this page is out of date (marks, remarks or content changed since it was opened): ${reload}` });
       else {
         commands.push({ action: "accept-requirements", via });
         summary.push("accept all pending criteria");
@@ -297,7 +297,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         for (const r of p.resolve) details.push(`prototype feedback ${r} resolved`);
       }
       if (p.accept) {
-        if (stale) conflicts.push({ item: "accept prototype", reason: "the prototype changed since the review: re-open it" });
+        if (stale || outdated) conflicts.push({ item: "accept prototype", reason: `the prototype, its feedback or its marks changed since you opened this page: ${reload}` });
         else {
           commands.push({ action: "accept-prototype", via });
           summary.push("prototype accepted");
@@ -342,7 +342,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       summary.push(`${operations.length} plan change(s)`);
     }
     if (submission.plan.agree) {
-      if (conflicts.length > 0 || stale) conflicts.push({ item: "agree plan", reason: "not applied: part of the review is out of date or could not be applied; re-open it" });
+      if (conflicts.length > 0 || stale || outdated) conflicts.push({ item: "agree plan", reason: `not applied: part of the review is out of date or could not be applied (the plan, a mark or a remark changed since you opened this page): ${reload}` });
       else {
         commands.push({ action: "agree-story-plan", via });
         summary.push("plan agreed");
@@ -421,7 +421,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       summary.push(`${items.length} item mark(s), ${acceptStories.length} bulk accept(s)`);
     }
     if (s.accept) {
-      if (conflicts.length > 0 || edited.size > 0 || stale) conflicts.push({ item: "accept stories", reason: "not applied: stories changed or could not be applied, review them again" });
+      if (conflicts.length > 0 || edited.size > 0 || stale || outdated) conflicts.push({ item: "accept stories", reason: `not applied: stories, marks or remarks changed since you opened this page or could not be applied: ${reload}` });
       else {
         commands.push({ action: "accept-stories", via });
         summary.push("stories accepted");

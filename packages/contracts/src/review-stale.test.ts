@@ -177,3 +177,26 @@ describe("a saved or handed-over decisions file is held to the same rules", () =
     expect(() => plan(s, { ...p.decisions(), approved: true })).toThrow(/"approved" is not a parameter/);
   });
 });
+
+describe("the accept / agree controls need a page that is still current", () => {
+  it("requirements accept-all, plan agree and prototype accept are refused when a mark, remark or feedback changed after the page was opened", () => {
+    // requirements: another tab reset a mark after the page was opened
+    let s = ok(base(), { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "accepted" }] }] });
+    const p = page(s, "requirements");
+    p.q<HTMLInputElement>("#accept-all").click();
+    const accept = p.decisions();
+    expect(plan(s, accept).commands.some((c) => c.action === "accept-requirements")).toBe(true);
+    const reset = ok(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "pending", comment: "wait" }] }] }, LATER);
+    const refused = plan(reset, accept);
+    expect(refused.commands.some((c) => c.action === "accept-requirements")).toBe(false);
+    expect(reasons(refused)).toMatch(/out of date.*reload the page/);
+    // plan: a line was set to pending with a remark after the page was opened
+    s = planned();
+    const pp = page(s, "story-plan");
+    pp.q<HTMLInputElement>("#agree-plan").click();
+    const agree = pp.decisions();
+    expect(plan(s, agree).commands.some((c) => c.action === "agree-story-plan")).toBe(true);
+    const marked = ok(s, { action: "update-story-plan", via: "html-review", operations: [{ op: "review", id: "US-ORD-001", status: "pending", comment: "unclear" }] }, LATER);
+    expect(plan(marked, agree).commands.some((c) => c.action === "agree-story-plan")).toBe(false);
+  });
+});
