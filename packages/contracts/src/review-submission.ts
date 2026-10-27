@@ -228,6 +228,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
   /** True when a command in the plan changes, stales, excludes or restores a story (shown in the details, and gates a handed-over file). */
   let affectsStories = false;
   const editedPlan = new Map<string, Record<string, unknown>>();
+  const planStatus = new Map<string, string>();
   /**
    * What the page showed is no longer what is stored (or the file does not say what it showed). Everything it saves must then carry
    * what the page showed for each field it changes, or it is refused: a missing base value never lets an old page through.
@@ -308,8 +309,11 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       for (const r of item.removeCriteria) details.push(`${item.id}: remove criterion ${r}`);
       const reworded = item.statement !== undefined && item.statement !== current.statement || item.criteria.some((c) => c.statement !== undefined && c.statement !== current.acceptanceCriteria.find((x) => x.id === c.id)?.statement) || item.addCriteria.length > 0 || item.removeCriteria.length > 0 || scopeChanged;
       const resting = state.stories.filter((x) => x.status !== "superseded" && x.requirementIds.includes(item.id));
-      if (reworded && resting.length > 0) {
-        details.push(`${item.id}: this change affects stories ${resting.map((x) => x.id).join(", ")}: they are marked stale and their confirmation is withdrawn${scopeChanged ? `; moving the requirement to scope '${item.scope}' also excludes or restores them and their plan lines` : ""}`);
+      const lines = (state.storyPlan?.entries ?? []).filter((e) => e.requirementIds.includes(item.id));
+      const verdicts = state.verdicts.filter((v) => !v.stale && v.requirementIds.includes(item.id as never)).length;
+      const units = state.implementationUnits.filter((u) => !u.stale && u.requirementIds.includes(item.id as never)).length;
+      if (reworded && (resting.length > 0 || lines.length > 0)) {
+        details.push(`${item.id}: this change affects ${resting.length > 0 ? `stories ${resting.map((x) => x.id).join(", ")}: they are marked stale and their confirmation is withdrawn` : `plan lines ${lines.map((x) => x.id).join(", ")}`}${scopeChanged ? `; moving the requirement to scope '${item.scope}' also excludes or restores ${resting.length > 0 ? "them and " : ""}the plan lines` : ""}${verdicts + units > 0 ? `; it also makes ${verdicts} Quality verdict(s) and ${units} implementation record(s) stale` : ""}`);
         affectsStories = true;
       }
       if (item.comment === "" && current.comment) details.push(`${item.id}: CLEAR the comment ('${current.comment}')`);
@@ -395,7 +399,9 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
           affectsStories = true;
         }
       }
-      if (Object.keys(patch).length > 0) editedPlan.set(entry.id, patch);
+      if (Object.keys(patch).length > 0) editedPlan.set(entry.id, { ...(editedPlan.get(entry.id) ?? {}), ...patch });
+      if (entry.exclude !== undefined) planStatus.set(entry.id, "excluded");
+      if (entry.restore) planStatus.set(entry.id, "planned");
       if (entry.status !== undefined) operations.push({ op: "review", id: entry.id, status: entry.status, ...(entry.comment !== undefined ? { comment: entry.comment } : {}) });
     }
     if (operations.length > 0) {
@@ -410,7 +416,8 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         details.push(`AGREE the story plan as it will be after the edits above (${state.storyPlan?.entries.length ?? 0} lines):`);
         for (const e of state.storyPlan?.entries ?? []) {
           const edit = (editedPlan.get(e.id) ?? {}) as Record<string, string>;
-          details.push(`  ${e.id} '${edit.title ?? e.title}' - implements: ${edit.implementation ?? e.implementation} - the user gets: ${edit.userGets ?? e.userGets}${e.status === "excluded" ? " (excluded)" : ""}`);
+          const status = planStatus.get(e.id) ?? e.status;
+          details.push(`  ${e.id} '${edit.title ?? e.title}' - implements: ${edit.implementation ?? e.implementation} - the user gets: ${edit.userGets ?? e.userGets}${status === "excluded" ? " (excluded)" : ""}`);
         }
       }
     }

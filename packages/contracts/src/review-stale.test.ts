@@ -316,3 +316,27 @@ describe("the dialog shows what will be applied: full text, the plan as agreed, 
     expect(reasons(stale)).toMatch(/work item changed since/);
   });
 });
+
+describe("the plan shown as agreed is the plan that is agreed", () => {
+  const planFile2 = (state: WorkflowState, entries: Array<Record<string, unknown>>) => ({ contract: "praxis.review.submission", version: 1, reviewId: "r", view: "story-plan", workItemId: state.workItem.id, baseFingerprint: fingerprintFor(state, "story-plan"), baseStamp: reviewStamp(state, "story-plan"), plan: { entries, agree: true } });
+
+  it("exclusions and restores in the same file change the listing, and two entries for one line are merged", () => {
+    let s = planned();
+    s = ok(s, { action: "update-story-plan", via: "html-review", operations: [{ op: "exclude", id: "US-ORD-002", reason: "later" }] }, LATER);
+    const [e1, e2] = s.storyPlan!.entries;
+    const text = plan(s, planFile2(s, [{ id: "US-ORD-001", base: planEntryBase(e1), exclude: "not now" }, { id: "US-ORD-002", base: planEntryBase(e2), restore: true }])).details.join("\n");
+    expect(text).toMatch(/US-ORD-001 'View orders'.*\(excluded\)/);
+    expect(text).toMatch(/US-ORD-002 'Export' - implements: CSV - the user gets: a file\s*(\n|$)/);
+    expect(text).not.toMatch(/US-ORD-002.*\(excluded\)/);
+    const merged = plan(s, planFile2(s, [{ id: "US-ORD-001", base: planEntryBase(e1), implementation: "IMPL-X" }, { id: "US-ORD-001", base: planEntryBase(e1), title: "TITLE-Y" }])).details.join("\n");
+    expect(merged).toMatch(/US-ORD-001 'TITLE-Y' - implements: IMPL-X/);
+  });
+
+  it("a requirement change that reaches only plan lines (no story yet) is shown and gated too", () => {
+    const s = planned();
+    const rev = s.requirements.find((r) => r.id === "REQ-ORD-002")!.revision;
+    const result = plan(s, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: s.workItem.id, baseFingerprint: "x", baseStamp: reviewStamp(s, "requirements"), requirements: { requirements: [{ id: "REQ-ORD-002", revision: rev, scope: "deferred", fromScope: "in", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } });
+    expect(result.affectsStories).toBe(true);
+    expect(result.details.join("\n")).toMatch(/affects plan lines US-ORD-002.*excludes or restores the plan lines/);
+  });
+});
