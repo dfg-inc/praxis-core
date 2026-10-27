@@ -372,11 +372,11 @@ const AcDecision = z.object({
   id: z.string().min(1),
   status: ReviewStatus.optional(),
   comment: z.string().optional(),
-  statement: z.string().trim().min(1).optional(),
+  statement: z.string().min(1).refine((v) => v.trim().length > 0, "must not be blank").optional(),
 });
 const RequirementDecision = z.object({
   requirementId: RequirementIdSchema,
-  statement: z.string().trim().min(1).optional(),
+  statement: z.string().min(1).refine((v) => v.trim().length > 0, "must not be blank").optional(),
   scope: ScopeSchema.optional(),
   scopeNote: z.string().optional(),
   comment: z.string().optional(),
@@ -445,7 +445,7 @@ const NewStoryFromOriginal = StoryPatch.extend({
 export const PlanningCommandSchemas = [
   z.object({ action: z.literal("review-requirements"), via: Via, decisions: z.array(RequirementDecision).min(1) }),
   /** Changes the text of single acceptance criteria by their stable id; nothing else is touched. */
-  z.object({ action: z.literal("revise-acceptance"), edits: z.array(z.object({ id: z.string().min(1), statement: z.string().trim().min(1), expectedRevision: z.number().int().positive().optional() })).min(1) }),
+  z.object({ action: z.literal("revise-acceptance"), edits: z.array(z.object({ id: z.string().min(1), statement: z.string().min(1).refine((v) => v.trim().length > 0, "must not be blank"), expectedRevision: z.number().int().positive().optional() })).min(1) }),
   z.object({ action: z.literal("accept-requirements"), via: Via, requirementIds: z.array(RequirementIdSchema).optional() }),
   z.object({ action: z.literal("set-requirement-scope"), requirementIds: z.array(RequirementIdSchema).min(1), scope: ScopeSchema, note: z.string().optional() }),
   z.object({ action: z.literal("set-prototype"), prototype: PrototypeInput, summary: z.string().optional() }),
@@ -543,21 +543,21 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
       if (index < 0) throw missing("MISSING_ACCEPTANCE_CRITERION", `${ac.id} is not an acceptance criterion of ${requirement.id}`);
       let criterion = requirement.acceptanceCriteria[index];
       const before = criterion;
-      if (ac.statement !== undefined && ac.statement !== criterion.statement) {
+      if (ac.statement !== undefined && ac.statement.trim() !== criterion.statement.trim()) {
         const old = criterion.review;
         if (command.via === "chat" && !approvedRewording && old.status === "accepted") {
           throw new WorkflowError("USER_DECISION_REQUIRED", `${ac.id} is accepted by the user; an agent does not reword it through review-requirements. Use revise-acceptance: the user is asked to approve the new wording in the client's dialog.`);
         }
         // the decision the text had stays readable (with its reason) after the text is revised and the item goes back to pending
         const previous = old.status !== "pending" || old.comment ? { status: old.status, ...(old.comment ? { comment: old.comment } : {}), ...(old.at ? { at: old.at } : {}), ...(old.via ? { via: old.via } : {}), revision: criterion.revision } : old.previous;
-        criterion = { ...criterion, statement: ac.statement, revision: criterion.revision + 1, review: { status: "pending", ...(previous ? { previous } : {}) } };
+        criterion = { ...criterion, statement: ac.statement.trim(), revision: criterion.revision + 1, review: { status: "pending", ...(previous ? { previous } : {}) } };
         revised = true;
         summary.push(`${ac.id} edited`);
         acceptanceChanges.push({
           id: ac.id,
           requirementId: requirement.id,
           before: { statement: before.statement, revision: before.revision, status: old.status, ...(old.comment ? { comment: old.comment } : {}) },
-          after: { statement: ac.statement, revision: criterion.revision, status: "pending" },
+          after: { statement: ac.statement.trim(), revision: criterion.revision, status: "pending" },
           previousKept: Boolean(previous),
         });
       }

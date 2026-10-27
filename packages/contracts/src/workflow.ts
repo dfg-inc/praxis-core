@@ -645,7 +645,7 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
       const owner = state.requirements.find((r) => r.status !== "superseded" && r.acceptanceCriteria.some((c) => c.id === edit.id));
       const criterion = owner?.acceptanceCriteria.find((c) => c.id === edit.id);
       if (!owner || !criterion) return null;
-      if (criterion.statement !== edit.statement) rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...(criterion.review.comment ? { comment: criterion.review.comment } : {}), from: criterion.statement, to: edit.statement });
+      if (criterion.statement.trim() !== edit.statement.trim()) rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...(criterion.review.comment ? { comment: criterion.review.comment } : {}), from: criterion.statement, to: edit.statement.trim() });
     }
     if (rows.length === 0) return null;
     const content = humanActContent("revise-acceptance", { workItemId: state.workItem.id, edits: rows });

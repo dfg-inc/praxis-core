@@ -70,7 +70,7 @@ const PlanPayload = z.object({
 });
 
 const StoriesPayload = z.object({
-  items: z.array(z.object({ storyId: StoryIdSchema, revision: z.number().int().positive(), key: z.string().min(1), from: Mark.optional(), status: Mark, comment: z.string().max(4000).optional() })).default([]),
+  items: z.array(z.object({ storyId: StoryIdSchema, revision: z.number().int().positive(), key: z.string().min(1), from: Mark.optional(), fromComment: z.string().max(4000).optional(), status: Mark, comment: z.string().max(4000).optional() })).default([]),
   stories: z
     .array(
       z.object({
@@ -161,7 +161,8 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         continue;
       }
       const textChanged = item.statement !== undefined || item.criteria.some((c) => c.statement !== undefined) || item.addCriteria.length > 0 || item.removeCriteria.length > 0 || (item.scope !== undefined && item.scope !== current.scope);
-      if (current.revision !== item.revision && textChanged) {
+      const remarkChanged = item.comment !== undefined || (item.scopeNote !== undefined && item.scopeNote !== (current.scopeNote ?? ""));
+      if (current.revision !== item.revision && (textChanged || remarkChanged)) {
         conflicts.push({ item: item.id, reason: `edited since the review (now revision ${current.revision}, the page showed ${item.revision}): re-open the review` });
         continue;
       }
@@ -310,6 +311,15 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       if (edited.has(item.storyId)) return false;
       const live = state.stories.find((x) => x.id === item.storyId && x.status !== "superseded");
       const current = live?.review[item.key]?.status ?? "pending";
+      const liveStory = state.stories.find((x) => x.id === item.storyId && x.status !== "superseded");
+      if (liveStory && liveStory.revision !== item.revision) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the story changed since you opened this page (now revision ${liveStory.revision}, the page showed ${item.revision}): reload the page; your mark was not saved` });
+        return false;
+      }
+      if (item.fromComment !== undefined && item.comment !== undefined && (live?.review[item.key]?.comment ?? "") !== item.fromComment) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the remark changed since you opened this page: reload the page; your remark was not saved` });
+        return false;
+      }
       if (item.from !== undefined && current !== item.from) {
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `already marked ${current} by someone else since the review (the page showed ${item.from})` });
         return false;

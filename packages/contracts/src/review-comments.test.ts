@@ -187,3 +187,25 @@ describe("two tabs of the same review: a stale save never overwrites fresher dat
     expect(b.requirements[0].acceptanceCriteria.map((c) => [c.review.status, c.review.comment])).toEqual([["pending", "A"], ["accepted", undefined]]);
   });
 });
+
+describe("stale saves of requirement-level remarks and whitespace in stored text", () => {
+  it("a requirement remark from a page opened before the requirement changed is refused", () => {
+    const opened = seeded();
+    const changed = applyWorkflowCommand(opened, { action: "revise-requirement", id: "REQ-ORD-002", statement: "Export, reworded" }, { now: T2 }).state;
+    const submission = {
+      contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: changed.workItem.id, baseFingerprint: "old",
+      requirements: { requirements: [{ id: "REQ-ORD-002", revision: 1, comment: "stale remark", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false },
+    };
+    const plan = submissionToCommands(changed, submission);
+    expect(plan.commands).toHaveLength(0);
+    expect(plan.conflicts[0].reason).toMatch(/edited since the review/);
+  });
+
+  it("a stored criterion with trailing whitespace is not 'edited' by the same text, and the repeat needs no approval", () => {
+    let s = run(null, { action: "open", projectId: "o", title: "O", request: "r", mode: "guided" }, T1);
+    s = run(s, { action: "add-requirement", id: "REQ-ORD-003", statement: "S", acceptanceCriteria: ["one "] }, T1);
+    const same = applyWorkflowCommand(s, { action: "revise-acceptance", edits: [{ id: "REQ-ORD-003-AC-01", statement: "one " }] }, { now: T2 });
+    expect(same.duplicate).toBe(true);
+    expect(same.state).toBe(s);
+  });
+});

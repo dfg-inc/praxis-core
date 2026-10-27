@@ -85,17 +85,17 @@ function collect(){
     var reqs=[];
     $$('[data-req]').forEach(function(card){
       var id=card.getAttribute('data-req');var item={id:id,revision:num(card),criteria:[],addCriteria:[],removeCriteria:[]};var touched=false;
-      var st=$('[data-f=statement]',card);if(st&&val(st)!==st.getAttribute('data-initial')){item.statement=val(st);touched=true}
-      var sc=$('[data-f=scope]',card);if(sc&&sc.value!==sc.getAttribute('data-initial')){item.scope=sc.value;touched=true}
-      var sn=$('[data-f=scopeNote]',card);if(sn&&val(sn)!==sn.getAttribute('data-initial')){item.scopeNote=val(sn);touched=true}
+      var st=$('[data-f=statement]',card);if(st&&val(st)!==(st.getAttribute('data-initial')||'').trim()){item.statement=val(st);touched=true}
+      var sc=$('[data-f=scope]',card);if(sc&&sc.value!==(sc.getAttribute('data-initial')||'').trim()){item.scope=sc.value;touched=true}
+      var sn=$('[data-f=scopeNote]',card);if(sn&&val(sn)!==(sn.getAttribute('data-initial')||'').trim()){item.scopeNote=val(sn);touched=true}
       var rc=$('[data-f=comment]',card);if(rc&&val(rc)!==''){item.comment=val(rc);touched=true}
       $$('[data-ac]',card).forEach(function(row){
         var aid=row.getAttribute('data-ac');
         if($('[data-f=remove]',row)&&$('[data-f=remove]',row).checked){item.removeCriteria.push(aid);touched=true;return}
         var c={id:aid,revision:num(row)};var ch=false;
         var m=markOf(row,'m-'+aid);if(m&&m!==row.getAttribute('data-initial-status')){c.status=m;c.from=row.getAttribute('data-initial-status');ch=true}
-        var cm=$('[data-f=ac-comment]',row);if(cm&&val(cm)!==cm.getAttribute('data-initial')){c.comment=val(cm);c.fromComment=cm.getAttribute('data-initial')||'';ch=true}
-        var ts=$('[data-f=ac-statement]',row);if(ts&&val(ts)!==ts.getAttribute('data-initial')){c.statement=val(ts);ch=true}
+        var cm=$('[data-f=ac-comment]',row);if(cm&&val(cm)!==(cm.getAttribute('data-initial')||'').trim()){c.comment=val(cm);c.fromComment=cm.getAttribute('data-initial')||'';ch=true}
+        var ts=$('[data-f=ac-statement]',row);if(ts&&val(ts)!==(ts.getAttribute('data-initial')||'').trim()){c.statement=val(ts);ch=true}
         if(ch){item.criteria.push(c);touched=true}
       });
       var add=$('[data-f=add-ac]',card);if(add&&val(add)){val(add).split(/\\n+/).forEach(function(l){l=l.trim();if(l)item.addCriteria.push({statement:l})});touched=true}
@@ -114,7 +114,7 @@ function collect(){
       var id=card.getAttribute('data-entry');var e={id:id};var ch=false;
       var m=markOf(card,'m-'+id);if(m&&m!==card.getAttribute('data-initial-status')){e.status=m;ch=true}
       var cm=$('[data-f=comment]',card);if(cm&&val(cm)){e.comment=val(cm);ch=true}
-      ['title','implementation','userGets'].forEach(function(f){var t=$('[data-f='+f+']',card);if(t&&val(t)!==t.getAttribute('data-initial')){e[f]=val(t);ch=true}});
+      ['title','implementation','userGets'].forEach(function(f){var t=$('[data-f='+f+']',card);if(t&&val(t)!==(t.getAttribute('data-initial')||'').trim()){e[f]=val(t);ch=true}});
       var ex=$('[data-f=exclude]',card);if(ex&&val(ex)){e.exclude=val(ex);ch=true}
       var rt=$('[data-f=restore]',card);if(rt&&rt.checked){e.restore=true;ch=true}
       if(ch)es.push(e)
@@ -132,10 +132,10 @@ function collect(){
       $$('[data-key]',card).forEach(function(row){
         var key=row.getAttribute('data-key');var m=markOf(row,'m-'+id+'-'+key);
         var cm=$('[data-f=comment]',row);
-        if(m&&(m!==row.getAttribute('data-initial-status')||(cm&&val(cm)))){var it={storyId:id,revision:rev,key:key,from:row.getAttribute('data-initial-status'),status:m};if(cm&&val(cm))it.comment=val(cm);items.push(it)}
+        if(m&&(m!==row.getAttribute('data-initial-status')||(cm&&val(cm)))){var it={storyId:id,revision:rev,key:key,from:row.getAttribute('data-initial-status'),status:m};if(cm&&val(cm)){it.comment=val(cm);it.fromComment=(cm.getAttribute('data-initial')||'').trim()}items.push(it)}
       });
-      var n=$('[data-f=narrative]',card);if(n&&val(n)!==n.getAttribute('data-initial')){st.narrative=val(n);ch=true}
-      var o=$('[data-f=objective]',card);if(o&&val(o)!==o.getAttribute('data-initial')){st.objective=val(o);ch=true}
+      var n=$('[data-f=narrative]',card);if(n&&val(n)!==(n.getAttribute('data-initial')||'').trim()){st.narrative=val(n);ch=true}
+      var o=$('[data-f=objective]',card);if(o&&val(o)!==(o.getAttribute('data-initial')||'').trim()){st.objective=val(o);ch=true}
       var ex=$('[data-f=exclude]',card);if(ex&&val(ex)){st.exclude=val(ex);ch=true}
       var rt=$('[data-f=restore]',card);if(rt&&rt.checked){st.restore=true;ch=true}
       var all=$('[data-f=accept-story]',card);if(all&&all.checked){st.acceptAll=true;ch=true}
