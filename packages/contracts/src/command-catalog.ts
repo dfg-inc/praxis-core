@@ -7,7 +7,7 @@ import { WorkflowCommandSchema } from "./workflow.js";
  * and a minimal working example for the ones whose shape is not obvious. Built from the same schemas the reducer parses,
  * so it cannot drift.
  */
-export type CommandInfo = { action: string; required: string[]; optional: string[]; userOnly: boolean; /** Commands that are the user's only in one case. */ userOnlyWhen?: string; example?: Record<string, unknown> };
+export type CommandInfo = { action: string; required: string[]; optional: string[]; userOnly: boolean; /** Commands that are the user's only in one case. */ userOnlyWhen?: string; example?: Record<string, unknown>; /** When to use this action instead of a similar one. */ use?: string };
 
 const optionalish = (type: z.ZodTypeAny): boolean => type instanceof z.ZodOptional || type instanceof z.ZodDefault || (type instanceof z.ZodNullable && optionalish(type.unwrap()));
 
@@ -26,12 +26,19 @@ const EXAMPLES: Record<string, Record<string, unknown>> = {
   "record-impact": { action: "record-impact", impact: { baseline: { summary: "orders list exists", behaviors: [{ id: "B1", statement: "The list shows orders", evidence: [{ repositoryId: "web", path: "src/pages/Orders.tsx" }] }] }, affected: [{ repositoryId: "web", path: "src/pages/Orders.tsx", area: "orders page", change: "add export button" }], regressionChecks: [{ id: "R1", statement: "The list still shows all orders" }] } },
   "record-implementation": { action: "record-implementation", id: "IMPL-1", serviceId: "svc-web", requirementIds: ["REQ-ORD-001"], path: "src/pages/Orders.tsx", summary: "orders list with search" },
   "review-requirements": { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", statement: "Managers can view, search and filter orders", addAcceptance: [{ statement: "Filtering by status works" }] }] },
+  "revise-acceptance": { action: "revise-acceptance", edits: [{ id: "REQ-ORD-002-AC-06", statement: "The side panel shows only the current order status; the status history is not shown", expectedRevision: 1 }, { id: "REQ-ORD-005-AC-05", statement: "The filter and the order card use the current status value; status history is not required" }] },
   "set-requirement-scope": { action: "set-requirement-scope", requirementIds: ["REQ-ORD-002"], scope: "deferred", note: "next release" },
   "set-mode": { action: "set-mode", mode: "guided", reason: "use the guided flow for this item" },
   "advance-phase": { action: "advance-phase", to: "prototype" },
   "return-to-phase": { action: "return-to-phase", to: "requirements_review", reason: "the user changed the search requirement" },
   "log-session": { action: "log-session", summary: "Requirements accepted", nextAction: "build the prototype", role: "ba" },
   "waive-coverage": { action: "waive-coverage", kind: "prototype", reason: "pure refactor, nothing to show" },
+};
+
+const USE: Record<string, string> = {
+  "revise-acceptance": "Change the TEXT of one or more existing acceptance criteria, each by its stable id (REQ-...-AC-nn). Only those criteria change: their revision goes up, their review returns to pending, and the earlier decision and remark are kept as 'previous'. Other criteria are not touched. expectedRevision (optional) refuses the edit if the criterion changed since you read it.",
+  "revise-requirement": "Change the statement of a whole requirement (its id is REQ-...). It does not take an acceptance criterion id; for one criterion use revise-acceptance.",
+  "review-requirements": "Record marks and remarks on criteria, change scope, add or remove criteria. To only reword existing criteria prefer revise-acceptance.",
 };
 
 export function commandCatalog(): CommandInfo[] {
@@ -50,7 +57,7 @@ export function commandCatalog(): CommandInfo[] {
       userOnly = false;
     }
     const userOnlyWhen = ({ "set-contract": "contract.status is agreed", "set-mode": "mode is classic", "remove-contract": "the contract was agreed by the user", "review-requirements": "a criterion status is set (marks)", "update-story-plan": "an operation is review" } as Record<string, string>)[action];
-    return { action, required, optional, userOnly: userOnly || userOnlyWhen !== undefined ? userOnly : false, ...(userOnlyWhen ? { userOnlyWhen } : {}), ...(EXAMPLES[action] ? { example: EXAMPLES[action] } : {}) };
+    return { action, required, optional, userOnly: userOnly || userOnlyWhen !== undefined ? userOnly : false, ...(userOnlyWhen ? { userOnlyWhen } : {}), ...(EXAMPLES[action] ? { example: EXAMPLES[action] } : {}), ...(USE[action] ? { use: USE[action] } : {}) };
   });
 }
 

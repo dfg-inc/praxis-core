@@ -34,13 +34,16 @@ describe("a user's review remark is stored, dated per kind of change, and logged
     expect(lastNote(s)).not.toContain("rejected");
   });
 
-  it("the same status sent again changes nothing and logs no decision", () => {
-    let s = decide(seeded(), { status: "rejected", comment: "x" }, T2);
-    s = decide(s, { status: "rejected", comment: "x" }, T3);
-    expect(review(s).at).toBe(T2.toISOString());
-    expect(review(s).commentAt).toBe(T2.toISOString());
-    expect(lastNote(s)).toContain("no change");
+  it("the same status and remark sent again is a no-op: same state, same revision, no history line", () => {
+    const first = decide(seeded(), { status: "rejected", comment: "x" }, T2);
+    const again = decide(first, { status: "rejected", comment: "x" }, T3);
+    expect(again).toBe(first);
+    expect(review(again).at).toBe(T2.toISOString());
+    expect(review(again).commentAt).toBe(T2.toISOString());
+    expect(again.workItem.revision).toBe(first.workItem.revision);
+    expect(again.history).toHaveLength(first.history.length);
   });
+
 
   it("a status change moves the decision time and keeps the comment", () => {
     let s = decide(seeded(), { status: "rejected", comment: "reason" }, T2);

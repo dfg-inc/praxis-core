@@ -84,3 +84,18 @@ Work items written by alpha.48 (contract 1.0.0) are read as they are and open in
 
 **Requirements review: remarks and fingerprints.** For each acceptance criterion Praxis stores the user's status and their comment. `at`/`via` describe the status decision only and move when the status changes; `commentAt`/`commentVia` describe the last comment change, so editing a comment never looks like a new decision. When a criterion's text is revised it goes back to `pending` and the earlier decision and reason stay readable as `previous` (shown on the review page). `praxis_workflow_inspect` (`view: requirements` or `all`) returns this for every criterion and a `requirementReview` summary (rejected, commented, pending, progress, acceptance state, fingerprint), so a BA can act on a remark without reading files. The requirements fingerprint covers content (statements, scope, criteria text), not marks or comments: marking or commenting does not invalidate an acceptance, but a rejected or reopened criterion keeps the gate to the next stage shut until every criterion is accepted again.
 
+
+## Changing one acceptance criterion
+
+A criterion has a stable id (`REQ-ORD-002-AC-06`). To change its text, send `revise-acceptance` with one edit per criterion:
+
+```json
+{ "action": "revise-acceptance", "edits": [ { "id": "REQ-ORD-002-AC-06", "statement": "new text", "expectedRevision": 1 } ] }
+```
+
+- Preview first (`praxis_workflow_preview`): the result lists each criterion with its text, revision and review status before and after (`acceptanceChanges`). The user confirms, then `praxis_workflow_apply`.
+- Only the named criteria change: their revision goes up by one, their review returns to `pending`, and the decision and remark they had stay readable as `previous`. Other criteria, accepted ones included, are not touched. The owning requirement's revision goes up (its content changed), and verdicts, stories and implementation records that rest on it become stale.
+- `expectedRevision` (optional) refuses the edit when the criterion changed since it was read. Independently of it, a preview is bound to the exact stored state: if anything changed after the preview (a user mark in the HTML Review, another edit), apply fails with `FINGERPRINT_MISMATCH` and the preview is made again.
+- `review-requirements` still accepts `decisions[].acceptance[].statement` for the same edit; `revise-requirement` changes a whole requirement and does not take a criterion id.
+- A command with a key its action does not accept (`editAcceptance`, a misspelt field) is refused with `UNKNOWN_COMMAND_PARAMETER`, naming the key and the accepted ones. Nothing is changed. (Server-owned fields echoed back in `set-contract`, `agreement` and `everAgreed`, are ignored.)
+- A command that changes nothing (same text, same marks, same remarks) is a no-op: the stored state, the revision and the history stay as they were, and the preview says `noChange`.

@@ -2,6 +2,7 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { accessSync, constants } from "node:fs";
 import { z } from "zod";
 import { WorkflowError } from "./errors.js";
+import { parseStrict } from "./command-strict.js";
 import { RequirementIdSchema } from "./ids.js";
 import { PlanningStateFields, ScopeSchema, WorkItemKindSchema, WorkflowModeSchema } from "./planning-schemas.js";
 import { PLANNING_ACTIONS, PlanningCommandSchemas, acceptanceStatus, applyPlanningCommand, migrateWorkflowState, type PlanningCommand } from "./planning.js";
@@ -1375,6 +1376,11 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
 ]);
 export type WorkflowCommand = z.infer<typeof WorkflowCommandSchema>;
 
+/** Parses a command and refuses keys its action does not accept (they are never silently dropped). */
+export function parseWorkflowCommand(raw: unknown): WorkflowCommand {
+  return parseStrict(WorkflowCommandSchema, raw);
+}
+
 export function commandFingerprint(command: WorkflowCommand): string {
   return fingerprintPayload(command);
 }
@@ -1385,7 +1391,7 @@ export function applyWorkflowCommand(
   /** Set by the Runtime from the user's decision. Never part of the command: nothing an agent sends can carry it. */
   options?: { userApproval?: UserApproval; now?: Date; channel?: ReviewChannel },
 ): { state: WorkflowState; duplicate: boolean; result: unknown } {
-  const command = WorkflowCommandSchema.parse(raw);
+  const command = parseWorkflowCommand(raw);
   if (command.action === "open") {
     if (state) return { state, duplicate: true, result: { workflowId: state.workflowId } };
     // Opening in classic mode switches the stage gates off from the start: that is the user's choice, never the agent's.
@@ -1421,6 +1427,10 @@ export function applyWorkflowCommand(
     return { state: next, duplicate: false, result: { requirementId: command.id } };
   }
   if (command.action === "revise-requirement") {
+    const existing = state.requirements.find((r) => r.id === command.id && r.status !== "superseded");
+    if (existing && existing.statement === command.statement) {
+      return { state, duplicate: true, result: { requirementId: command.id, noChange: true, revision: existing.revision } };
+    }
     const next = reviseRequirement(state, command.id, command.statement);
     return { state: next, duplicate: false, result: { requirementId: command.id } };
   }

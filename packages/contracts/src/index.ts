@@ -438,6 +438,7 @@ export {
   classifyJiraFailure,
   diagnoseCompatibility,
   WorkflowCommandSchema,
+  parseWorkflowCommand,
   commandFingerprint,
   applyWorkflowCommand,
   storyContentFingerprint,

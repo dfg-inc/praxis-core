@@ -317,7 +317,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
     const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).map((x) => ({ storyId: x.storyId, revision: x.revision }));
     for (const a of acceptStories) details.push(`${a.storyId}: ACCEPT everything in the story (revision ${a.revision})`);
     if (items.length > 0 || acceptStories.length > 0) {
-      commands.push({ action: "review-stories", via, items, acceptStories });
+      commands.push({ action: "review-stories", via, items: items.map(({ from: _from, ...rest }) => rest), acceptStories });
       summary.push(`${items.length} item mark(s), ${acceptStories.length} bulk accept(s)`);
     }
     if (s.accept) {

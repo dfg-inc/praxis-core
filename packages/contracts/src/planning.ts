@@ -444,6 +444,8 @@ const NewStoryFromOriginal = StoryPatch.extend({
 
 export const PlanningCommandSchemas = [
   z.object({ action: z.literal("review-requirements"), via: Via, decisions: z.array(RequirementDecision).min(1) }),
+  /** Changes the text of single acceptance criteria by their stable id; nothing else is touched. */
+  z.object({ action: z.literal("revise-acceptance"), edits: z.array(z.object({ id: z.string().min(1), statement: z.string().min(1), expectedRevision: z.number().int().positive().optional() })).min(1) }),
   z.object({ action: z.literal("accept-requirements"), via: Via, requirementIds: z.array(RequirementIdSchema).optional() }),
   z.object({ action: z.literal("set-requirement-scope"), requirementIds: z.array(RequirementIdSchema).min(1), scope: ScopeSchema, note: z.string().optional() }),
   z.object({ action: z.literal("set-prototype"), prototype: PrototypeInput, summary: z.string().optional() }),
@@ -512,6 +514,7 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
   let next = state;
   const changed: string[] = [];
   const summary: string[] = [];
+  const acceptanceChanges: Array<Record<string, unknown>> = [];
   let contentChanged = false;
   for (const decision of command.decisions) {
     const current = requirementOf(next, decision.requirementId);
@@ -539,6 +542,7 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
       const index = requirement.acceptanceCriteria.findIndex((c) => c.id === ac.id);
       if (index < 0) throw missing("MISSING_ACCEPTANCE_CRITERION", `${ac.id} is not an acceptance criterion of ${requirement.id}`);
       let criterion = requirement.acceptanceCriteria[index];
+      const before = criterion;
       if (ac.statement !== undefined && ac.statement !== criterion.statement) {
         const old = criterion.review;
         // the decision the text had stays readable (with its reason) after the text is revised and the item goes back to pending
@@ -546,6 +550,13 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
         criterion = { ...criterion, statement: ac.statement, revision: criterion.revision + 1, review: { status: "pending", ...(previous ? { previous } : {}) } };
         revised = true;
         summary.push(`${ac.id} edited`);
+        acceptanceChanges.push({
+          id: ac.id,
+          requirementId: requirement.id,
+          before: { statement: before.statement, revision: before.revision, status: old.status, ...(old.comment ? { comment: old.comment } : {}) },
+          after: { statement: ac.statement, revision: criterion.revision, status: "pending" },
+          previousKept: Boolean(previous),
+        });
       }
       if (ac.status !== undefined || ac.comment !== undefined) {
         const old = criterion.review;
@@ -605,14 +616,18 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
     next = dropDanglingRefs(next);
     next = cascadeScope(next, now).state;
   }
-  next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ") || "no change"}`);
+  if (summary.length === 0 && !contentChanged) {
+    // nothing differs from what is stored: no revision, no history line, no new state
+    return { state, duplicate: true, result: { changedRequirementIds: [], noChange: true, reviewProgress: reviewProgress(state), accepted: acceptanceStatus(state, "requirements_review") === "accepted" } };
+  }
+  next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ")}`);
   // The user ticking every criterion IS the acceptance of the review: no second checkbox is needed.
   const marked = command.decisions.some((d) => d.acceptance.some((a) => a.status !== undefined));
   if (marked && (command.via === "html-review" || command.via === "approved") && reviewProgress(next).complete && acceptanceStatus(next, "requirements_review") !== "accepted") {
     next = recordAcceptance(next, "requirements_review", command.via, now);
     next = { ...next, requirements: next.requirements.map((r) => (r.scope === "in" && r.status !== "superseded" ? { ...r, status: "approved" as const } : r)) };
   }
-  return { state: next, duplicate: false, result: { changedRequirementIds: changed, reviewProgress: reviewProgress(next), accepted: acceptanceStatus(next, "requirements_review") === "accepted" } };
+  return { state: next, duplicate: false, result: { changedRequirementIds: changed, ...(acceptanceChanges.length ? { acceptanceChanges } : {}), reviewProgress: reviewProgress(next), accepted: acceptanceStatus(next, "requirements_review") === "accepted" } };
 }
 
 /** Verdicts, implementation units and stories that rest on a requirement are stale once it changes. */
@@ -1296,6 +1311,23 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
   switch (command.action) {
     case "review-requirements":
       return applyRequirementDecisions(state, command, now);
+    case "revise-acceptance": {
+      const seen = new Set<string>();
+      const byRequirement = new Map<string, Array<{ id: string; statement: string }>>();
+      for (const edit of command.edits) {
+        if (seen.has(edit.id)) throw new WorkflowError("DUPLICATE_ACCEPTANCE_EDIT", `${edit.id} is edited twice in one command; send one edit per criterion`);
+        seen.add(edit.id);
+        const owner = activeRequirements(state).find((r) => r.acceptanceCriteria.some((c) => c.id === edit.id));
+        if (!owner) throw missing("MISSING_ACCEPTANCE_CRITERION", `${edit.id} is not an acceptance criterion of any active requirement`);
+        const criterion = owner.acceptanceCriteria.find((c) => c.id === edit.id)!;
+        if (edit.expectedRevision !== undefined && edit.expectedRevision !== criterion.revision) {
+          throw new WorkflowError("ACCEPTANCE_REVISION_CONFLICT", `${edit.id} is at revision ${criterion.revision}, not ${edit.expectedRevision}: it changed after you read it. Read it again (praxis_workflow_inspect, view requirements) and propose the edit again.`);
+        }
+        byRequirement.set(owner.id, [...(byRequirement.get(owner.id) ?? []), { id: edit.id, statement: edit.statement }]);
+      }
+      const decisions = [...byRequirement].map(([requirementId, acceptance]) => ({ requirementId, acceptance, addAcceptance: [], removeAcceptance: [] })) as Array<z.input<typeof RequirementDecision>>;
+      return applyRequirementDecisions(state, { action: "review-requirements", via: "chat", decisions: decisions.map((d) => RequirementDecision.parse(d)) }, now);
+    }
     case "accept-requirements": {
       const ids = command.requirementIds ?? inScope(state).map((r) => r.id as string);
       for (const id of ids) requirementOf(state, id);
