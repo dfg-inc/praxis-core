@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { JSDOM } from "jsdom";
 import { beforeAll, describe, expect, it } from "vitest";
-import { applyWorkflowCommand, migrateWorkflowState, openLocalWorkflow, phaseGates, renderReview, submissionToCommands, WorkflowStateSchema, type WorkflowState } from "./index.js";
+import { applyWorkflowCommand, migrateWorkflowState, openLocalWorkflow, phaseGates, renderReview, submissionToCommands, workStateStamp, WorkflowStateSchema, type WorkflowState } from "./index.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
 const U = { via: "html-review" as const };
@@ -61,7 +61,7 @@ describe("default mode and switching", () => {
 
   it("the user switches mode from a review submission, and the dialog line says what stops being enforced", () => {
     const guided = run(classicItem(), { action: "set-mode", mode: "guided" });
-    const plan = submissionToCommands(guided, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: guided.workItem.id, baseFingerprint: "x", modeChange: { to: "classic", reason: "no" } });
+    const plan = submissionToCommands(guided, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: guided.workItem.id, baseFingerprint: "x", baseState: workStateStamp(guided), modeChange: { to: "classic", reason: "no" } });
     expect(plan.commands).toEqual([{ action: "set-mode", via: "html-review", mode: "classic", reason: "no" }]);
     expect(plan.details[0]).toMatch(/gates, plan-before-stories and coverage checks stop being enforced/);
   });

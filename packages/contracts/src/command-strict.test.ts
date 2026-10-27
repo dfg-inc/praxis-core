@@ -69,3 +69,39 @@ describe("real commands: a stray key deep inside is refused, nothing is silently
     expect(parsed.contract.agreement).toBeUndefined();
   });
 });
+
+describe("audit: no agent-facing command schema has an ambiguous object union", () => {
+  // The strict walk judges a plain union by the option that leaves the fewest unknown keys, while zod parses with the first
+  // option that matches. They differ only for a union of overlapping object options. None exists in a command; this keeps it so.
+  it("every non-discriminated union reachable from WorkflowCommandSchema has at most one object option", async () => {
+    const { WorkflowCommandSchema } = await import("./index.js");
+    const seen = new Set<unknown>();
+    const offenders: string[] = [];
+    const visit = (schema: z.ZodTypeAny, path: string): void => {
+      if (!schema || seen.has(schema)) return;
+      seen.add(schema);
+      const def = (schema as { _def: Record<string, unknown> })._def;
+      if (schema instanceof z.ZodUnion) {
+        const objects = (schema.options as z.ZodTypeAny[]).filter((o) => o instanceof z.ZodObject);
+        if (objects.length > 1) offenders.push(path);
+      }
+      for (const value of Object.values(def)) {
+        const list = Array.isArray(value) ? value : [value];
+        list.forEach((item, i) => {
+          if (item instanceof z.ZodType) visit(item, `${path}/${String(i)}`);
+          else if (typeof item === "function") {
+            try {
+              const out = (item as () => unknown)();
+              if (out && typeof out === "object") for (const [k, v] of Object.entries(out as Record<string, unknown>)) if (v instanceof z.ZodType) visit(v, `${path}.${k}`);
+            } catch {
+              /* not a shape getter */
+            }
+          }
+        });
+      }
+    };
+    visit(WorkflowCommandSchema, "command");
+    expect(offenders).toEqual([]);
+    expect(seen.size).toBeGreaterThan(100); // the walk really went through the schema
+  });
+});

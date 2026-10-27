@@ -6,6 +6,7 @@ import { RequirementIdSchema, StoryIdSchema } from "./ids.js";
 import {
   contractsFingerprint,
   currentFingerprint,
+  isUserDecision,
   prototypeFingerprint,
   requirementsFingerprint,
   storiesFingerprint,
@@ -104,6 +105,11 @@ export const ReviewSubmissionSchema = z.object({
   workItemId: z.string().min(1),
   /** Fingerprint of the artifact when the page was rendered. */
   baseFingerprint: z.string().min(1),
+  /**
+   * workStateStamp of the work item when the decisions were made. A mode change or a waiver is a decision about the item as a
+   * whole (gates, coverage), so it is applied only if the item is still as it was then.
+   */
+  baseState: z.string().max(100).optional(),
   /** reviewStamp of what the page showed. A save whose stamp is not the live one is from an out-of-date page. */
   baseStamp: z.string().max(100).optional(),
   submittedAt: z.string().optional(),
@@ -138,6 +144,34 @@ export function planEntryBase(entry: StoryPlanEntry): string {
 export function reviewStamp(state: WorkflowState, view: ReviewView): string {
   const slice = view === "requirements" ? state.requirements : view === "story-plan" ? state.storyPlan : view === "contracts" ? state.contracts : view === "prototype" ? state.prototype : state.stories;
   return createHash("sha256").update(canonicalText({ view, mode: state.mode, slice })).digest("hex").slice(0, 24);
+}
+
+/**
+ * The work item as a whole, for decisions that are about it and not about one page: its mode and stage, the requirements
+ * with their revisions and scope, the artifacts' revisions, the stories, the contracts and the waivers on record.
+ */
+export function workStateStamp(state: WorkflowState): string {
+  const slice = {
+    mode: state.mode,
+    phase: state.phase,
+    requirements: state.requirements.map((r) => [r.id, r.revision, r.scope, r.status]),
+    prototype: state.prototype ? [state.prototype.revision, state.prototype.status] : null,
+    plan: state.storyPlan ? [state.storyPlan.revision, state.storyPlan.status] : null,
+    stories: state.stories.map((x) => [x.id, x.revision, x.status]),
+    contracts: state.contracts.map((c) => [c.id, c.status]),
+    waivers: state.waivers.map((w) => [w.kind, w.requirementId ?? null, w.reason]),
+  };
+  return createHash("sha256").update(canonicalText(slice)).digest("hex").slice(0, 24);
+}
+
+/**
+ * Commands that must be shown to the user and approved together when a handed-over file is applied. Marks and agreements are
+ * decisions (isUserDecision); the others change what the user already reviewed or removes what they agreed to, so they are
+ * never applied as a quiet extra next to an approval that did not show them.
+ */
+const SHOWN_AND_APPROVED = new Set(["update-story", "exclude-story", "restore-story", "remove-contract", "set-mode", "waive-coverage"]);
+export function needsApprovalWhenHandedOver(command: { action: string } & Record<string, unknown>): boolean {
+  return isUserDecision(command) || SHOWN_AND_APPROVED.has(command.action);
 }
 
 export function fingerprintFor(state: WorkflowState, view: ReviewView): string {
@@ -366,16 +400,19 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       if (story.narrative !== undefined || story.objective !== undefined) {
         commands.push({ action: "update-story", id: story.storyId, patch: { ...(story.narrative !== undefined ? { narrative: story.narrative } : {}), ...(story.objective !== undefined ? { objective: story.objective } : {}) }, reason: "edited in the review" });
         summary.push(`${story.storyId} edited`);
+        details.push(`${story.storyId} (revision ${current.revision}): EDIT${story.narrative !== undefined ? ` narrative '${current.narrative.slice(0, 120)}' -> '${story.narrative.slice(0, 400)}'` : ""}${story.objective !== undefined ? ` objective '${current.objective.slice(0, 120)}' -> '${story.objective.slice(0, 400)}'` : ""}; marks on this story start over and its confirmation is withdrawn`);
         continue; // the revision moved: marks for this story would be stale, the user reviews it again
       }
       if (story.exclude !== undefined) {
         commands.push({ action: "exclude-story", id: story.storyId, reason: story.exclude });
         summary.push(`${story.storyId} excluded`);
+        details.push(`${story.storyId}: EXCLUDE from scope (${story.exclude.slice(0, 400)})`);
         continue;
       }
       if (story.restore) {
         commands.push({ action: "restore-story", id: story.storyId });
         summary.push(`${story.storyId} restored`);
+        details.push(`${story.storyId}: RESTORE to scope`);
         continue;
       }
     }
@@ -464,12 +501,27 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       details.push(`REMOVE contract ${id} '${contract.name}' (${contract.status})`);
     }
   }
-  if (submission.modeChange && submission.modeChange.to !== state.mode) {
+  const stateStamp = workStateStamp(state);
+  const wholeItemConflict = (what: string): string | null =>
+    submission.baseState === undefined
+      ? `${what} is a decision about the whole work item and this file does not say which state it was made for: render the review again (it returns baseState) and decide on the current state`
+      : submission.baseState !== stateStamp
+        ? `the work item changed since this ${what} was made (mode, stage, requirements, stories, contracts or waivers): render the review again and decide on the current state`
+        : null;
+  if (submission.modeChange && submission.modeChange.to !== state.mode && wholeItemConflict("mode change")) {
+    conflicts.push({ item: "mode change", reason: wholeItemConflict("mode change") as string });
+  } else if (submission.modeChange && submission.modeChange.to !== state.mode) {
     commands.push({ action: "set-mode", via, mode: submission.modeChange.to, ...(submission.modeChange.reason ? { reason: submission.modeChange.reason } : {}) });
     summary.push(`mode -> ${submission.modeChange.to}`);
     details.push(`SWITCH this work item from ${state.mode} to ${submission.modeChange.to}${submission.modeChange.to === "classic" ? ": stage gates, plan-before-stories and coverage checks stop being enforced (nothing is deleted)" : ""}`);
   }
   for (const w of submission.waivers) {
+    if (state.waivers.some((x) => x.kind === w.kind && (x.requirementId ?? null) === (w.requirementId ?? null) && x.reason === w.reason)) continue; // already on record: replaying the file adds nothing
+    const waiverConflict = wholeItemConflict(`waiver of ${w.kind}`);
+    if (waiverConflict) {
+      conflicts.push({ item: `waive ${w.kind}`, reason: waiverConflict });
+      continue;
+    }
     commands.push({ action: "waive-coverage", kind: w.kind, ...(w.requirementId ? { requirementId: w.requirementId } : {}), reason: w.reason });
     summary.push(`waive ${w.kind}`);
     details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason.slice(0, 400)}'`);

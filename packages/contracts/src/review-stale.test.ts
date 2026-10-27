@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
-import { applyWorkflowCommand, renderReview, submissionToCommands, type ReviewView, type WorkflowState } from "./index.js";
+import { applyWorkflowCommand, needsApprovalWhenHandedOver, renderReview, reviewStamp, submissionToCommands, workStateStamp, type ReviewView, type WorkflowState } from "./index.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
 const LATER = new Date("2026-10-26T11:00:00.000Z");
@@ -198,5 +198,78 @@ describe("the accept / agree controls need a page that is still current", () => 
     expect(plan(s, agree).commands.some((c) => c.action === "agree-story-plan")).toBe(true);
     const marked = ok(s, { action: "update-story-plan", via: "html-review", operations: [{ op: "review", id: "US-ORD-001", status: "pending", comment: "unclear" }] }, LATER);
     expect(plan(marked, agree).commands.some((c) => c.action === "agree-story-plan")).toBe(false);
+  });
+});
+
+describe("handed-over decisions about the whole item (mode, waivers) are applied only to the state they were made for", () => {
+  const file = (state: WorkflowState, extra: Record<string, unknown>) => ({ contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: state.workItem.id, baseFingerprint: "x", ...extra });
+  const waiver = { kind: "prototype", reason: "pure refactor, nothing to show" };
+
+  it("a waiver or mode change without baseState, or with a baseState that no longer matches, is a conflict and produces no command", () => {
+    const s = base();
+    const stamp = workStateStamp(s);
+    for (const body of [{ waivers: [waiver] }, { modeChange: { to: "classic" } }]) {
+      const none = plan(s, file(s, body));
+      expect(none.commands).toHaveLength(0);
+      expect(reasons(none)).toMatch(/does not say which state/);
+      const current = plan(s, file(s, { ...body, baseState: stamp }));
+      expect(current.conflicts).toEqual([]);
+      expect(current.commands).toHaveLength(1);
+    }
+    // the item moved after the file was made: scope, a requirement, a waiver, the mode
+    const moved = [
+      ok(s, { action: "set-requirement-scope", requirementIds: ["REQ-ORD-001"], scope: "deferred" }, LATER),
+      ok(s, { action: "add-requirement", id: "REQ-ORD-009", statement: "More", acceptanceCriteria: ["x"] }, LATER),
+      ok(s, { action: "waive-coverage", kind: "prototype", reason: "another reason" }, LATER),
+    ];
+    for (const later of moved) {
+      for (const body of [{ waivers: [waiver] }, { modeChange: { to: "classic" } }]) {
+        const stale = plan(later, file(later, { ...body, baseState: stamp }));
+        expect(stale.commands).toHaveLength(0);
+        expect(reasons(stale)).toMatch(/work item changed since.*render the review again/);
+      }
+    }
+  });
+
+  it("replaying a waiver file adds nothing", () => {
+    let s = base();
+    const body = (state: WorkflowState) => file(state, { waivers: [waiver], baseState: workStateStamp(state) });
+    const first = plan(s, body(s));
+    expect(first.commands).toHaveLength(1);
+    s = ok(s, first.commands[0], LATER);
+    const again = plan(s, body(s));
+    expect(again.commands).toHaveLength(0);
+    expect(again.conflicts).toEqual([]);
+  });
+
+  it("the review page carries baseState, so what the page copies out is bound to the item", () => {
+    const s = base();
+    const p = page(s, "requirements");
+    expect(p.decisions().baseState).toBe(workStateStamp(s));
+  });
+});
+
+describe("what a handed-over file changes is what the dialog shows", () => {
+  const storyFile = (state: WorkflowState, stories: Array<Record<string, unknown>>) => ({ contract: "praxis.review.submission", version: 1, reviewId: "r", view: "stories", workItemId: state.workItem.id, baseFingerprint: "x", baseStamp: reviewStamp(state, "stories"), stories: { items: [], stories, accept: false } });
+
+  it("every command in the plan has a line in the details: story edits, exclude and restore included", () => {
+    const s = withStories();
+    for (const story of [{ storyId: "US-ORD-001", revision: 1, narrative: "As a manager, I want fast orders, so that I work." }, { storyId: "US-ORD-001", revision: 1, exclude: "not needed" }]) {
+      const result = plan(s, storyFile(s, [story]));
+      expect(result.commands).toHaveLength(1);
+      expect(result.details.join("\n")).toContain("US-ORD-001");
+      expect(result.details.join("\n")).toMatch(/EDIT|EXCLUDE/);
+    }
+    const excluded = ok(s, { action: "exclude-story", id: "US-ORD-001", reason: "x" }, LATER);
+    const st = excluded.stories.find((x) => x.id === "US-ORD-001")!;
+    const restore = plan(excluded, storyFile(excluded, [{ storyId: "US-ORD-001", revision: st.revision, restore: true }]));
+    expect(restore.details.join("\n")).toContain("RESTORE");
+  });
+
+  it("story edits, exclusions, restores, contract removals, mode changes and waivers all need the approved dialog when a file is handed over", () => {
+    for (const action of ["update-story", "exclude-story", "restore-story", "remove-contract", "set-mode", "waive-coverage", "accept-requirements"]) {
+      expect(needsApprovalWhenHandedOver({ action, mode: "guided", decisions: [] })).toBe(true);
+    }
+    expect(needsApprovalWhenHandedOver({ action: "prototype-feedback" })).toBe(false);
   });
 });

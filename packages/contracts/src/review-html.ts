@@ -1,4 +1,4 @@
-import { fingerprintFor, planEntryBase, reviewStamp, type ReviewView } from "./review-submission.js";
+import { fingerprintFor, planEntryBase, reviewStamp, workStateStamp, type ReviewView } from "./review-submission.js";
 import { reviewProgress, storyReviewProgress, analyzeStoryCoverage, acceptanceStatus } from "./planning.js";
 import type { WorkflowState } from "./workflow.js";
 
@@ -80,7 +80,7 @@ function val(el){return el?el.value.trim():''}
 function num(el){return parseInt(el.getAttribute('data-rev'),10)}
 function markOf(root,name){var c=$('input[name="'+name+'"]:checked',root);return c?c.value:null}
 function collect(){
-  var s={contract:'praxis.review.submission',version:1,reviewId:D.reviewId,view:D.view,workItemId:D.workItemId,baseFingerprint:D.baseFingerprint,baseStamp:D.baseStamp,submittedAt:new Date().toISOString()};
+  var s={contract:'praxis.review.submission',version:1,reviewId:D.reviewId,view:D.view,workItemId:D.workItemId,baseFingerprint:D.baseFingerprint,baseStamp:D.baseStamp,baseState:D.baseState,submittedAt:new Date().toISOString()};
   if(D.view==='requirements'){
     var reqs=[];
     $$('[data-req]').forEach(function(card){
@@ -244,6 +244,7 @@ function shell(state: WorkflowState, view: ReviewView, title: string, body: stri
     workItemId: state.workItem.id,
     baseFingerprint: fingerprintFor(state, view),
     baseStamp: reviewStamp(state, view),
+    baseState: workStateStamp(state),
     saveUrl: options.saveUrl,
     token: options.token,
     ...data,
