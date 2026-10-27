@@ -30,7 +30,7 @@ function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
 const ECHOED_STATE_FIELDS: Record<string, string[]> = {
   contract: ["agreement", "everAgreed"],
   // keys that would claim the user's authority are never read from a command; they are dropped, and the command still needs the user's real channel
-  "": ["via", "approval", "userApproval", "channel", "userApproved"],
+  "": ["via", "approval", "userApproval", "channel", "userApproved", "authorization", "grant", "approved"],
 };
 
 function walk(schema: z.ZodTypeAny, value: unknown, path: string, out: UnknownParameter[]): void {
