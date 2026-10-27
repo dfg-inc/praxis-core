@@ -27,7 +27,11 @@ function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
  * State-only fields an agent legitimately echoes back when it copies a stored object into a command (set-contract with a
  * contract read from the state). They are still never stored from the command; only the refusal is waived.
  */
-const ECHOED_STATE_FIELDS: Record<string, string[]> = { contract: ["agreement", "everAgreed"] };
+const ECHOED_STATE_FIELDS: Record<string, string[]> = {
+  contract: ["agreement", "everAgreed"],
+  // keys that would claim the user's authority are never read from a command; they are dropped, and the command still needs the user's real channel
+  "": ["via", "approval", "userApproval", "channel", "userApproved"],
+};
 
 function walk(schema: z.ZodTypeAny, value: unknown, path: string, out: UnknownParameter[]): void {
   const node = unwrap(schema);
