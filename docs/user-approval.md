@@ -61,6 +61,8 @@ For a host that has no dialog but does ask before running an MCP tool, you can s
 
 What it cannot do, stated plainly: Praxis cannot see whether the host's prompt was shown. If you chose "always allow" for the tool, there is no prompt and the agent has approved itself. The result is labelled `assurance: "host-prompt"` (never `client-ui`), and quality fixes (commit then push, two approvals) still need a dialog. Leave it off if your client has the dialog.
 
+**Acts only a person may perform are never covered by this mode** (nor by Trusted Client): confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion (`revise-acceptance`), recording review decisions (`praxis_review_apply`), opening a classic work item. Without the client's own dialog they end with `APPROVAL_CLIENT_UI_REQUIRED` and nothing changes, whatever `planText` says; `praxis_approval_plan` then returns `available: false` and no plan text.
+
 ### Opt-in: `PRAXIS_APPROVAL_MODE=trusted-client` (Trusted Client)
 
 The owner's explicit decision to trust a client with protected actions without a separate confirmation of each one, for example Claude Desktop with "Always allow". Extension setting *Approval mode*, or the environment variable for a client that starts the Runtime itself (Claude Code, Cowork). It is never the default and a repository `.env` cannot set it.
