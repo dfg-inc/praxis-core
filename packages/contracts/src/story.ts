@@ -30,6 +30,19 @@ export const ReviewMarkSchema = z.object({
   comment: z.string().optional(),
   at: z.string().optional(),
   via: z.enum(["html-review", "approved", "chat", "system"]).optional(),
+  /** When and through which channel the comment last changed. `at`/`via` above are the STATUS decision only, so editing a comment does not look like a new decision. */
+  commentAt: z.string().optional(),
+  commentVia: z.enum(["html-review", "approved", "chat", "system"]).optional(),
+  /** The decision this item had before its text was revised: the reason a user gave stays readable when the item goes back to pending. */
+  previous: z
+    .object({
+      status: z.enum(["pending", "accepted", "rejected"]),
+      comment: z.string().optional(),
+      at: z.string().optional(),
+      via: z.enum(["html-review", "approved", "chat", "system"]).optional(),
+      revision: z.number().int().positive().optional(),
+    })
+    .optional(),
 });
 export type ReviewMark = z.infer<typeof ReviewMarkSchema>;
 

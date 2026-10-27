@@ -526,28 +526,47 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
       revised = true;
       summary.push(`${requirement.id} scope ${current.scope} -> ${decision.scope}`);
     } else if (decision.scopeNote !== undefined) {
+      if (decision.scopeNote !== (requirement.scopeNote ?? "")) summary.push(`${requirement.id} scope note changed`);
       requirement = { ...requirement, scopeNote: decision.scopeNote };
     }
-    if (decision.comment !== undefined) requirement = { ...requirement, comment: decision.comment };
+    if (decision.comment !== undefined) {
+      const next = decision.comment === "" ? undefined : decision.comment;
+      if (next !== requirement.comment) summary.push(`${requirement.id} comment ${next === undefined ? "cleared" : "changed"}`);
+      const { comment: _old, ...rest } = requirement;
+      requirement = next === undefined ? rest : { ...rest, comment: next };
+    }
     for (const ac of decision.acceptance) {
       const index = requirement.acceptanceCriteria.findIndex((c) => c.id === ac.id);
       if (index < 0) throw missing("MISSING_ACCEPTANCE_CRITERION", `${ac.id} is not an acceptance criterion of ${requirement.id}`);
       let criterion = requirement.acceptanceCriteria[index];
       if (ac.statement !== undefined && ac.statement !== criterion.statement) {
-        criterion = { ...criterion, statement: ac.statement, revision: criterion.revision + 1, review: { status: "pending" } };
+        const old = criterion.review;
+        // the decision the text had stays readable (with its reason) after the text is revised and the item goes back to pending
+        const previous = old.status !== "pending" || old.comment ? { status: old.status, ...(old.comment ? { comment: old.comment } : {}), ...(old.at ? { at: old.at } : {}), ...(old.via ? { via: old.via } : {}), revision: criterion.revision } : old.previous;
+        criterion = { ...criterion, statement: ac.statement, revision: criterion.revision + 1, review: { status: "pending", ...(previous ? { previous } : {}) } };
         revised = true;
         summary.push(`${ac.id} edited`);
       }
       if (ac.status !== undefined || ac.comment !== undefined) {
+        const old = criterion.review;
+        const statusChanged = ac.status !== undefined && ac.status !== old.status;
+        const nextComment = ac.comment !== undefined ? (ac.comment === "" ? undefined : ac.comment) : old.comment;
+        const commentChanged = ac.comment !== undefined && nextComment !== old.comment;
+        // `at`/`via` describe the STATUS decision: they move only when the status moves, never because a comment was edited
+        const decided = statusChanged ? { at: iso(now), via: command.via } : { ...(old.at ? { at: old.at } : {}), ...(old.via ? { via: old.via } : {}) };
+        const commented = commentChanged ? { commentAt: iso(now), commentVia: command.via } : { ...(old.commentAt ? { commentAt: old.commentAt } : {}), ...(old.commentVia ? { commentVia: old.commentVia } : {}) };
         criterion = {
           ...criterion,
           review: {
-            status: ac.status ?? criterion.review.status,
-            ...(ac.comment !== undefined ? { comment: ac.comment } : criterion.review.comment !== undefined ? { comment: criterion.review.comment } : {}),
-            at: iso(now),
-            via: command.via,
+            status: ac.status ?? old.status,
+            ...(nextComment !== undefined ? { comment: nextComment } : {}),
+            ...decided,
+            ...commented,
+            ...(old.previous ? { previous: old.previous } : {}),
           },
         };
+        if (statusChanged) summary.push(`${ac.id} ${ac.status}`);
+        if (commentChanged) summary.push(`${ac.id} comment ${nextComment === undefined ? "cleared" : "changed"}`);
       }
       requirement.acceptanceCriteria[index] = criterion;
     }
@@ -583,7 +602,7 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
     next = dropDanglingRefs(next);
     next = cascadeScope(next, now).state;
   }
-  next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ") || "marks only"}`);
+  next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ") || "no change"}`);
   // The user ticking every criterion IS the acceptance of the review: no second checkbox is needed.
   const marked = command.decisions.some((d) => d.acceptance.some((a) => a.status !== undefined));
   if (marked && (command.via === "html-review" || command.via === "approved") && reviewProgress(next).complete && acceptanceStatus(next, "requirements_review") !== "accepted") {
@@ -969,10 +988,13 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
       break;
     case "prototype":
       need(acceptanceStatus(state, "requirements_review") === "accepted", "requirements accepted by the user (every criterion) and unchanged since");
+      // a criterion the user rejected or reopened after accepting keeps the gate shut (marks are not content, so the fingerprint does not show it)
+      need(reviewProgress(state).complete, `every criterion accepted (${reviewProgress(state).rejected} rejected, ${reviewProgress(state).pending} pending)`);
       if (kind !== "feature") need(state.impact !== undefined, `${kind} work needs the existing behaviour and impact recorded first (record-impact)`);
       break;
     case "story_plan":
       need(acceptanceStatus(state, "requirements_review") === "accepted", "requirements accepted and unchanged since");
+      need(reviewProgress(state).complete, "every criterion accepted (one was rejected or reopened since)");
       need(acceptanceStatus(state, "prototype") === "accepted" || state.waivers.some((w) => w.kind === "prototype"), "prototype accepted (or an explicit waiver with a reason)");
       break;
     case "stories_review": {
