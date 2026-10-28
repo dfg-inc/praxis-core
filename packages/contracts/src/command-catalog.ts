@@ -38,6 +38,8 @@ const EXAMPLES: Record<string, Record<string, unknown>> = {
 const USE: Record<string, string> = {
   "revise-acceptance": "Change the TEXT of one or more existing acceptance criteria, each by its stable id (REQ-...-AC-nn). Only those criteria change: their revision goes up, their review returns to pending, and the earlier decision and remark are kept as 'previous'. Other criteria are not touched. expectedRevision (optional) refuses the edit if the criterion changed since you read it.",
   "revise-requirement": "Change the statement of a whole requirement (its id is REQ-...). It does not take an acceptance criterion id; for one criterion use revise-acceptance.",
+  "set-prototype": "Build the prototype as something the reviewer can USE, not a set of static screens: a filter element (param, filters) narrows a table, a click on a row (rowOpens) opens a drawer or modal (param, idField, detailFields, related, withinTable, onMissing) and both live in the URL query; add tabs, showWhen, required fields, datasets (empty, legacy records) and scenarios with expect so the situations can be checked in the page. Link every element to its REQ and AC ids and list what it does not reproduce in limitations. Tokens come from praxis_frontend_discover. See docs/workflow-stages.md, Interactive prototype.",
+  "update-prototype": "Operations include set-dataset, set-scenario and set-meta (limitations) next to the screen, element and mock operations.",
   "review-requirements": "Record marks and remarks on criteria, change scope, add or remove criteria. To only reword existing criteria prefer revise-acceptance.",
 };
 

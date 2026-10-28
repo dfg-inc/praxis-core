@@ -13,7 +13,9 @@ import {
   PHASES,
   PhaseSchema,
   PrototypeElementSchema,
+  PrototypeDatasetSchema,
   PrototypeFeedbackSchema,
+  PrototypeScenarioSchema,
   PrototypeSchema,
   PrototypeScreenSchema,
   PrototypeTokensSchema,
@@ -83,10 +85,37 @@ export function contractsFingerprint(state: WorkflowState): string {
   return hash(state.contracts.map(({ status: _s, agreement: _a, everAgreed: _e, ...content }) => content));
 }
 
+/**
+ * Interaction fields added after alpha.49 default to empty. An empty value is dropped before hashing, so a prototype saved
+ * before they existed keeps the fingerprint its acceptance was recorded with (no silent "changed since you accepted it").
+ */
+const EMPTY_ELEMENT_DEFAULTS: Record<string, unknown> = { options: [], filters: [], detailFields: [], tabs: [], related: [], required: false };
+function withoutEmptyDefaults(prototype: Omit<Prototype, "feedback" | "history" | "status" | "revision">): unknown {
+  const { datasets, scenarios, limitations, screens, ...rest } = prototype;
+  const out: Record<string, unknown> = { ...rest };
+  if (datasets?.length) out.datasets = datasets;
+  if (scenarios?.length) out.scenarios = scenarios;
+  if (limitations?.length) out.limitations = limitations;
+  out.screens = screens.map((screen) => ({
+    ...screen,
+    elements: screen.elements.map((element) => {
+      const kept: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(element)) {
+        if (value === undefined) continue;
+        const dflt = EMPTY_ELEMENT_DEFAULTS[key];
+        if (key in EMPTY_ELEMENT_DEFAULTS && JSON.stringify(dflt) === JSON.stringify(value)) continue;
+        kept[key] = value;
+      }
+      return kept;
+    }),
+  }));
+  return out;
+}
+
 export function prototypeFingerprint(prototype: Prototype | undefined): string {
   if (!prototype) return "none";
   const { feedback: _f, history: _h, status: _s, revision: _r, ...content } = prototype;
-  return hash(content);
+  return hash(withoutEmptyDefaults(content));
 }
 
 export function storyPlanFingerprint(plan: StoryPlan | undefined): string {
@@ -387,7 +416,11 @@ const RequirementDecision = z.object({
 
 const PrototypeInput = PrototypeSchema.omit({ revision: true, status: true, history: true, feedback: true }).partial({ id: true, styles: true });
 const PrototypeOperation = z.discriminatedUnion("op", [
-  z.object({ op: z.literal("set-meta"), title: z.string().min(1).optional(), notes: z.string().optional(), startScreen: z.string().optional(), roles: z.array(z.string()).optional() }),
+  z.object({ op: z.literal("set-meta"), title: z.string().min(1).optional(), notes: z.string().optional(), startScreen: z.string().optional(), roles: z.array(z.string()).optional(), limitations: z.array(z.string()).optional() }),
+  z.object({ op: z.literal("set-dataset"), dataset: PrototypeDatasetSchema }),
+  z.object({ op: z.literal("remove-dataset"), id: z.string() }),
+  z.object({ op: z.literal("set-scenario"), scenario: PrototypeScenarioSchema }),
+  z.object({ op: z.literal("remove-scenario"), id: z.string() }),
   z.object({ op: z.literal("add-screen"), screen: PrototypeScreenSchema }),
   z.object({ op: z.literal("update-screen"), id: z.string(), patch: PrototypeScreenSchema.omit({ id: true, elements: true }).partial() }),
   z.object({ op: z.literal("remove-screen"), id: z.string() }),
@@ -711,6 +744,73 @@ function validatePrototype(state: WorkflowState, prototype: Prototype): void {
     const keys = new Set(collection.fields.map((f) => f.key));
     for (const row of collection.rows) for (const key of Object.keys(row)) if (!keys.has(key)) throw missing("PROTOTYPE_INVALID", `mock collection ${collection.id} has a row with unknown field ${key}`);
   }
+  validatePrototypeBehaviour(prototype, reqIds, acIds);
+}
+
+/** The interactive parts must point at things that exist, otherwise the reviewer clicks a control that silently does nothing. */
+function validatePrototypeBehaviour(prototype: Prototype, reqIds: Set<string>, acIds: Set<string>): void {
+  const fieldsOf = new Map(prototype.mock.map((c) => [c.id, new Set(c.fields.map((f) => f.key))]));
+  const screenElements = new Map(prototype.screens.map((s) => [s.id, new Map(s.elements.map((e) => [e.id, e]))]));
+  for (const screen of prototype.screens) {
+    for (const element of screen.elements) {
+      const where = `${screen.id}#${element.id}`;
+      const keys = element.collection ? fieldsOf.get(element.collection) : undefined;
+      const needField = (field: string, what: string) => {
+        if (!element.collection) throw missing("PROTOTYPE_INVALID", `${where} uses ${what} "${field}" but has no mock collection`);
+        if (keys && !keys.has(field)) throw missing("PROTOTYPE_INVALID", `${where} ${what} "${field}" is not a field of mock collection ${element.collection}`);
+      };
+      if (element.kind === "filter" && !element.param) throw missing("PROTOTYPE_INVALID", `${where} is a filter and needs a param (the URL query parameter it sets)`);
+      if (element.kind === "tabs" && element.tabs.length === 0) throw missing("PROTOTYPE_INVALID", `${where} is tabs and needs tabs`);
+      if ((element.kind === "drawer" || element.kind === "modal") && element.param) {
+        if (element.detailFields.length && !element.collection) throw missing("PROTOTYPE_INVALID", `${where} shows record fields but has no mock collection to look the record up in`);
+        for (const d of element.detailFields) needField(d.field, "detail field");
+      }
+      for (const f of element.filters) needField(f.field, "filter field");
+      for (const c of element.columns) if (keys && !keys.has(c)) throw missing("PROTOTYPE_INVALID", `${where} column "${c}" is not a field of mock collection ${element.collection}`);
+      if (element.idField && element.collection) needField(element.idField, "id field");
+      if (element.withinTable) {
+        const t = screenElements.get(screen.id)?.get(element.withinTable);
+        if (!t || !(t.kind === "table" || t.kind === "list") || t.collection !== element.collection)
+          throw missing("PROTOTYPE_INVALID", `${where} withinTable ${element.withinTable} must be a table on the same screen over the same collection`);
+      }
+      for (const rel of element.related) {
+        const rk = fieldsOf.get(rel.collection);
+        if (!rk) throw missing("PROTOTYPE_INVALID", `${where} related collection ${rel.collection} does not exist`);
+        for (const f of [rel.matchField, ...rel.columns]) if (!rk.has(f)) throw missing("PROTOTYPE_INVALID", `${where} related field "${f}" is not a field of ${rel.collection}`);
+      }
+      if (element.rowOpens) {
+        const target = screenElements.get(screen.id)?.get(element.rowOpens);
+        if (!target || !(target.kind === "drawer" || target.kind === "modal")) throw missing("PROTOTYPE_INVALID", `${where} rowOpens ${element.rowOpens}, which is not a drawer or modal on the same screen`);
+        if (!target.param) throw missing("PROTOTYPE_INVALID", `${where} opens ${element.rowOpens}, which needs a param to know which record to show`);
+      }
+      if (element.showWhen && element.showWhen.equals === undefined && element.showWhen.notEquals === undefined && element.showWhen.present === undefined)
+        throw missing("PROTOTYPE_INVALID", `${where} showWhen needs equals, notEquals or present`);
+    }
+  }
+  const datasetIds = new Set<string>();
+  for (const dataset of prototype.datasets) {
+    if (datasetIds.has(dataset.id)) throw missing("PROTOTYPE_INVALID", `duplicate dataset id ${dataset.id}`);
+    datasetIds.add(dataset.id);
+    for (const [collectionId, rows] of Object.entries(dataset.rows)) {
+      const keys = fieldsOf.get(collectionId);
+      if (!keys) throw missing("PROTOTYPE_INVALID", `dataset ${dataset.id} has rows for unknown mock collection ${collectionId}`);
+      for (const row of rows) for (const key of Object.keys(row)) if (!keys.has(key)) throw missing("PROTOTYPE_INVALID", `dataset ${dataset.id}: a ${collectionId} row has unknown field ${key}`);
+    }
+  }
+  const scenarioIds = new Set<string>();
+  for (const scenario of prototype.scenarios) {
+    if (scenarioIds.has(scenario.id)) throw missing("PROTOTYPE_INVALID", `duplicate scenario id ${scenario.id}`);
+    scenarioIds.add(scenario.id);
+    const screen = scenario.screen ?? prototype.startScreen ?? prototype.screens[0]?.id;
+    if (scenario.screen && !screenElements.has(scenario.screen)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses unknown screen ${scenario.screen}`);
+    if (scenario.dataset && !datasetIds.has(scenario.dataset)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses unknown dataset ${scenario.dataset}`);
+    if (scenario.role && !prototype.roles.includes(scenario.role)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses unknown role ${scenario.role}`);
+    const elements = screen ? screenElements.get(screen) : undefined;
+    for (const r of scenario.expect?.rows ?? []) if (!elements?.has(r.element)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects rows of unknown element ${r.element} on ${screen}`);
+    for (const o of scenario.expect?.overlay ?? []) if (!elements?.has(o.element)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects overlay of unknown element ${o.element} on ${screen}`);
+    for (const id of scenario.requirementIds) if (!reqIds.has(id)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} links unknown requirement ${id}`);
+    for (const id of scenario.acIds) if (!acIds.has(id)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} links unknown acceptance criterion ${id}`);
+  }
 }
 
 function withPrototype(state: WorkflowState, prototype: Prototype, summary: string, now: Now): WorkflowState {
@@ -738,7 +838,19 @@ function applyPrototypeOps(state: WorkflowState, operations: z.infer<typeof Prot
   for (const op of operations) {
     switch (op.op) {
       case "set-meta":
-        p = { ...p, ...(op.title !== undefined ? { title: op.title } : {}), ...(op.notes !== undefined ? { notes: op.notes } : {}), ...(op.startScreen !== undefined ? { startScreen: op.startScreen } : {}), ...(op.roles !== undefined ? { roles: op.roles } : {}) };
+        p = { ...p, ...(op.title !== undefined ? { title: op.title } : {}), ...(op.notes !== undefined ? { notes: op.notes } : {}), ...(op.startScreen !== undefined ? { startScreen: op.startScreen } : {}), ...(op.roles !== undefined ? { roles: op.roles } : {}), ...(op.limitations !== undefined ? { limitations: op.limitations } : {}) };
+        break;
+      case "set-dataset":
+        p = { ...p, datasets: [...p.datasets.filter((d) => d.id !== op.dataset.id), op.dataset] };
+        break;
+      case "remove-dataset":
+        p = { ...p, datasets: p.datasets.filter((d) => d.id !== op.id) };
+        break;
+      case "set-scenario":
+        p = { ...p, scenarios: [...p.scenarios.filter((d) => d.id !== op.scenario.id), op.scenario] };
+        break;
+      case "remove-scenario":
+        p = { ...p, scenarios: p.scenarios.filter((d) => d.id !== op.id) };
         break;
       case "add-screen":
         if (p.screens.some((s) => s.id === op.screen.id)) throw missing("PROTOTYPE_INVALID", `screen ${op.screen.id} already exists`);

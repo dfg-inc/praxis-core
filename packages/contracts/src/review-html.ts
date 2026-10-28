@@ -1,3 +1,5 @@
+import { esc, jsonForScript, pill } from "./review-util.js";
+import { PROTOTYPE_CSS, PROTOTYPE_SCRIPT, renderPrototypeBody } from "./prototype-viewer.js";
 import { fingerprintFor, planEntryBase, reviewStamp, workStateStamp, type ReviewView } from "./review-submission.js";
 import { reviewProgress, storyReviewProgress, analyzeStoryCoverage, acceptanceStatus } from "./planning.js";
 import type { WorkflowState } from "./workflow.js";
@@ -18,18 +20,7 @@ export type RenderReviewOptions = {
   generatedAt?: string;
 };
 
-export function esc(value: unknown): string {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function jsonForScript(value: unknown): string {
-  return JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-}
+export { esc };
 
 const CSS = `
 :root{--bg:#fff;--fg:#1d2330;--muted:#5d6678;--line:#d9dde6;--card:#f7f8fb;--accent:#2457d6;--ok:#17803d;--bad:#b42318;--warn:#a15c00;--okbg:#e7f6ec;--badbg:#fdeceb;--on-accent:#fff}
@@ -68,6 +59,37 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .denied{background:var(--badbg);color:var(--bad);padding:8px;border-radius:6px}
 .state-msg{padding:16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:8px}
 pre{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px;overflow:auto;font-size:12px;margin:4px 0}
+${PROTOTYPE_CSS}
+:root[data-theme=dark]{--bg:#14171f;--fg:#e6e9f0;--muted:#9aa3b5;--line:#2c3242;--card:#1c202b;--accent:#7aa2ff;--ok:#5ad08a;--bad:#ff8a80;--warn:#ffc266;--okbg:#14301f;--badbg:#3a1a18;--on-accent:#0b1020}
+.card.summary{position:sticky;top:0;z-index:4}
+.bigcount{font-size:15px;margin-bottom:6px}
+.pbar{display:flex;height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:4px 0 6px}.pbar .a{background:var(--ok)}.pbar .r{background:var(--bad)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.chip{font-size:12px;border:1px solid var(--line);border-radius:99px;padding:1px 9px;color:var(--fg);text-decoration:none;background:var(--bg)}
+.chip.accepted{border-color:var(--ok);color:var(--ok)}.chip.out{color:var(--muted)}.chip.open{border-color:var(--warn)}
+.grouph{font-size:15px;margin:22px 0 4px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.card.req{padding:14px 16px;scroll-margin-top:150px}
+.reqhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.reqhead h2{font-size:16px}.rid{font-family:ui-monospace,Menlo,monospace}
+textarea.auto{overflow:hidden;line-height:1.55;min-height:28px}
+textarea.reqtext{font-size:16px;font-weight:500;margin:6px 0 8px;border-color:transparent;background:transparent;padding:4px 0}
+textarea.reqtext:hover,textarea.reqtext:focus{border-color:var(--line);background:var(--bg);padding:4px 8px}
+.scoperow{margin-bottom:6px}.scoperow select{width:auto}
+.achead{display:flex;justify-content:space-between;align-items:center;margin-top:10px}.achead h3{margin:0}.achead button{font-size:12px;padding:2px 8px}
+.ac{display:grid;grid-template-columns:52px 1fr;gap:4px 10px;padding:10px 0;border-top:1px solid var(--line)}
+.acid{font-size:12px;color:var(--muted);padding-top:6px}
+.acbody textarea.auto{border-color:transparent;background:transparent;padding:4px 0;min-height:0}
+.acbody textarea.auto:hover,.acbody textarea.auto:focus{border-color:var(--line);background:var(--bg);padding:4px 8px}
+.acctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px}
+.acctl input[type=text]{flex:1;min-width:140px;font-size:13px;padding:3px 8px}
+.acctl .rm{font-size:12px;color:var(--muted);display:flex;gap:4px;align-items:center;cursor:pointer}
+.prev{font-size:12px;color:var(--warn);background:var(--card);border-left:3px solid var(--warn);padding:2px 8px;margin:2px 0}
+.marks.tri{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}
+.marks.tri label{position:relative;gap:0;margin:0}.marks.tri label+label{border-left:1px solid var(--line)}
+.marks.tri input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.marks.tri span{display:block;padding:3px 10px;font-size:13px}
+.marks.tri label:has(input:checked).m-accepted span{background:var(--ok);color:#fff}.marks.tri label:has(input:checked).m-rejected span{background:var(--bad);color:#fff}.marks.tri label:has(input:checked).m-pending span{background:var(--card);font-weight:600}
+.marks.tri label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:1px}
+.addrow{margin-top:8px}.addrow textarea{min-height:34px}
+@media (max-width:560px){.ac{grid-template-columns:1fr}.bar button{padding:4px 8px;font-size:13px}.card.summary{position:static}}
 `;
 
 const SCRIPT = `
@@ -161,83 +183,13 @@ $('#btn-copy').addEventListener('click',function(){var t=summary(collect());show
 $('#btn-download').addEventListener('click',function(){var t=summary(collect());var b=new Blob([t],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=D.view+'-review-'+D.workItemId+'.json';document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},0)});
 var acc=$('#btn-accept-all');if(acc)acc.addEventListener('click',function(){$$('input[type=radio][value=accepted]').forEach(function(r){if(!r.closest('.card.out'))r.checked=true})});
 $$('[data-accept-card]').forEach(function(b){b.addEventListener('click',function(){$$('input[type=radio][value=accepted]',b.closest('.card')).forEach(function(r){r.checked=true})})});
-// prototype viewer
-if(D.view==='prototype'&&D.proto&&D.proto.kind==='ui'){
-  var P=D.proto,mock=JSON.parse(JSON.stringify(P.mock)),cur=P.startScreen||(P.screens[0]&&P.screens[0].id),role=(P.roles&&P.roles[0])||'',stateName='default',modal=null;
-  var host=$('#proto-screen');
-  function h(t,a,c){var e=document.createElement(t);for(var k in (a||{})){if(k==='class')e.className=a[k];else e.setAttribute(k,a[k])}(c||[]).forEach(function(x){e.appendChild(typeof x==='string'?document.createTextNode(x):x)});return e}
-  function tag(el){var t=[].concat(el.requirementIds||[],el.acIds||[]);return t.length?h('span',{class:'tag'},[t.join(' ')]):document.createTextNode('')}
-  function coll(id){return mock.filter(function(c){return c.id===id})[0]}
-  function fillTable(box,el){
-    box.textContent='';
-    var c=coll(el.collection);
-    if(!c){box.appendChild(h('div',{class:'state-msg'},['No data']));return}
-    var cols=el.columns&&el.columns.length?el.columns:c.fields.map(function(f){return f.key});
-    var t=h('table',{},[]);t.appendChild(h('tr',{},cols.map(function(key){var f=c.fields.filter(function(x){return x.key===key})[0];return h('th',{},[f?f.label:key])})));
-    var rows=c.rows.filter(function(r){return !(P._q&&P._q[el.id])||JSON.stringify(r).toLowerCase().indexOf(P._q[el.id].toLowerCase())>=0});
-    if(!rows.length)box.appendChild(h('div',{class:'state-msg'},['No rows']));
-    rows.forEach(function(r){t.appendChild(h('tr',{},cols.map(function(key){return h('td',{},[String(r[key]==null?'':r[key])])})))});
-    if(rows.length)box.appendChild(t)
-  }
-  function render(){
-    P._tables=[];
-    host.textContent='';
-    var scr=P.screens.filter(function(s){return s.id===cur})[0];if(!scr)return;
-    var sw=$('#proto-state');sw.textContent='';scr.states.forEach(function(s){var o=h('option',{value:s},[s]);if(s===stateName)o.selected=true;sw.appendChild(o)});
-    if(scr.states.indexOf(stateName)<0)stateName='default';
-    host.appendChild(h('h2',{},[scr.title]));if(scr.description)host.appendChild(h('p',{class:'muted'},[scr.description]));
-    if(stateName!=='default'){host.appendChild(h('div',{class:'state-msg'},[(scr.stateMessages&&scr.stateMessages[stateName])||({loading:'Loading...',empty:'Nothing here yet.',error:'Something went wrong.',success:'Done.',denied:'You do not have permission.'}[stateName]||stateName)]));return}
-    scr.elements.forEach(function(el){
-      var wrap=h('div',{class:'el','data-el':scr.id+'#'+el.id});
-      if(el.allowedRoles&&el.allowedRoles.length&&el.allowedRoles.indexOf(role)<0){wrap.appendChild(h('div',{class:'denied'},['Not available for role "'+role+'"']));host.appendChild(wrap);return}
-      var k=el.kind;
-      if(k==='heading')wrap.appendChild(h('h3',{},[el.label||el.text||'']));
-      else if(k==='text')wrap.appendChild(h('p',{},[el.text||el.label||'']));
-      else if(k==='table'||k==='list'){
-        var box=h('div',{class:'tblbox'});wrap.appendChild(box);(P._tables=P._tables||[]).push({wrap:box,el:el});fillTable(box,el)}
-      else if(k==='__old_table'){
-        var c=coll(el.collection);
-        if(!c){wrap.appendChild(h('div',{class:'state-msg'},['No data']))}
-        else{
-          var cols=el.columns&&el.columns.length?el.columns:c.fields.map(function(f){return f.key});
-          var q=$('[data-search="'+el.id+'"]');
-          var t=h('table',{},[]);var hr=h('tr',{},cols.map(function(key){var f=c.fields.filter(function(x){return x.key===key})[0];return h('th',{},[f?f.label:key])}));t.appendChild(hr);
-          var rows=c.rows.filter(function(r){return !(P._q&&P._q[el.id])||JSON.stringify(r).toLowerCase().indexOf(P._q[el.id].toLowerCase())>=0});
-          if(!rows.length)wrap.appendChild(h('div',{class:'state-msg'},['No rows']));
-          rows.forEach(function(r){t.appendChild(h('tr',{},cols.map(function(key){return h('td',{},[String(r[key]==null?'':r[key])])})))});
-          if(rows.length)wrap.appendChild(t)}
-      }
-      else if(k==='search'){var i=h('input',{type:'text',placeholder:el.label||'Search','data-search':el.id});i.value=(P._q&&P._q[el.id])||'';if(P._focus===el.id){setTimeout(function(){i.focus();try{i.setSelectionRange(i.value.length,i.value.length)}catch(e){}},0)}i.addEventListener('input',function(){P._focus=el.id;P._q=P._q||{};P._q[el.collection||'']=i.value;(P.screens.filter(function(s){return s.id===cur})[0].elements).forEach(function(e2){if(e2.collection===el.collection){P._q[e2.id]=i.value}});(P._tables||[]).forEach(function(x){fillTable(x.wrap,x.el)})});wrap.appendChild(i)}
-      else if(k==='field'){wrap.appendChild(h('label',{},[el.label||el.field||'']));wrap.appendChild(h('input',{type:'text',placeholder:el.text||''}))}
-      else if(k==='button'||k==='link'){
-        var b=h('button',{class:'btn'+(k==='link'?' sec':''),type:'button'},[el.label||'Button']);
-        b.addEventListener('click',function(e){e.stopPropagation();
-          if(el.navigatesTo){cur=el.navigatesTo;stateName='default';render();syncNav()}
-          else if(el.action==='add-row'&&coll(el.collection)){var c=coll(el.collection),row={};c.fields.forEach(function(f){row[f.key]=f.type==='number'?c.rows.length+1:f.type==='boolean'?false:'New '+f.label});c.rows.push(row);render()}
-          else if(el.action==='delete-row'&&coll(el.collection)){coll(el.collection).rows.pop();render()}
-          else if(el.action==='submit'){stateName='success';render()}
-        });wrap.appendChild(b)}
-      else wrap.appendChild(h('div',{},[el.label||el.text||k]));
-      wrap.appendChild(tag(el));
-      var cb=h('button',{type:'button',style:'font-size:11px;margin-left:8px;padding:0 6px','aria-label':'Comment on '+el.id},['comment']);
-      cb.addEventListener('click',function(e){e.stopPropagation();var ta=$('[data-fb="'+scr.id+'#'+el.id+'"]');if(!ta)ta=addFb(scr.id+'#'+el.id);if(ta.scrollIntoView)ta.scrollIntoView({block:'center'});ta.focus()});
-      wrap.appendChild(cb);
-      host.appendChild(wrap)
-    })
-  }
-  function addFb(target){var box=$('#fb-list');var w=h('div',{class:'card'},[h('div',{class:'meta'},['Comment on '+target]),h('textarea',{'data-fb':target})]);box.appendChild(w);return $('textarea',w)}
-  function syncNav(){$$('#proto-nav button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-screen')===cur)})}
-  $$('#proto-nav button').forEach(function(b){b.addEventListener('click',function(){cur=b.getAttribute('data-screen');stateName='default';render();syncNav()})});
-  var sw=$('#proto-state');sw.addEventListener('change',function(){stateName=sw.value;render()});
-  var rl=$('#proto-role');if(rl){rl.addEventListener('change',function(){role=rl.value;render()})}
-  var rs=$('#proto-reset');if(rs)rs.addEventListener('click',function(){mock=JSON.parse(JSON.stringify(P.mock));P._q={};render()});
-  var add=$('#fb-add');if(add)add.addEventListener('click',function(){addFb('prototype')});
-  syncNav();render();
-}
+function fit(t){t.style.height='auto';t.style.height=(t.scrollHeight+2)+'px'}
+$$('textarea.auto').forEach(function(t){fit(t);t.addEventListener('input',function(){fit(t)})});
+${PROTOTYPE_SCRIPT}
 })();
 `;
 
-function shell(state: WorkflowState, view: ReviewView, title: string, body: string, data: Record<string, unknown>, options: RenderReviewOptions, barExtra: string): string {
+function shell(state: WorkflowState, view: ReviewView, title: string, body: string, data: Record<string, unknown>, options: RenderReviewOptions, barExtra: string, wide = false): string {
   const payload = {
     reviewId: options.reviewId ?? `${view}-${state.workItem.id}`,
     view,
@@ -252,7 +204,7 @@ function shell(state: WorkflowState, view: ReviewView, title: string, body: stri
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title><style>${CSS}</style></head>
-<body><main>
+<body><main${wide ? ' class="wide"' : ""}>
 <h1>${esc(title)}</h1>
 <p class="meta">Work item ${esc(state.workItem.id)} · ${esc(state.workItem.title)} · phase ${esc(state.phase)}${options.generatedAt ? ` · generated ${esc(options.generatedAt)}` : ""}. This page records decisions; the workflow state in Praxis is the source of truth.</p>
 ${body}
@@ -266,14 +218,11 @@ ${body}
 }
 
 function marks(name: string, current: string, labels = { accepted: "Accept", rejected: "Reject", pending: "Undecided" }): string {
-  return `<div class="marks" role="radiogroup">${(["accepted", "rejected", "pending"] as const)
-    .map((v) => `<label><input type="radio" name="${esc(name)}" value="${v}"${v === current ? " checked" : ""}> ${labels[v]}</label>`)
+  return `<div class="marks tri" role="radiogroup">${(["accepted", "rejected", "pending"] as const)
+    .map((v) => `<label class="m-${v}"><input type="radio" name="${esc(name)}" value="${v}"${v === current ? " checked" : ""}><span>${labels[v]}</span></label>`)
     .join("")}</div>`;
 }
 
-function pill(text: string, kind = ""): string {
-  return `<span class="pill ${kind}">${esc(text)}</span>`;
-}
 
 function staleBanner(state: WorkflowState, phase: "requirements_review" | "prototype" | "story_plan" | "stories_review"): string {
   return acceptanceStatus(state, phase) === "stale" ? `<div class="stale"><strong>Changed since you accepted it.</strong> The earlier acceptance no longer applies; review the changes and accept again.</div>` : "";
@@ -284,89 +233,58 @@ function staleBanner(state: WorkflowState, phase: "requirements_review" | "proto
 export function renderRequirementsReview(state: WorkflowState, options: RenderReviewOptions = {}): string {
   const all = state.requirements.filter((r) => r.status !== "superseded");
   const progress = reviewProgress(state);
-  const cards = all
-    .map((req) => {
-      const out = req.scope !== "in";
-      const criteria = req.acceptanceCriteria
-        .map(
-          (ac) => `<div class="ac" data-ac="${esc(ac.id)}" data-rev="${ac.revision}" data-initial-status="${esc(ac.review.status)}">
-<div><strong>${esc(ac.id)}</strong></div>
-<div><textarea data-f="ac-statement" data-initial="${esc(ac.statement)}" aria-label="Text of ${esc(ac.id)}">${esc(ac.statement)}</textarea>${ac.review.previous && ac.review.status === "pending" ? `\n<div class="meta" data-previous>Before this revision: ${esc(ac.review.previous.status)}${ac.review.previous.comment ? ` - "${esc(ac.review.previous.comment)}"` : ""}</div>` : ""}
-<div class="row" style="margin-top:4px">${marks(`m-${ac.id}`, ac.review.status)}<input type="text" data-f="ac-comment" data-initial="${esc(ac.review.comment ?? "")}" placeholder="Comment" value="${esc(ac.review.comment ?? "")}" aria-label="Comment on ${esc(ac.id)}" style="flex:1;min-width:160px">
-<label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>`,
-        )
-        .join("");
-      return `<section class="card${out ? " out" : ""}" data-req="${esc(req.id)}" data-rev="${req.revision}">
-<div class="row"><h2 class="grow">${esc(req.id)} ${pill(`r${req.revision}`)} ${pill(req.status)}${out ? " " + pill(req.scope, "warn") : ""}</h2></div>
-<textarea data-f="statement" data-initial="${esc(req.statement)}" aria-label="Statement of ${esc(req.id)}">${esc(req.statement)}</textarea>
-<div class="row" style="margin-top:6px"><div><label class="meta">Scope<br><select data-f="scope" data-initial="${esc(req.scope)}">${(["in", "deferred", "excluded"] as const).map((s) => `<option value="${s}"${s === req.scope ? " selected" : ""}>${{ in: "In scope", deferred: "Deferred", excluded: "Out of scope" }[s]}</option>`).join("")}</select></label></div>
-<div class="grow"><label class="meta">Scope note<br><input type="text" data-f="scopeNote" data-initial="${esc(req.scopeNote ?? "")}" value="${esc(req.scopeNote ?? "")}"></label></div></div>
-<h3>Acceptance criteria <button type="button" data-accept-card>Accept all in this requirement</button></h3>
+  const decided = progress.accepted + progress.rejected;
+  const pct = (n: number) => (progress.criteria ? Math.round((n / progress.criteria) * 100) : 0);
+  const reqState = (req: (typeof all)[number]) => (req.scope !== "in" ? "out" : req.acceptanceCriteria.length > 0 && req.acceptanceCriteria.every((c) => c.review.status === "accepted") ? "accepted" : "open");
+  const card = (req: (typeof all)[number]) => {
+    const out = req.scope !== "in";
+    const accepted = req.acceptanceCriteria.filter((c) => c.review.status === "accepted").length;
+    const criteria = req.acceptanceCriteria
+      .map((ac) => {
+        const prev = ac.review.previous && ac.review.status === "pending" ? ac.review.previous : null;
+        return `<div class="ac" data-ac="${esc(ac.id)}" data-rev="${ac.revision}" data-initial-status="${esc(ac.review.status)}">
+<div class="acid"><strong>${esc(ac.id.replace(/^.*-AC-/, "AC-"))}</strong>${ac.revision > 1 ? `<br>${pill(`r${ac.revision}`, "warn")}` : ""}</div>
+<div class="acbody"><textarea class="auto" data-f="ac-statement" data-initial="${esc(ac.statement)}" aria-label="Text of ${esc(ac.id)}">${esc(ac.statement)}</textarea>${prev ? `\n<div class="prev" data-previous>Changed since your earlier decision: it was <strong>${esc(prev.status)}</strong>${prev.comment ? ` - "${esc(prev.comment)}"` : ""}</div>` : ""}
+<div class="acctl">${marks(`m-${ac.id}`, ac.review.status)}<input type="text" data-f="ac-comment" data-initial="${esc(ac.review.comment ?? "")}" placeholder="Comment" value="${esc(ac.review.comment ?? "")}" aria-label="Comment on ${esc(ac.id)}"><label class="rm"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>`;
+      })
+      .join("");
+    return `<section class="card req${out ? " out" : ""}" id="req-${esc(req.id)}" data-req="${esc(req.id)}" data-rev="${req.revision}">
+<div class="reqhead"><h2><span class="rid">${esc(req.id)}</span> ${pill(`r${req.revision}`)} ${pill(req.status)}${out ? " " + pill(req.scope, "warn") : ""}</h2><span class="meta">${accepted} of ${req.acceptanceCriteria.length} criteria accepted</span></div>
+<textarea class="auto reqtext" data-f="statement" data-initial="${esc(req.statement)}" aria-label="Statement of ${esc(req.id)}">${esc(req.statement)}</textarea>
+<div class="row scoperow"><label class="meta">Scope<select data-f="scope" data-initial="${esc(req.scope)}">${(["in", "deferred", "excluded"] as const).map((sc) => `<option value="${sc}"${sc === req.scope ? " selected" : ""}>${{ in: "In scope", deferred: "Deferred", excluded: "Out of scope" }[sc]}</option>`).join("")}</select></label>
+<label class="meta grow">Scope note<input type="text" data-f="scopeNote" data-initial="${esc(req.scopeNote ?? "")}" value="${esc(req.scopeNote ?? "")}"></label></div>
+<div class="achead"><h3>Acceptance criteria</h3><button type="button" data-accept-card>Accept all in this requirement</button></div>
 ${criteria || `<p class="muted">No acceptance criteria yet.</p>`}
-<label class="meta">Add criteria (one per line)<textarea data-f="add-ac"></textarea></label>
-<label class="meta">Comment on the requirement<input type="text" data-f="comment" data-initial="${esc(req.comment ?? "")}" value="${esc(req.comment ?? "")}"></label>
+<div class="row addrow"><label class="meta grow">Add criteria (one per line)<textarea data-f="add-ac"></textarea></label>
+<label class="meta grow">Comment on the requirement<input type="text" data-f="comment" data-initial="${esc(req.comment ?? "")}" value="${esc(req.comment ?? "")}"></label></div>
 </section>`;
-    })
-    .join("");
+  };
+  const groups: Array<[string, string, typeof all]> = [
+    ["open", "Needs your decision", all.filter((r) => reqState(r) === "open")],
+    ["accepted", "Accepted", all.filter((r) => reqState(r) === "accepted")],
+    ["out", "Deferred or out of scope", all.filter((r) => reqState(r) === "out")],
+  ];
+  const sections = groups.filter(([, , list]) => list.length).map(([, title, list]) => `<h2 class="grouph">${esc(title)} <span class="meta">${list.length}</span></h2>${list.map(card).join("")}`).join("");
+  const chips = all.map((r) => `<a class="chip ${reqState(r)}" href="#req-${esc(r.id)}">${esc(r.id)}</a>`).join("");
   const body = `${staleBanner(state, "requirements_review")}
-<div class="card"><div class="row"><div class="grow kv"><span class="muted">In scope</span><span>${progress.requirements} requirement(s), ${progress.criteria} criteria</span><span class="muted">Accepted</span><span>${progress.accepted}</span><span class="muted">Rejected</span><span>${progress.rejected}</span><span class="muted">Undecided</span><span>${progress.pending}</span><span class="muted">Deferred / out</span><span>${progress.deferred} / ${progress.excluded}</span></div>
-<div><button id="btn-accept-all" type="button">Accept every criterion</button></div></div></div>
-${cards || `<p class="muted">No requirements yet.</p>`}`;
+<div class="card summary"><div class="row" style="align-items:center"><div class="grow"><div class="bigcount"><strong>${decided}</strong> of ${progress.criteria} criteria decided</div>
+<div class="pbar" role="img" aria-label="${progress.accepted} accepted, ${progress.rejected} rejected, ${progress.pending} undecided"><span class="a" style="width:${pct(progress.accepted)}%"></span><span class="r" style="width:${pct(progress.rejected)}%"></span></div>
+<div class="meta">${progress.accepted} accepted · ${progress.rejected} rejected · ${progress.pending} undecided · ${progress.requirements} requirement(s) in scope · deferred / out ${progress.deferred} / ${progress.excluded}</div></div>
+<div><button id="btn-accept-all" type="button">Accept every criterion</button></div></div>
+${chips ? `<nav class="chips" aria-label="Requirements">${chips}</nav>` : ""}</div>
+${sections || `<p class="muted">No requirements yet.</p>`}`;
   return shell(state, "requirements", "Requirements review", body, {}, options, `<label class="marks"><input type="checkbox" id="accept-all"> Mark the review complete (accept everything still undecided)</label>`);
 }
 
 // --- prototype ---------------------------------------------------------------------------------------------------
-
-const COLOR_OK = /^[#\w(),.%\s/-]{1,60}$/;
 
 export function renderPrototypeReview(state: WorkflowState, options: RenderReviewOptions = {}): string {
   const proto = state.prototype;
   if (!proto) {
     return shell(state, "prototype", "Prototype review", `<p class="muted">There is no prototype yet. Ask Claude to build one from the accepted requirements.</p>`, {}, options, "");
   }
-  const vars = [
-    ...Object.entries(proto.styles.colors).filter(([, v]) => COLOR_OK.test(v)).map(([k, v]) => `--p-${k.replace(/[^\w-]/g, "")}:${v}`),
-    ...(proto.styles.fonts.body && COLOR_OK.test(proto.styles.fonts.body.replace(/['"]/g, "")) ? [`--p-font:${proto.styles.fonts.body}`] : []),
-    ...(proto.styles.radius && COLOR_OK.test(proto.styles.radius) ? [`--p-radius:${proto.styles.radius}`] : []),
-  ].join(";");
-  const tokenNote = proto.styles.sources.length > 0 ? `Styles read from ${proto.styles.sources.map((s) => esc(s.file)).join(", ")}.` : "Neutral styles: no application styles were found, so the look is generic.";
-  const traceRows = [
-    ...proto.screens.flatMap((s) => s.elements.filter((e) => e.requirementIds.length || e.acIds.length).map((e) => `<tr><td>${esc(s.id)}#${esc(e.id)}</td><td>${esc(e.label || e.kind)}</td><td>${esc([...e.requirementIds, ...e.acIds].join(", "))}</td></tr>`)),
-    ...proto.endpoints.map((e) => `<tr><td>${esc(e.method)} ${esc(e.path)}</td><td>${esc(e.summary)}</td><td>${esc([...e.requirementIds, ...e.acIds].join(", "))}</td></tr>`),
-  ].join("");
-  const viewer =
-    proto.kind === "ui"
-      ? `<div class="proto" style="${esc(vars)}"><div class="nav" id="proto-nav" role="tablist">${proto.screens.map((s) => `<button type="button" role="tab" data-screen="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>
-<div class="row" style="padding:8px"><label class="meta">State <select id="proto-state"></select></label>${proto.roles.length ? `<label class="meta">Role <select id="proto-role">${proto.roles.map((r) => `<option>${esc(r)}</option>`).join("")}</select></label>` : ""}<button id="proto-reset" type="button">Reset mock data</button></div>
-<div class="screen" id="proto-screen"></div></div>
-<p class="meta">Mock data only: nothing here talks to a real system. ${tokenNote}</p>`
-      : `<p class="meta">Technical prototype of an API: request and response examples, no screens.</p>${proto.endpoints
-          .map(
-            (e) => `<div class="card"><h2>${pill(e.method)} ${esc(e.path)}</h2><p>${esc(e.summary)}</p><div class="meta">${e.auth ? `Auth: ${esc(e.auth)} · ` : ""}${esc([...e.requirementIds, ...e.acIds].join(" "))}</div>
-${e.request !== undefined ? `<h3>Request</h3><pre>${esc(JSON.stringify(e.request, null, 2))}</pre>` : ""}${e.responses.map((r) => `<h3>Response ${r.status} ${esc(r.description)}</h3>${r.example !== undefined ? `<pre>${esc(JSON.stringify(r.example, null, 2))}</pre>` : ""}`).join("")}</div>`,
-          )
-          .join("")}`;
-  const feedback = proto.feedback
-    .map((f) => `<div class="card"><div class="row"><label class="marks"><input type="checkbox" data-resolve="${esc(f.id)}"${f.resolved ? " checked disabled" : ""}> ${f.resolved ? "Resolved" : "Mark resolved"}</label><span class="meta">${esc(f.target)} · ${esc(f.at)}</span></div><p>${esc(f.comment)}</p></div>`)
-    .join("");
-  const body = `${staleBanner(state, "prototype")}
-<p>${pill(`${proto.kind === "ui" ? "UI" : "API"} prototype`)} ${pill(`revision ${proto.revision}`)} ${pill(proto.status, proto.status === "accepted" ? "ok" : "warn")}</p>
-${proto.notes ? `<p>${esc(proto.notes)}</p>` : ""}
-${viewer}
-<h2 style="margin-top:18px">Your comments</h2><div id="fb-list"></div><button id="fb-add" type="button">Add a comment</button>
-${feedback ? `<h3>Earlier comments</h3>${feedback}` : ""}
-<h2 style="margin-top:18px">What it covers</h2>
-<table style="width:100%;border-collapse:collapse;font-size:13px"><tbody>${traceRows || `<tr><td class="muted">Nothing is linked to requirements yet.</td></tr>`}</tbody></table>`;
-  const clientData = {
-    proto: {
-      kind: proto.kind,
-      startScreen: proto.startScreen,
-      roles: proto.roles,
-      screens: proto.screens,
-      mock: proto.mock,
-    },
-  };
-  return shell(state, "prototype", "Prototype review", body, clientData, options, `<label class="marks"><input type="checkbox" id="accept-proto"> Accept this prototype</label>`);
+  const { body, clientData } = renderPrototypeBody(state, proto, staleBanner(state, "prototype"));
+  return shell(state, "prototype", "Prototype review", body, clientData, options, `<label class="marks"><input type="checkbox" id="accept-proto"> Accept this prototype</label>`, proto.kind === "ui");
 }
 
 // --- story plan --------------------------------------------------------------------------------------------------

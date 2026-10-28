@@ -179,9 +179,22 @@ export const ELEMENT_KINDS = [
   "tabs",
   "badge",
   "modal",
+  "drawer",
   "message",
 ] as const;
 export const ElementKindSchema = z.enum(ELEMENT_KINDS);
+
+/** Show an element only while a URL query parameter has (or lacks) a value. The parameter default of a tabs element counts as its value. */
+export const ShowWhenSchema = z.object({
+  param: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
+  equals: z.string().optional(),
+  notEquals: z.string().optional(),
+  /** true: the parameter is set; false: it is not set. */
+  present: z.boolean().optional(),
+});
+export type ShowWhen = z.infer<typeof ShowWhenSchema>;
+
+const ParamNameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/);
 
 export const PrototypeElementSchema = z.object({
   id: z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/),
@@ -203,8 +216,81 @@ export const PrototypeElementSchema = z.object({
   text: z.string().optional(),
   requirementIds: z.array(RequirementIdSchema).default([]),
   acIds: z.array(z.string()).default([]),
+  /**
+   * Behaviour, all optional: an older prototype without any of it renders as before. Everything runs on mock data and the
+   * prototype's own virtual address (query string), never on a real system.
+   */
+  /** filter/tabs/drawer/modal/table: the URL query parameter the element reads and writes. */
+  param: ParamNameSchema.optional(),
+  /** filter/tabs: the choices. A filter on an enum field takes the field's options when this is empty. */
+  options: z.array(z.object({ value: z.string(), label: z.string().optional() })).default([]),
+  /** filter: label of the "no filter" choice. */
+  allLabel: z.string().optional(),
+  /** table/list: rows are narrowed by these query parameters (field equals the parameter value; an unknown value shows no rows). */
+  filters: z.array(z.object({ param: ParamNameSchema, field: z.string(), /** "all": a value that is not one of the field's options is ignored (shows everything). Default: it matches nothing. */ unknown: z.enum(["all", "empty"]).optional() })).default([]),
+  /** table/list: field that identifies a row (default "id", then the first column). drawer/modal: field matched against the parameter. */
+  idField: z.string().optional(),
+  /** table/list: id of the drawer or modal (same screen) a click on a row opens. */
+  rowOpens: z.string().optional(),
+  /** drawer/modal: what is shown for the opened record. */
+  detailFields: z.array(z.object({ field: z.string(), label: z.string().optional() })).default([]),
+  /** table/list: shown in the empty state as a button that clears the listed query parameters. {param} in emptyText is replaced by that parameter's value. */
+  emptyAction: z.object({ label: z.string().min(1), clear: z.array(ParamNameSchema).default([]) }).optional(),
+  /** drawer/modal: the opened record must be one of this table's rows (after its filters). */
+  withinTable: z.string().optional(),
+  /** drawer/modal: when the record is missing (or outside withinTable): "close" removes the parameter and shows nothing; "message" (default) shows notFoundText. */
+  onMissing: z.enum(["close", "message"]).optional(),
+  /** drawer/modal: rows of another collection that belong to the opened record (for example the lines of an order). */
+  related: z.array(z.object({ collection: z.string(), matchField: z.string(), columns: z.array(z.string()).default([]), label: z.string().optional() })).default([]),
+  /** Texts for the situations a reviewer must see: nothing matches / the record is missing / a value is missing. */
+  emptyText: z.string().optional(),
+  notFoundText: z.string().optional(),
+  missingText: z.string().optional(),
+  /** tabs: the tabs. The first is the default. */
+  tabs: z.array(z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/), label: z.string().min(1) })).default([]),
+  showWhen: ShowWhenSchema.optional(),
+  /** field: the value must be filled before a submit works. */
+  required: z.boolean().default(false),
 });
 export type PrototypeElement = z.infer<typeof PrototypeElementSchema>;
+
+/** A named situation a reviewer can open with one click, optionally with what must be true once it is open. */
+export const PrototypeScenarioSchema = z.object({
+  id: z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/),
+  title: z.string().min(1),
+  description: z.string().default(""),
+  screen: z.string().optional(),
+  dataset: z.string().optional(),
+  role: z.string().optional(),
+  /** Query string the scenario starts from. */
+  query: z.record(z.string(), z.string()).default({}),
+  expect: z
+    .object({
+      /** Rows shown by a table/list element. */
+      rows: z.array(z.object({ element: z.string(), count: z.number().int().nonnegative() })).default([]),
+      /** State of a drawer/modal: open with a record, closed, or open on a missing record. */
+      overlay: z.array(z.object({ element: z.string(), state: z.enum(["open", "closed", "not-found"]) })).default([]),
+      /** Texts that must / must not appear in the screen. */
+      contains: z.array(z.string()).default([]),
+      absent: z.array(z.string()).default([]),
+      /** Query parameters that must have these values afterwards, and ones that must be gone. */
+      query: z.record(z.string(), z.string()).default({}),
+      noQuery: z.array(z.string()).default([]),
+    })
+    .optional(),
+  requirementIds: z.array(RequirementIdSchema).default([]),
+  acIds: z.array(z.string()).default([]),
+});
+export type PrototypeScenario = z.infer<typeof PrototypeScenarioSchema>;
+
+/** Another set of mock rows (for example "typical", "empty", "legacy records") the reviewer can switch to; every connected component follows. */
+export const PrototypeDatasetSchema = z.object({
+  id: z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/),
+  label: z.string().min(1),
+  description: z.string().default(""),
+  rows: z.record(z.string(), z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))).max(200)).default({}),
+});
+export type PrototypeDataset = z.infer<typeof PrototypeDatasetSchema>;
 
 export const PrototypeScreenSchema = z.object({
   id: z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/),
@@ -279,6 +365,10 @@ export const PrototypeSchema = z.object({
   screens: z.array(PrototypeScreenSchema).default([]),
   startScreen: z.string().optional(),
   mock: z.array(MockCollectionSchema).default([]),
+  datasets: z.array(PrototypeDatasetSchema).default([]),
+  scenarios: z.array(PrototypeScenarioSchema).default([]),
+  /** What this prototype does not reproduce (components, behaviour, data). Shown to the reviewer instead of implying a full replica. */
+  limitations: z.array(z.string()).default([]),
   endpoints: z.array(ApiEndpointSchema).default([]),
   roles: z.array(z.string()).default([]),
   feedback: z.array(PrototypeFeedbackSchema).default([]),

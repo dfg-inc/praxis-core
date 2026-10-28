@@ -106,3 +106,21 @@ A criterion has a stable id (`REQ-ORD-002-AC-06`). To change its text, send `rev
 - Command and submission parameters are checked at every depth (arrays, optionals, records, tuples, intersections, unions): a key nothing accepts is `UNKNOWN_COMMAND_PARAMETER`. Only authority-shaped keys on a command (`via`, `approval`, `userApproval`, `approved` ...) and server-owned fields echoed in `set-contract` are dropped; review submissions tolerate none.
 - Handed-over decisions (`praxis_review_apply`): when the file holds anything that needs the person (a mark or agreement, or a change to a story, a contract, the mode or a waiver), the dialog shows the WHOLE plan (every story edit, exclusion and restore included) and the approval binds every command in it; nothing is applied next to it that was not shown. A mode change or a waiver is a decision about the whole work item: the file must carry `baseState` (returned by `praxis_review_render` and by the page), and is not applied if the item changed since (mode, stage, requirements, stories, contracts, waivers); replaying a waiver file adds nothing.
 - Paths an agent supplies (`implementationPath`, Quality proposal files, check modules) are judged by their real location: links inside the repository that point outside it, dangling links, absolute paths, `..`, NUL, non-regular files and oversized files are refused.
+
+
+## Interactive prototype (alpha.49+)
+
+The prototype is data the Viewer runs, not a picture. A `ui` prototype can declare behaviour on its elements, all optional, so a prototype saved earlier still opens and keeps its acceptance (empty new fields are ignored when the content is fingerprinted).
+
+| Need | Declare |
+| --- | --- |
+| Filter / select | element `kind: filter` with `param` (URL query parameter), `collection`, `filters: [{param, field, unknown?: "all"}]`, `allLabel`; the table narrows by the same `filters` |
+| Table, click on a row | `kind: table` with `filters`, `idField`, `rowOpens: <drawer or modal id>`, `emptyText` (`{param}` is replaced), `emptyAction: {label, clear: [params]}` |
+| Side card / modal | `kind: drawer` or `modal` with `param`, `collection`, `idField`, `detailFields`, `related` (rows of another collection), `withinTable`, `onMissing: close` or `message`, `notFoundText`, `missingText`; a button opens a modal with `action: open-modal` + `rowOpens` |
+| Tabs, conditions | `kind: tabs` with `tabs`, `param`; any element `showWhen: {param, equals / notEquals / present}` |
+| Forms | `kind: field` with `required`, `collection`/`field` (enum becomes a select); a button with `action: submit` validates |
+| Other data | prototype `datasets` (other mock rows, e.g. empty, legacy records), switchable in the page |
+| Checkable situations | prototype `scenarios`: `query`, `dataset`, `role`, and `expect` (`rows`, `overlay`, `contains`, `absent`, `query`, `noQuery`); the Scenarios panel runs them |
+| Honesty | `limitations`: what the prototype does not reproduce |
+
+The Viewer keeps its address in the page `#hash` (`#/screen?status=Shipped&order=A-1003`): deep links, reload and Back/Forward work; there is an address bar for typing a wrong one. Escape closes the top card, focus goes into an opened card and back to the row, a modal keeps Tab inside, and the layout adapts to a mobile width. Three modes: **Preview** (use it), **Inspect** (click an element: requirement, criteria and behaviour), **Review** (click an element to comment on it). Coverage is collapsed and grouped by requirement. The Viewer builds DOM with text only, never evaluates anything from the prototype and makes no network request; nothing it does changes the saved prototype.
