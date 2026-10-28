@@ -1693,7 +1693,7 @@ export function applyWorkflowCommand(
         ...state.services.map((service) => service.id),
       ]),
     ];
-    const questions = missingRepositoryPrompts({ services: state.services, requiredServiceIds: required });
+    const questions = missingRepositoryPrompts({ services: effectiveServices(state), requiredServiceIds: required });
     return { state, duplicate: false, result: { questions } };
   }
   if (command.action === "record-verification") {
@@ -1987,6 +1987,24 @@ function mergeFindings(current: Finding[], incoming: Finding[]): Finding[] {
   const merged = new Map(current.map((finding) => [finding.id, finding]));
   for (const finding of incoming) merged.set(finding.id, finding);
   return [...merged.values()];
+}
+
+/**
+ * Services as Quality sees them: a service that names a registered repository (repositoryId) and has no location of its
+ * own uses the repository's. Without this a service in a registered repository was "BLOCKED: repository location is missing".
+ */
+export function effectiveServices(state: WorkflowState): Service[] {
+  return state.services.map((service) => {
+    const repo = service.repositoryId ? state.repositories.find((r) => r.id === service.repositoryId) : undefined;
+    if (!repo) return service;
+    return {
+      ...service,
+      ...(service.localPath === undefined && repo.localPath !== undefined ? { localPath: repo.localPath } : {}),
+      ...(service.remoteUrl === undefined && repo.remoteUrl !== undefined ? { remoteUrl: repo.remoteUrl } : {}),
+      ...(service.branch === undefined && repo.branch !== undefined ? { branch: repo.branch } : {}),
+      ...(service.repository === undefined ? { repository: repo.name } : {}),
+    };
+  });
 }
 
 export function evaluateFeature(state: WorkflowState): { verdict: QualityVerdict; gaps: string[]; evidence: FeatureEvaluation; readinessGaps: string[] } {

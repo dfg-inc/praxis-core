@@ -423,6 +423,7 @@ export {
   resumeWorkflow,
   featureReadiness,
   evaluateFeature,
+  effectiveServices,
   evaluateRequirementBehavior,
   recordVerdict,
   requirementEvidence,
