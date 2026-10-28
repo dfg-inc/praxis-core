@@ -150,8 +150,8 @@ function ignored(f,coll,v){return f.unknown==='all'&&v!==''&&knownValues(coll,f.
 function unknownAll(param,scr){var hit=false;(scr?scr.elements:[]).forEach(function(e){(e.filters||[]).forEach(function(f){if(f.param===param&&f.unknown==='all')hit=true})});return hit}
 function rowsFor(el){var all=live[el.collection]||[];var out=all.filter(function(r){return (el.filters||[]).every(function(f){var v=pv(f.param);return v===''||ignored(f,el.collection,v)||String(r[f.field])===v})});var sq=search[el.collection];if(sq)out=out.filter(function(r){return JSON.stringify(r).toLowerCase().indexOf(sq.toLowerCase())>=0});return out}
 function fmt(v,f){if(typeof v==='boolean')return v?'Yes':'No';return String(v)}
-var TONES=['neutral','info','warn','ok','bad'];
-function badge(v,f){var i=f&&f.options?f.options.indexOf(String(v)):-1;return h('span',{class:'badge '+(i<0?'':TONES[(i+1)%TONES.length]),'data-v':String(v),title:i<0&&f&&f.options?'Value not in the known list':null},[String(v)])}
+function tone(v){var t=String(v).toLowerCase();return /cancel|reject|fail|error|declin|denied|block/.test(t)?'bad':/deliver|done|complete|paid|active|approv|success|resolved|closed/.test(t)?'ok':/progress|pending|wait|review|hold|process/.test(t)?'warn':/new|open|draft|created/.test(t)?'info':''}
+function badge(v,f){var i=f&&f.options?f.options.indexOf(String(v)):-1;return h('span',{class:'badge '+(i<0?'':tone(v)),'data-v':String(v),title:i<0&&f&&f.options?'Value not in the known list':null},[String(v)])}
 function valueNode(f,v,el,table){if(v===null||v===undefined||v===''){return h('span',{class:'miss'},[el.missingText||(table?'—':'Not provided')])}if(f&&f.type==='enum')return badge(v,f);return T(fmt(v,f))}
 function emptyMsg(text){return h('div',{class:'state-msg','data-empty':'1'},[text])}
 // ---- element renderers
