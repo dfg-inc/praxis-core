@@ -51,7 +51,7 @@ main.wide{max-width:1360px}
 .pv-tabs button[aria-selected=true]{border-bottom-color:var(--accent);font-weight:600}
 .pv-panel{padding:10px 12px}.pv-panel[hidden]{display:none}
 .pv-panel h3{margin:10px 0 4px}.pv-panel ul{margin:4px 0;padding-left:18px}
-.pv-device{margin:0 auto;transition:max-width .15s;max-width:100%}.pv-device.mobile{max-width:390px}
+.pv-device{margin:0 auto;max-width:100%}.pv-device.mobile{max-width:390px}
 .pv-addr{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-bottom:0;border-radius:10px 10px 0 0;padding:6px 10px;background:var(--card);font-size:12px;color:var(--muted)}
 .pv-addr input{flex:1;font:12px ui-monospace,Menlo,monospace;padding:3px 6px}
 .proto{--pc-bg:var(--p-background,#fff);--pc-text:var(--p-text,#1d2330);--pc-primary:var(--p-primary,#2457d6);--pc-on-primary:var(--p-on-primary,#fff);--pc-danger:var(--p-danger,#b42318);--pc-success:var(--p-success,#17803d);--pc-warning:var(--p-warning,#a15c00);
