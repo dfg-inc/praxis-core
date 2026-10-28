@@ -19,6 +19,8 @@ function ordersState(prototype: Record<string, unknown> = FIXTURE.prototype): Wo
   return ok(s, { action: "set-prototype", prototype, summary: "interactive" });
 }
 
+const renderPrototypeHtml = (state: WorkflowState) => renderReview(state, "prototype", { token: "t0k" });
+
 function open(state: WorkflowState, hash = "") {
   const html = renderReview(state, "prototype", { token: "t0k" });
   const dom = new JSDOM(html, { runScripts: "dangerously", pretendToBeVisual: true, url: `https://review.test/p${hash}` });
@@ -379,5 +381,94 @@ describe("compatibility: a prototype saved before the interaction fields existed
     expect(p.rows()).toEqual(["A-1", "B-2"]);
     expect(p.$("#proto-data")).toBeNull();
     expect(p.$("#pv-scenarios").textContent).toContain("no scenarios");
+  });
+});
+
+describe("review findings: hostile ids and tokens, focus, history, dangling references", () => {
+  const clone = () => JSON.parse(JSON.stringify(FIXTURE.prototype));
+  const rejects = (mutate: (p: any) => void, text: RegExp) => {
+    const p = clone();
+    mutate(p);
+    expect(() => ordersState(p)).toThrow(text);
+  };
+
+  it("an id with quotes or backslashes does not break opening, focus or closing", () => {
+    for (const id of ['A"1', "B\\", "C]'[x"]) {
+      const p = clone();
+      p.mock[0].rows[1].number = id;
+      p.scenarios = [];
+      const page = open(ordersState(p));
+      const row = page.$$("tr[data-row]").find((r) => r.getAttribute("data-row") === id)!;
+      row.dispatchEvent(new page.w.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(page.$$("[data-overlay]").length, id).toBe(1);
+      page.key(page.doc, "Escape");
+      expect(page.$$("[data-overlay]").length, id).toBe(0);
+      expect(page.doc.activeElement?.getAttribute("data-row"), id).toBe(id);
+    }
+  });
+
+  it("arrow keys move focus between tabs, and repeating a click adds no history entry", () => {
+    const proto = {
+      kind: "ui", title: "T", startScreen: "s", roles: [], mock: [{ id: "u", name: "U", fields: [{ key: "id", label: "Id", type: "string" }], rows: [{ id: "1" }] }],
+      screens: [{ id: "s", title: "S", states: ["default"], elements: [{ id: "t", kind: "tabs", param: "tab", tabs: [{ id: "a", label: "A" }, { id: "b", label: "B" }, { id: "c", label: "C" }] }, { id: "tbl", kind: "table", collection: "u", columns: ["id"], rowOpens: "d" }, { id: "d", kind: "drawer", param: "o", collection: "u", idField: "id", detailFields: [{ field: "id" }] }] }],
+    };
+    const page = open(ordersState(proto as never));
+    page.key(page.$('[data-tab="a"]'), "ArrowRight");
+    expect(page.doc.activeElement?.getAttribute("data-tab")).toBe("b");
+    page.key(page.doc.activeElement!, "ArrowRight");
+    expect(page.doc.activeElement?.getAttribute("data-tab")).toBe("c");
+    const before = page.w.history.length;
+    page.$('[data-tab="c"]').click();
+    page.$('[data-tab="c"]').click();
+    page.clickRow("1");
+    page.clickRow("1");
+    expect(page.w.history.length).toBe(before + 1);
+  });
+
+  it("Run all checks adds no history entries", () => {
+    const page = open(ordersState());
+    const before = page.w.history.length;
+    page.$<HTMLButtonElement>("#sc-run-all").click();
+    expect(page.w.history.length).toBeLessThanOrEqual(before + 1);
+  });
+
+  it("a token that could fetch a resource never reaches the page", () => {
+    for (const bad of ["url(//evil.test/x.png)", "image-set(\"//evil.test/x.png\" 1x)", "var(--x)"]) {
+      const p = clone();
+      p.styles.colors.surface = bad;
+      p.styles.radius = bad;
+      const html = renderPrototypeHtml(ordersState(p));
+      expect(html, bad).not.toMatch(/evil\.test/);
+    }
+  });
+
+  it("a legacy element without the behaviour fields still shows its label", () => {
+    const legacy = {
+      kind: "ui", title: "L", startScreen: "s", roles: [], mock: [],
+      screens: [{ id: "s", title: "S", states: ["default"], elements: [{ id: "m", kind: "modal", label: "Old modal" }, { id: "t", kind: "tabs", label: "Old tabs" }, { id: "f", kind: "filter", label: "Old filter" }] }],
+    };
+    let s = ordersState();
+    const stored = JSON.parse(JSON.stringify(s));
+    stored.prototype = { ...stored.prototype, ...legacy, screens: legacy.screens.map((sc) => ({ ...sc, description: "", stateMessages: {}, elements: sc.elements.map((e) => ({ ...e, allowedRoles: [], requirementIds: [], acIds: [], columns: [], options: [], filters: [], detailFields: [], tabs: [], related: [], required: false })) })), datasets: [], scenarios: [] };
+    s = WorkflowStateSchema.parse(stored);
+    const page = open(s);
+    const text = page.screen().textContent!;
+    for (const label of ["Old modal", "Old tabs", "Old filter"]) expect(text).toContain(label);
+  });
+
+  it("names that exist on every object cannot be used as parameters", () => {
+    rejects((p) => (p.screens[0].elements[0].param = "constructor"), /Object property name|invalid|param/i);
+  });
+
+  it("dangling references are refused when the prototype is saved", () => {
+    rejects((p) => (p.screens[0].elements[2].showWhen = { param: "ghost", present: true }), /showWhen/);
+    rejects((p) => (p.screens[0].elements[1].filters = [{ param: "ghost", field: "status" }]), /filters by "ghost"/);
+    rejects((p) => (p.screens[0].elements[1].emptyAction.clear = ["ghost"]), /clears "ghost"/);
+    rejects((p) => (p.scenarios[0].expect.query = { ghost: "1" }), /query parameter "ghost"/);
+    rejects((p) => (p.scenarios[0].expect.rows = [{ element: "status", count: 1 }]), /not a table or list/);
+    rejects((p) => (p.scenarios[0].expect.overlay = [{ element: "tbl", state: "open" }]), /not a drawer or modal/);
+    rejects((p) => delete p.screens[0].elements[2].param, /needs a param/);
+    rejects((p) => (p.screens[0].elements[2].collection = undefined), /./);
+    rejects((p) => (p.screens[0].elements[1].allowedRoles = ["ghost"]), /role "ghost"/);
   });
 });

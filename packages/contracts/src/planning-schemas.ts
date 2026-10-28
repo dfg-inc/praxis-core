@@ -186,7 +186,7 @@ export const ElementKindSchema = z.enum(ELEMENT_KINDS);
 
 /** Show an element only while a URL query parameter has (or lacks) a value. The parameter default of a tabs element counts as its value. */
 export const ShowWhenSchema = z.object({
-  param: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/),
+  param: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/).refine((n) => !(n in Object.prototype), "a parameter name must not be an Object property name"),
   equals: z.string().optional(),
   notEquals: z.string().optional(),
   /** true: the parameter is set; false: it is not set. */
@@ -194,7 +194,7 @@ export const ShowWhenSchema = z.object({
 });
 export type ShowWhen = z.infer<typeof ShowWhenSchema>;
 
-const ParamNameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/);
+const ParamNameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/).refine((n) => !(n in Object.prototype), "a parameter name must not be an Object property name such as toString or constructor");
 
 export const PrototypeElementSchema = z.object({
   id: z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/),

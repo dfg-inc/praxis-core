@@ -218,7 +218,7 @@ ${body}
 }
 
 function marks(name: string, current: string, labels = { accepted: "Accept", rejected: "Reject", pending: "Undecided" }): string {
-  return `<div class="marks tri" role="radiogroup">${(["accepted", "rejected", "pending"] as const)
+  return `<div class="marks tri" role="radiogroup" aria-label="Decision">${(["accepted", "rejected", "pending"] as const)
     .map((v) => `<label class="m-${v}"><input type="radio" name="${esc(name)}" value="${v}"${v === current ? " checked" : ""}><span>${labels[v]}</span></label>`)
     .join("")}</div>`;
 }

@@ -787,6 +787,22 @@ function validatePrototypeBehaviour(prototype: Prototype, reqIds: Set<string>, a
         throw missing("PROTOTYPE_INVALID", `${where} showWhen needs equals, notEquals or present`);
     }
   }
+  // parameters a screen can actually set: filters, tabs, drawers/modals and search boxes
+  const settable = new Map(prototype.screens.map((sc) => [sc.id, new Set(sc.elements.filter((e) => e.param && ["filter", "tabs", "drawer", "modal", "search"].includes(e.kind)).map((e) => e.param as string))]));
+  for (const screen of prototype.screens) {
+    const known = settable.get(screen.id)!;
+    for (const element of screen.elements) {
+      const where = `${screen.id}#${element.id}`;
+      if ((element.kind === "drawer" || element.kind === "modal") && !element.param) throw missing("PROTOTYPE_INVALID", `${where} is a ${element.kind} and needs a param, otherwise nothing can open it`);
+      if (element.onMissing === "close" && !element.collection) throw missing("PROTOTYPE_INVALID", `${where} onMissing "close" needs a collection to look the record up in`);
+      if (element.kind === "tabs" && new Set(element.tabs.map((t) => t.id)).size !== element.tabs.length) throw missing("PROTOTYPE_INVALID", `${where} has duplicate tab ids`);
+      if (element.showWhen && !known.has(element.showWhen.param)) throw missing("PROTOTYPE_INVALID", `${where} showWhen uses "${element.showWhen.param}", which no filter, tabs, drawer or search on ${screen.id} sets`);
+      for (const f of element.filters) if (!known.has(f.param)) throw missing("PROTOTYPE_INVALID", `${where} filters by "${f.param}", which no filter or tabs on ${screen.id} sets`);
+      for (const k of element.emptyAction?.clear ?? []) if (!known.has(k)) throw missing("PROTOTYPE_INVALID", `${where} emptyAction clears "${k}", which nothing on ${screen.id} sets`);
+      if (element.kind === "field" && element.collection && element.field && !fieldsOf.get(element.collection)?.has(element.field)) throw missing("PROTOTYPE_INVALID", `${where} field "${element.field}" is not a field of ${element.collection}`);
+      if (prototype.roles.length) for (const r of element.allowedRoles) if (!prototype.roles.includes(r)) throw missing("PROTOTYPE_INVALID", `${where} allows role "${r}", which the prototype does not define`);
+    }
+  }
   const datasetIds = new Set<string>();
   for (const dataset of prototype.datasets) {
     if (datasetIds.has(dataset.id)) throw missing("PROTOTYPE_INVALID", `duplicate dataset id ${dataset.id}`);
@@ -806,8 +822,19 @@ function validatePrototypeBehaviour(prototype: Prototype, reqIds: Set<string>, a
     if (scenario.dataset && !datasetIds.has(scenario.dataset)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses unknown dataset ${scenario.dataset}`);
     if (scenario.role && !prototype.roles.includes(scenario.role)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses unknown role ${scenario.role}`);
     const elements = screen ? screenElements.get(screen) : undefined;
-    for (const r of scenario.expect?.rows ?? []) if (!elements?.has(r.element)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects rows of unknown element ${r.element} on ${screen}`);
-    for (const o of scenario.expect?.overlay ?? []) if (!elements?.has(o.element)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects overlay of unknown element ${o.element} on ${screen}`);
+    const known = (screen && settable.get(screen)) || new Set<string>();
+    for (const r of scenario.expect?.rows ?? []) {
+      const e = elements?.get(r.element);
+      if (!e) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects rows of unknown element ${r.element} on ${screen}`);
+      if (e.kind !== "table" && e.kind !== "list") throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects rows of ${r.element}, which is not a table or list`);
+    }
+    for (const o of scenario.expect?.overlay ?? []) {
+      const e = elements?.get(o.element);
+      if (!e) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects overlay of unknown element ${o.element} on ${screen}`);
+      if (e.kind !== "drawer" && e.kind !== "modal") throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects an overlay state of ${o.element}, which is not a drawer or modal`);
+    }
+    for (const k of [...Object.keys(scenario.query), ...Object.keys(scenario.expect?.query ?? {}), ...(scenario.expect?.noQuery ?? [])])
+      if (!known.has(k)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses query parameter "${k}", which nothing on ${screen} reads or sets`);
     for (const id of scenario.requirementIds) if (!reqIds.has(id)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} links unknown requirement ${id}`);
     for (const id of scenario.acIds) if (!acIds.has(id)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} links unknown acceptance criterion ${id}`);
   }
