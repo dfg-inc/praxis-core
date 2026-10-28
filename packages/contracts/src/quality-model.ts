@@ -149,7 +149,15 @@ export function requirementCoverage(state: WorkflowState, requirementId: string)
       extraRisks += 1;
     }
   }
-  const noEvidence = criteria.every((c) => c.state === "missing" || c.state === "stale");
+  // results that name a criterion the requirement does not have prove nothing, but they are not "no evidence": say so
+  const own = new Set(requirement.acceptanceCriteria.map((c) => c.id));
+  let anyCurrent = false;
+  for (const e of state.coverage.filter((x) => x.requirementId === requirementId && !x.scenarioId.endsWith("-CONFIRMATION"))) {
+    if (!locate(state, e, undefined).current) continue;
+    anyCurrent = true;
+    if (requirement.acceptanceCriteria.length > 0 && !own.has(e.acceptanceCriterionId)) reasons.push(`${e.scenarioId} proves ${e.acceptanceCriterionId}, which is not an acceptance criterion of ${requirementId}`);
+  }
+  const noEvidence = !anyCurrent;
   const verdict = noEvidence ? "FAIL" : verdictOf(counts, extraRisks);
   return { id: requirementId, counts, criteria, verdict, reasons, noEvidence };
 }
