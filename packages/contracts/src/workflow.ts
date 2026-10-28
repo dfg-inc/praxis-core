@@ -1410,7 +1410,7 @@ export function applyWorkflowCommand(
   state: WorkflowState | null,
   raw: WorkflowCommand | unknown,
   /** Set by the Runtime from the user's decision. Never part of the command: nothing an agent sends can carry it. */
-  options?: { userApproval?: UserApproval; now?: Date; channel?: ReviewChannel; evidenceSource?: EvidenceSource },
+  options?: { userApproval?: UserApproval; now?: Date; channel?: ReviewChannel; evidenceSource?: EvidenceSource; /** Per-scenario provenance for a Runtime run that executed some checks in a browser and others as modules. */ evidenceSources?: Record<string, EvidenceSource> },
 ): { state: WorkflowState; duplicate: boolean; result: unknown } {
   const command = parseWorkflowCommand(raw);
   if (command.action === "open") {
@@ -1702,7 +1702,11 @@ export function applyWorkflowCommand(
     if (command.baseCoverageRevision !== undefined && command.baseCoverageRevision !== state.coverageRevision) {
       throw new WorkflowError("EVIDENCE_STALE", `coverage is at revision ${state.coverageRevision}, the writer saw ${command.baseCoverageRevision}: read the work item again and re-run the check`);
     }
-    const sourceFor = (): EvidenceSource => ({ ...(options?.evidenceSource ?? {}), kind, artifacts: options?.evidenceSource?.artifacts ?? [] }) as EvidenceSource;
+    const runtime = kind !== "agent";
+    const sourceFor = (scenarioId: string): EvidenceSource => {
+      const given = runtime ? (options?.evidenceSources?.[scenarioId] ?? options?.evidenceSource) : undefined;
+      return { ...(given ?? {}), kind: given?.kind ?? "agent", artifacts: given?.artifacts ?? [] } as EvidenceSource;
+    };
     // what is stored is stamped by the engine: an agent cannot claim a source, a time or a criterion revision for a scenario
     const incoming = command.scenarios.map((scenario) => {
       const requirement = state.requirements.find((r) => r.id === scenario.requirementId && r.status !== "superseded");
@@ -1714,7 +1718,7 @@ export function applyWorkflowCommand(
         throw new WorkflowError("EVIDENCE_TARGET_UNKNOWN", `scenario ${scenario.scenarioId} names criterion ${scenario.acceptanceCriterionId}, which ${scenario.requirementId} does not have`);
       }
       const storyRevision = story?.revision;
-      const stamped = { ...scenario, ...(storyRevision === undefined ? {} : { storyRevision }), ...(ac ? { acceptanceCriterionRevision: ac.revision } : {}), recordedAt: at, source: sourceFor() };
+      const stamped = { ...scenario, ...(storyRevision === undefined ? {} : { storyRevision }), ...(ac ? { acceptanceCriterionRevision: ac.revision } : {}), recordedAt: at, source: sourceFor(scenario.scenarioId) };
       return stamped.critical || stamped.kind === "happy" ? { ...stamped, critical: true } : stamped;
     });
     const seen = new Set<string>();
@@ -1723,12 +1727,13 @@ export function applyWorkflowCommand(
       seen.add(scenario.scenarioId);
     }
     const kindOf = (e: { source?: EvidenceSource }) => e.source?.kind ?? "legacy";
-    const ownedBy = (e: { source?: EvidenceSource }) => kindOf(e) === kind || (kind === "executed" && kindOf(e) === "legacy");
+    // a Runtime run owns what the Runtime executed (module or browser) and what predates provenance; an agent owns only its own attestations
+    const ownedBy = (e: { source?: EvidenceSource }) => (runtime ? kindOf(e) !== "agent" : kindOf(e) === "agent");
     let coverage = [...state.coverage];
     const before = JSON.stringify(coverage);
     if (command.retire.length) coverage = coverage.filter((e) => !(command.retire.includes(e.scenarioId) && ownedBy(e)));
     if (command.replaceSource) {
-      if (command.replaceSource !== kind) throw new WorkflowError("EVIDENCE_PROTECTED", `a ${kind} record cannot replace ${command.replaceSource} evidence`);
+      if ((command.replaceSource === "agent") === runtime) throw new WorkflowError("EVIDENCE_PROTECTED", `a ${runtime ? "Runtime" : "agent"} record cannot replace ${command.replaceSource} evidence`);
       coverage = coverage.filter((e) => !(ownedBy(e) && !seen.has(e.scenarioId)));
     }
     const comparable = (e: CoverageEntry) => JSON.stringify({ ...e, recordedAt: undefined, source: e.source && { kind: e.source.kind, runner: e.source.runner, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });

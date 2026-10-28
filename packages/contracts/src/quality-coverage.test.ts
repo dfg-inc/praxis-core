@@ -149,12 +149,29 @@ describe("S19: record-verification merges instead of replacing", () => {
     expect(() => record(first, [], { replaceSource: "executed" }, {})).toThrow(/cannot replace/);
   });
 
-  it("a complete re-run replaces only its own source: browser evidence survives a verify-stories re-run", () => {
+  it("a complete Runtime re-run replaces what the Runtime executed (module or browser) and keeps agent attestations", () => {
     const browser = { evidenceSource: { kind: "browser" as const, artifacts: [], runId: "b1" } };
     let s = record(base(), [entry(R1, 1), entry(R1, 2)]).state;
     s = record(s, [entry(R2, 1, "PASS", { scenarioId: "B-1" })], {}, browser).state;
+    s = record(s, [entry(R2, 2, "PASS", { scenarioId: "A-1" })], {}, {}).state;
+    expect(s.coverage.find((e) => e.scenarioId === "B-1")?.source?.kind).toBe("browser");
     s = record(s, [entry(R1, 1)], { replaceSource: "executed" }).state;
-    expect(s.coverage.map((e) => e.scenarioId).sort()).toEqual(["B-1", `S-${R1}-AC-01`]);
+    expect(s.coverage.map((e) => e.scenarioId).sort()).toEqual(["A-1", `S-${R1}-AC-01`]);
+    expect(() => record(s, [], { replaceSource: "agent" })).toThrow(/cannot replace/);
+  });
+
+  it("an executed entry and a browser entry can each be refreshed by the Runtime, never by an agent", () => {
+    const browser = { evidenceSource: { kind: "browser" as const, artifacts: [], runId: "b1" } };
+    const s = record(base(), [entry(R2, 1, "PASS", { scenarioId: "B-1" })], {}, browser).state;
+    expect(() => record(s, [entry(R2, 1, "FAIL", { scenarioId: "B-1" })], {}, {})).toThrow(/cannot overwrite/);
+    const refreshed = record(s, [entry(R2, 1, "FAIL", { scenarioId: "B-1" })]).state;
+    expect(refreshed.coverage[0]).toMatchObject({ status: "FAIL", source: { kind: "executed" } });
+  });
+
+  it("per-scenario provenance: one run can hold module and browser results", () => {
+    const s = record(base(), [entry(R2, 1, "PASS", { scenarioId: "M-1" }), entry(R2, 2, "PASS", { scenarioId: "B-1" })], {}, { evidenceSource: { kind: "executed", artifacts: [] }, evidenceSources: { "B-1": { kind: "browser", artifacts: [{ path: "a.png", sha256: "ab".repeat(32) }], runner: "playwright" } } }).state;
+    expect(s.coverage.find((e) => e.scenarioId === "M-1")?.source?.kind).toBe("executed");
+    expect(s.coverage.find((e) => e.scenarioId === "B-1")?.source).toMatchObject({ kind: "browser", runner: "playwright", artifacts: [{ path: "a.png" }] });
   });
 
   it("a writer that saw older coverage is refused", () => {
