@@ -244,7 +244,7 @@ export function renderRequirementsReview(state: WorkflowState, options: RenderRe
         const prev = ac.review.previous && ac.review.status === "pending" ? ac.review.previous : null;
         return `<div class="ac" data-ac="${esc(ac.id)}" data-rev="${ac.revision}" data-initial-status="${esc(ac.review.status)}">
 <div class="acid"><strong>${esc(ac.id.replace(/^.*-AC-/, "AC-"))}</strong>${ac.revision > 1 ? `<br>${pill(`r${ac.revision}`, "warn")}` : ""}</div>
-<div class="acbody"><textarea class="auto" data-f="ac-statement" data-initial="${esc(ac.statement)}" aria-label="Text of ${esc(ac.id)}">${esc(ac.statement)}</textarea>${prev ? `\n<div class="prev" data-previous>Changed since your earlier decision: it was <strong>${esc(prev.status)}</strong>${prev.comment ? ` - "${esc(prev.comment)}"` : ""}</div>` : ""}
+<div class="acbody"><textarea class="auto" data-f="ac-statement" data-initial="${esc(ac.statement)}" aria-label="Text of ${esc(ac.id)}">${esc(ac.statement)}</textarea>${prev ? `\n<div class="prev" data-previous>Before this revision: <strong>${esc(prev.status)}</strong>${prev.comment ? ` - "${esc(prev.comment)}"` : ""} (the text changed, so it needs a new decision)</div>` : ""}
 <div class="acctl">${marks(`m-${ac.id}`, ac.review.status)}<input type="text" data-f="ac-comment" data-initial="${esc(ac.review.comment ?? "")}" placeholder="Comment" value="${esc(ac.review.comment ?? "")}" aria-label="Comment on ${esc(ac.id)}"><label class="rm"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>`;
       })
       .join("");
