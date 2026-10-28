@@ -31,7 +31,7 @@ function scenario(storyId: string, status: "PASS" | "FAIL", scenarioId = `${stor
   return {
     storyId,
     requirementId: REQ,
-    acceptanceCriterionId: `${storyId}-AC-01`,
+    acceptanceCriterionId: `${REQ}-AC-01`,
     scenarioId,
     kind: "happy" as const,
     serviceId: "svc",
@@ -56,7 +56,7 @@ function base(): WorkflowState {
 }
 
 function verify(state: WorkflowState, scenarios: ReturnType<typeof scenario>[]) {
-  return applyWorkflowCommand(state, { action: "record-verification", independentRerun: true, scenarios });
+  return applyWorkflowCommand(state, { action: "record-verification", independentRerun: true, scenarios }, { evidenceSource: { kind: "executed", artifacts: [] } });
 }
 
 function qualityCheck(state: WorkflowState) {

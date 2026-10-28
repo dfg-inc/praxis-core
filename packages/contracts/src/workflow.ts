@@ -3,6 +3,7 @@ import { accessSync, constants } from "node:fs";
 import { z } from "zod";
 import { WorkflowError } from "./errors.js";
 import { parseStrict } from "./command-strict.js";
+import { evaluateEvidence, requirementCoverage, requiredRequirements, type FeatureEvaluation } from "./quality-model.js";
 import { RequirementIdSchema } from "./ids.js";
 import { PlanningStateFields, ScopeSchema, WorkItemKindSchema, WorkflowModeSchema } from "./planning-schemas.js";
 import { PLANNING_ACTIONS, PlanningCommandSchemas, acceptanceStatus, applyPlanningCommand, migrateWorkflowState, type PlanningCommand } from "./planning.js";
@@ -14,6 +15,8 @@ import {
   assertStoryNarrative,
   ChangeRecordSchema,
   CoverageEntrySchema,
+  type EvidenceSource,
+  type CoverageEntry,
   missingRepositoryPrompts,
   rollupStoryVerdict,
   StoryCapabilitySchema,
@@ -334,6 +337,8 @@ export const WorkflowStateSchema = z.object({
     .default([]),
   stories: z.array(UserStorySchema).default([]),
   coverage: z.array(CoverageEntrySchema).default([]),
+  /** Bumped on every change to coverage: lets a writer say which coverage it saw (EVIDENCE_STALE). */
+  coverageRevision: z.number().int().nonnegative().default(0),
   changes: z.array(ChangeRecordSchema).default([]),
   stage: WorkflowStageSchema,
   history: z.array(
@@ -1002,52 +1007,27 @@ function carryForwardContext(
 
 export type RequirementEvidence =
   | { status: "missing"; reasons: string[] }
-  | { status: "executed"; verdict: QualityVerdict; reasons: string[]; provenance: string[] };
+  | { status: "executed"; verdict: QualityVerdict; reasons: string[]; provenance: string[]; counts: import("./quality-model.js").CoverageCounts };
 
 /**
- * The single source of executed evidence for a requirement: coverage recorded by
- * verify-stories for the current revision of non-superseded Stories. Used by both
- * record-verification and quality-check so their requirement verdicts cannot diverge.
+ * The single source of a requirement's executed evidence: every current acceptance criterion needs a current, independently
+ * executed PASS (see quality-model.ts). Used by record-verification, quality-check, verify-stories and feature-verdict, so their
+ * requirement verdicts cannot diverge.
  */
 export function requirementEvidence(state: WorkflowState, requirementId: string): RequirementEvidence {
-  const current = new Map(
-    state.stories.filter((story) => story.status !== "superseded").map((story) => [story.id, story]),
-  );
-  const requirement = state.requirements.find((item) => item.id === requirementId && item.status !== "superseded");
-  const executed = state.coverage.filter((entry) => {
-    if (entry.requirementId !== requirementId) return false;
-    // Requirement-only evidence has no Story; it counts as long as the requirement itself is current.
-    if (entry.storyId === undefined) return requirement !== undefined;
-    const story = current.get(entry.storyId);
-    if (!story || entry.scenarioId === `${entry.storyId}-CONFIRMATION`) return false;
-    // Entries written before storyRevision existed only count for an unrevised Story.
-    return (entry.storyRevision ?? 1) === story.revision;
-  });
-  if (executed.length === 0) return { status: "missing", reasons: ["missing independent evidence"] };
-  const rolled = rollupStoryVerdict(executed);
-  let verdict: QualityVerdict = rolled.verdict;
-  const reasons = [...rolled.reasons];
-  const verified = new Set(executed.flatMap((entry) => (entry.storyId ? [entry.storyId] : [])));
-  const linked = [...current.values()].filter((story) => story.requirementIds.includes(requirementId));
-  for (const story of linked) {
-    if (!verified.has(story.id)) reasons.push(`story-not-verified:${story.id}@${story.revision}`);
-    else if (!story.confirmedBehavior) reasons.push(`story-unconfirmed:${story.id}@${story.revision}`);
-  }
-  if (linked.length === 0 && requirement) {
-    // No Story states the behaviour, so the requirement's own acceptance criteria are the contract:
-    // each one needs a passing executed scenario, or the verdict cannot be PASS.
-    const passed = new Set(executed.filter((entry) => entry.status === "PASS").map((entry) => entry.acceptanceCriterionId));
-    for (const criterion of requirement.acceptanceCriteria) {
-      if (!passed.has(criterion.id)) reasons.push(`ac-not-verified:${criterion.id}`);
-    }
-  }
-  if (verdict === "PASS" && reasons.length > 0) verdict = "PASS_WITH_RISKS";
+  const cov = requirementCoverage(state, requirementId);
+  if (cov.noEvidence) return { status: "missing", reasons: ["missing independent evidence", ...cov.reasons.filter((r) => r.includes("older revision"))] };
+  const scenarios = state.coverage.filter((e) => e.requirementId === requirementId && cov.criteria.some((c) => c.scenarios.includes(e.scenarioId)));
+  const stories = [...new Set(scenarios.flatMap((e) => (e.storyId ? [e.storyId] : [])))];
   const provenance = [
-    ...[...verified].map((id) => `story:${id}@${current.get(id)!.revision}`),
-    ...(verified.size === 0 ? [`requirement:${requirementId}@${requirement?.revision ?? 1}`] : []),
-    ...executed.map((entry) => `${entry.scenarioId}:${entry.status}`),
+    ...stories.map((id) => `story:${id}@${state.stories.find((st) => st.id === id)?.revision ?? 1}`),
+    ...(stories.length === 0 ? [`requirement:${requirementId}@${state.requirements.find((r) => r.id === requirementId)?.revision ?? 1}`] : []),
+    ...scenarios.map((e) => `${e.scenarioId}:${e.status}`),
+    ...[...new Set(scenarios.map((e) => e.source?.kind ?? "legacy"))].map((k) => `source:${k}`),
   ];
-  return { status: "executed", verdict, reasons, provenance };
+  const c = cov.counts;
+  const reasons = [`criteria: ${c.passed} of ${c.total} passed, ${c.failed} failed, ${c.blocked} blocked, ${c.missing} missing, ${c.stale} stale, ${c.attested} attested`, ...cov.reasons];
+  return { status: "executed", verdict: cov.verdict, reasons, provenance, counts: c };
 }
 
 export function recordVerdict(
@@ -1385,6 +1365,12 @@ export const WorkflowCommandSchema = z.discriminatedUnion("action", [
     testsGreen: z.boolean().optional(),
     scenarios: z.array(CoverageEntrySchema).default([]),
     findings: z.array(FindingSchema).default([]),
+    /** Scenario ids to remove. Only entries from the same kind of source can be removed. */
+    retire: z.array(z.string().min(1)).default([]),
+    /** Remove this source's earlier entries that this run did not repeat (a complete re-run). Only the caller's own source kind. */
+    replaceSource: z.enum(["executed", "browser", "agent"]).optional(),
+    /** The coverageRevision the writer saw; a different current value is EVIDENCE_STALE. */
+    baseCoverageRevision: z.number().int().nonnegative().optional(),
   }),
   z.object({
     action: z.literal("record-change"),
@@ -1424,7 +1410,7 @@ export function applyWorkflowCommand(
   state: WorkflowState | null,
   raw: WorkflowCommand | unknown,
   /** Set by the Runtime from the user's decision. Never part of the command: nothing an agent sends can carry it. */
-  options?: { userApproval?: UserApproval; now?: Date; channel?: ReviewChannel },
+  options?: { userApproval?: UserApproval; now?: Date; channel?: ReviewChannel; evidenceSource?: EvidenceSource },
 ): { state: WorkflowState; duplicate: boolean; result: unknown } {
   const command = parseWorkflowCommand(raw);
   if (command.action === "open") {
@@ -1711,35 +1697,62 @@ export function applyWorkflowCommand(
     return { state, duplicate: false, result: { questions } };
   }
   if (command.action === "record-verification") {
-    const scenarios = command.scenarios.map((scenario) => {
-      const storyRevision =
-        scenario.storyRevision ??
-        (scenario.storyId ? state.stories.find((story) => story.id === scenario.storyId)?.revision : undefined);
-      const stamped = storyRevision === undefined ? scenario : { ...scenario, storyRevision };
+    const kind = options?.evidenceSource?.kind ?? "agent";
+    const at = (options?.now ?? new Date()).toISOString();
+    if (command.baseCoverageRevision !== undefined && command.baseCoverageRevision !== state.coverageRevision) {
+      throw new WorkflowError("EVIDENCE_STALE", `coverage is at revision ${state.coverageRevision}, the writer saw ${command.baseCoverageRevision}: read the work item again and re-run the check`);
+    }
+    const sourceFor = (): EvidenceSource => ({ ...(options?.evidenceSource ?? {}), kind, artifacts: options?.evidenceSource?.artifacts ?? [] }) as EvidenceSource;
+    // what is stored is stamped by the engine: an agent cannot claim a source, a time or a criterion revision for a scenario
+    const incoming = command.scenarios.map((scenario) => {
+      const requirement = state.requirements.find((r) => r.id === scenario.requirementId && r.status !== "superseded");
+      if (!requirement) throw new WorkflowError("EVIDENCE_TARGET_UNKNOWN", `scenario ${scenario.scenarioId} names ${scenario.requirementId}, which is not a current requirement`);
+      const story = scenario.storyId ? state.stories.find((item) => item.id === scenario.storyId && item.status !== "superseded") : undefined;
+      if (scenario.storyId && !story) throw new WorkflowError("EVIDENCE_TARGET_UNKNOWN", `scenario ${scenario.scenarioId} names story ${scenario.storyId}, which is not current`);
+      const ac = requirement.acceptanceCriteria.find((c) => c.id === scenario.acceptanceCriterionId);
+      if (!ac && !story?.acceptanceCriteria.some((c) => c.id === scenario.acceptanceCriterionId) && scenario.acceptanceCriterionId !== story?.id) {
+        throw new WorkflowError("EVIDENCE_TARGET_UNKNOWN", `scenario ${scenario.scenarioId} names criterion ${scenario.acceptanceCriterionId}, which ${scenario.requirementId} does not have`);
+      }
+      const storyRevision = story?.revision;
+      const stamped = { ...scenario, ...(storyRevision === undefined ? {} : { storyRevision }), ...(ac ? { acceptanceCriterionRevision: ac.revision } : {}), recordedAt: at, source: sourceFor() };
       return stamped.critical || stamped.kind === "happy" ? { ...stamped, critical: true } : stamped;
     });
-    const unconfirmed = state.stories.filter((story) => !story.confirmedBehavior && story.status !== "superseded");
-    for (const story of unconfirmed) {
-      scenarios.push({
-        storyId: story.id,
-        storyRevision: story.revision,
-        requirementId: story.requirementIds[0]!,
-        acceptanceCriterionId: story.acceptanceCriteria[0]?.id ?? story.id,
-        scenarioId: `${story.id}-CONFIRMATION`,
-        kind: "happy",
-        serviceId: story.serviceIds[0] ?? "feature",
-        repository: "",
-        implementationPath: "",
-        testRef: "",
-        evidence: ["story behavior is an assumption until BA confirms it"],
-        status: "PASS_WITH_RISKS",
-        critical: false,
-      });
+    const seen = new Set<string>();
+    for (const scenario of incoming) {
+      if (seen.has(scenario.scenarioId)) throw new WorkflowError("EVIDENCE_ID_CONFLICT", `scenario ${scenario.scenarioId} appears twice in one record`);
+      seen.add(scenario.scenarioId);
     }
-    const feature = rollupStoryVerdict(scenarios);
-    let next = {
-      ...state,
-      coverage: scenarios,
+    const kindOf = (e: { source?: EvidenceSource }) => e.source?.kind ?? "legacy";
+    const ownedBy = (e: { source?: EvidenceSource }) => kindOf(e) === kind || (kind === "executed" && kindOf(e) === "legacy");
+    let coverage = [...state.coverage];
+    const before = JSON.stringify(coverage);
+    if (command.retire.length) coverage = coverage.filter((e) => !(command.retire.includes(e.scenarioId) && ownedBy(e)));
+    if (command.replaceSource) {
+      if (command.replaceSource !== kind) throw new WorkflowError("EVIDENCE_PROTECTED", `a ${kind} record cannot replace ${command.replaceSource} evidence`);
+      coverage = coverage.filter((e) => !(ownedBy(e) && !seen.has(e.scenarioId)));
+    }
+    const comparable = (e: CoverageEntry) => JSON.stringify({ ...e, recordedAt: undefined, source: e.source && { kind: e.source.kind, runner: e.source.runner, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });
+    for (const scenario of incoming) {
+      const index = coverage.findIndex((e) => e.scenarioId === scenario.scenarioId);
+      if (index < 0) {
+        coverage.push(scenario);
+        continue;
+      }
+      const existing = coverage[index]!;
+      if (existing.requirementId !== scenario.requirementId || existing.acceptanceCriterionId !== scenario.acceptanceCriterionId) {
+        throw new WorkflowError("EVIDENCE_ID_CONFLICT", `scenario ${scenario.scenarioId} already proves ${existing.requirementId} ${existing.acceptanceCriterionId}; a scenario id cannot be moved to another criterion, use a new id`);
+      }
+      if (kindOf(existing) === "agent" || ownedBy(existing)) {
+        // an identical repeat keeps the earlier record (idempotent); a different result replaces it in place
+        if (comparable(existing) !== comparable(scenario)) coverage[index] = scenario;
+      } else {
+        throw new WorkflowError("EVIDENCE_PROTECTED", `scenario ${scenario.scenarioId} was recorded by ${kindOf(existing)} evidence; a ${kind} record cannot overwrite it`);
+      }
+    }
+    const changed = JSON.stringify(coverage) !== before;
+    const feature0 = { ...state, coverage, coverageRevision: state.coverageRevision + (changed ? 1 : 0) };
+    let next: WorkflowState = {
+      ...feature0,
       findings: mergeFindings(state.findings, command.findings),
     };
     if (!command.independentRerun) {
@@ -1748,26 +1761,31 @@ export function applyWorkflowCommand(
         next = returned.state;
       }
     }
-    const grouped = new Map<string, typeof scenarios>();
-    for (const scenario of scenarios) {
-      const entries = grouped.get(scenario.serviceId) ?? [];
-      entries.push(scenario);
-      grouped.set(scenario.serviceId, entries);
-    }
+    const touchedServices = [...new Set(incoming.map((scenario) => scenario.serviceId))];
     const serviceVerdicts = [];
-    for (const [serviceId, entries] of grouped) {
-      const rolled = rollupStoryVerdict(entries);
-      serviceVerdicts.push({ serviceId, verdict: rolled.verdict, reasons: rolled.reasons });
+    for (const serviceId of touchedServices) {
+      const entries = coverage.filter((e) => e.serviceId === serviceId && !e.scenarioId.endsWith("-CONFIRMATION"));
+      const current = entries.filter((e) => {
+        const story = e.storyId ? next.stories.find((st) => st.id === e.storyId) : undefined;
+        return !e.storyId || (story && story.status !== "superseded" && (e.storyRevision ?? 1) === story.revision);
+      });
+      const rolled = rollupStoryVerdict(current);
+      const independent = current.some((e) => e.status === "PASS" && (e.source?.kind ?? "legacy") !== "agent");
+      const verdict = rolled.verdict === "PASS" && !independent ? "PASS_WITH_RISKS" : rolled.verdict;
+      const reasons = rolled.verdict === "PASS" && !independent ? ["only agent-attested results: not independently executed"] : rolled.reasons;
+      serviceVerdicts.push({ serviceId, verdict, reasons });
       next = recordVerdict(next, {
         id: `V-SERVICE-${serviceId}-${next.verdicts.length + 1}`,
         scope: "service",
         scopeId: serviceId,
-        verdict: rolled.verdict,
-        evidenceRefs: rolled.reasons.length ? rolled.reasons : [`${serviceId} scenarios passed`],
-        requirementIds: [...new Set(entries.map((scenario) => scenario.requirementId))],
+        verdict,
+        evidenceRefs: reasons.length ? reasons : [`${serviceId} scenarios passed`],
+        requirementIds: [...new Set(current.map((e) => e.requirementId))],
       });
     }
-    for (const requirementId of [...new Set(scenarios.map((scenario) => scenario.requirementId))]) {
+    for (const requirementId of [...new Set(incoming.map((scenario) => scenario.requirementId))]) {
+      const cov = requirementCoverage(next, requirementId);
+      if (cov.noEvidence) continue;
       const evidence = requirementEvidence(next, requirementId);
       if (evidence.status !== "executed") continue;
       next = recordVerdict(next, {
@@ -1783,24 +1801,34 @@ export function applyWorkflowCommand(
         requirementIds: [requirementId],
       });
     }
+    // the feature result is the same computation feature-verdict uses over the evidence; readiness (approvals) is added there
+    const evaluation = evaluateEvidence(next);
     const verdictId = `V-STORY-${next.verdicts.length + 1}`;
     next = recordVerdict(next, {
       id: verdictId,
       scope: "feature",
       scopeId: state.workItem.id,
-      verdict: feature.verdict,
+      verdict: evaluation.verdict,
       evidenceRefs: [
         ...(command.testsGreen ? ["testsGreen:true", "green tests are not story evidence"] : []),
         ...(command.independentRerun ? ["independentRerun:true"] : ["independentRerun:false"]),
-        ...feature.reasons,
-        ...scenarios.map((scenario) => `${scenario.scenarioId}:${scenario.status}`),
+        `criteria: ${evaluation.totals.passed} of ${evaluation.totals.total} passed`,
+        ...evaluation.gaps,
       ],
-      requirementIds: [...new Set(scenarios.map((scenario) => scenario.requirementId))],
+      requirementIds: requiredRequirements(next).map((r) => r.id),
     });
     return {
       state: next,
       duplicate: false,
-      result: { verdict: feature.verdict, reasons: feature.reasons, scenarios, serviceVerdicts },
+      result: {
+        verdict: evaluation.verdict,
+        reasons: evaluation.gaps,
+        scenarios: incoming,
+        serviceVerdicts,
+        coverage: { totals: evaluation.totals, requirements: evaluation.requirements, stories: evaluation.stories },
+        coverageRevision: next.coverageRevision,
+        evidenceSource: kind,
+      },
     };
   }
   if (command.action === "record-change") {
@@ -1917,7 +1945,7 @@ export function applyWorkflowCommand(
     evidence = [...executed.reasons, ...executed.provenance, ...implementationEvidence];
     // An unconfirmed Story is a BA confirmation risk, not a Developer defect.
     finding =
-      executed.verdict === "FAIL"
+      executed.verdict === "FAIL" && executed.counts.failed > 0
         ? {
             id: `F-${command.requirementId}-coverage`,
             requirementIds: [command.requirementId],
@@ -1961,36 +1989,25 @@ function mergeFindings(current: Finding[], incoming: Finding[]): Finding[] {
   return [...merged.values()];
 }
 
-export function evaluateFeature(state: WorkflowState): { verdict: QualityVerdict; gaps: string[] } {
-  const gaps: string[] = [];
-  const active = state.requirements.filter((item) => item.status !== "superseded");
-  if (active.length === 0) gaps.push("no requirements");
-  for (const requirement of active) {
-    const latest = [...state.verdicts]
-      .reverse()
-      .find(
-        (verdict) =>
-          verdict.scope === "requirement" && verdict.scopeId === requirement.id && !verdict.stale,
-      );
-    if (!latest) gaps.push(`missing verdict for ${requirement.id}`);
-    else if (latest.verdict !== "PASS") gaps.push(`${requirement.id} is ${latest.verdict}`);
-  }
+export function evaluateFeature(state: WorkflowState): { verdict: QualityVerdict; gaps: string[]; evidence: FeatureEvaluation; readinessGaps: string[] } {
+  const evidence = evaluateEvidence(state);
+  const readinessGaps: string[] = [];
   for (const service of state.services) {
-    const unit = state.implementationUnits.find(
-      (item) => item.serviceId === service.id && !item.stale,
-    );
-    if (!unit) gaps.push(`missing implementation for ${service.id}`);
+    const unit = state.implementationUnits.find((item) => item.serviceId === service.id && !item.stale);
+    if (!unit) readinessGaps.push(`missing implementation for ${service.id}`);
   }
   const readiness = featureReadiness(state);
   if (!readiness.ready) {
-    for (const id of readiness.missingIntegration) gaps.push(`dependency not done: ${id}`);
-    for (const dep of readiness.unknownDependencies) gaps.push(`unknown dependency: ${dep}`);
-    if (state.services.length === 0) gaps.push("no services");
+    for (const id of readiness.missingIntegration) readinessGaps.push(`dependency not done: ${id}`);
+    for (const dep of readiness.unknownDependencies) readinessGaps.push(`unknown dependency: ${dep}`);
+    if (state.services.length === 0) readinessGaps.push("no services");
     else if (!state.services.every((service) => service.status === "approved" || service.status === "completed")) {
-      gaps.push("services are not approved");
+      readinessGaps.push("services are not approved");
     }
   }
-  return { verdict: gaps.length === 0 ? "PASS" : "FAIL", gaps };
+  const gaps = [...evidence.gaps, ...readinessGaps];
+  const verdict: QualityVerdict = readinessGaps.length > 0 ? "FAIL" : evidence.verdict;
+  return { verdict, gaps, evidence, readinessGaps };
 }
 
 export const BULK_IMPORT_REQUIREMENTS: Array<{

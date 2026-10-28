@@ -626,3 +626,8 @@ export * from "./briefing.js";
 // Command discovery for agents.
 export { commandCatalog, explainCommandError } from "./command-catalog.js";
 export type { CommandInfo } from "./command-catalog.js";
+
+export { criterionStatus, requirementCoverage, storyCoverage, evaluateEvidence, requiredRequirements } from "./quality-model.js";
+export type { CriterionState, CriterionCoverage, CoverageCounts, CoverageResult, FeatureEvaluation, Verdict } from "./quality-model.js";
+export { EvidenceSourceSchema } from "./story.js";
+export type { EvidenceSource } from "./story.js";

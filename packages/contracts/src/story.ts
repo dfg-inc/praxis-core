@@ -99,6 +99,20 @@ export const UserStorySchema = z.object({
 });
 export type UserStory = z.infer<typeof UserStorySchema>;
 
+/** Where a coverage entry came from. Set by the Runtime or by the workflow engine, never taken from what an agent wrote. */
+export const EvidenceSourceSchema = z.object({
+  /** executed: the Runtime ran the check. browser: the Runtime drove a real browser. agent: written by an agent without a Runtime run (self-attested, never independent). */
+  kind: z.enum(["executed", "browser", "agent"]),
+  runId: z.string().optional(),
+  runner: z.string().optional(),
+  startedAt: z.string().optional(),
+  finishedAt: z.string().optional(),
+  /** Digest of what was exercised (the served bundle, or the module). */
+  subjectDigest: z.string().optional(),
+  artifacts: z.array(z.object({ path: z.string(), sha256: z.string(), bytes: z.number().int().nonnegative().optional() })).default([]),
+});
+export type EvidenceSource = z.infer<typeof EvidenceSourceSchema>;
+
 export const CoverageEntrySchema = z.object({
   /** Absent for requirement-only evidence: a work item verified without a Story. */
   storyId: StoryIdSchema.optional(),
@@ -116,6 +130,10 @@ export const CoverageEntrySchema = z.object({
   findingId: z.string().optional(),
   status: CoverageStatusSchema,
   critical: z.boolean().default(false),
+  /** Revision of the acceptance criterion this scenario verified. A revised criterion is not proven by the older result. */
+  acceptanceCriterionRevision: z.number().int().positive().optional(),
+  recordedAt: z.string().optional(),
+  source: EvidenceSourceSchema.optional(),
 });
 export type CoverageEntry = z.infer<typeof CoverageEntrySchema>;
 
