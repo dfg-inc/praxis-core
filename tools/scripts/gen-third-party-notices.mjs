@@ -30,7 +30,7 @@ const runtimeOnly = [
   { name: "zod", dir: nested ? join(nested, "zod") : undefined, note: "(the 4.x copy used by the MCP SDK)" },
   { name: "@modelcontextprotocol/server", dir: join(modules, "@modelcontextprotocol/server") },
   { name: "@modelcontextprotocol/core", dir: join(modules, "@modelcontextprotocol/core") },
-  { name: "sql.js", dir: join(modules, "sql.js"), note: "(JavaScript glue and sql-wasm.wasm; the WebAssembly binary embeds SQLite and an Emscripten runtime, whose own terms are not restated in this licence file and were not separately verified)" },
+  { name: "sql.js", dir: join(modules, "sql.js"), note: "(JavaScript glue and sql-wasm.wasm; the binary embeds SQLite, public domain, and Emscripten system libraries: see the Emscripten entry at the end of this file)" },
   ...["ajv@8.18.0", "ajv-formats@3.0.1", "fast-uri@3.1.0", "fast-deep-equal@3.1.3", "json-schema-traverse@1.0.0"].map((id) => ({
     name: id.replace(/@[^@]+$/, ""), dir: inlined ? join(inlined, id, "package") : undefined, note: "(inlined by the MCP SDK build)",
   })),
@@ -63,6 +63,28 @@ The opening paragraph of \`skills/grill-cr/SKILL.md\` (the BA change-request int
 
 \`\`\`text
 ${readFileSync(licFile, "utf8").replace(/\s+$/, "")}
+\`\`\`
+`);
+}
+if (profile === "runtime") {
+  const emLicense = readFileSync(join(here, "third-party", "emscripten-5.0.0.LICENSE"), "utf8").replace(/\s+$/, "");
+  const muslCopyright = readFileSync(join(here, "third-party", "musl-emscripten-5.0.0.COPYRIGHT"), "utf8").replace(/\s+$/, "");
+  parts.push(`---
+
+## Emscripten runtime and libc, statically linked into \`sql-wasm.wasm\`
+
+The WebAssembly binary \`sql-wasm.wasm\` (sql.js 1.14.2, unmodified) was compiled with Emscripten and contains Emscripten's system libraries; the JavaScript glue that loads it is Emscripten runtime code. Emscripten is available under the MIT licence and the University of Illinois/NCSA licence; its libc is musl (MIT). The texts below are copied unchanged from the Emscripten 5.0.0 tag, the version pinned by the upstream sql.js build environment (the exact toolchain of the upstream release build cannot be proven from the binary). SQLite inside the binary is in the public domain and needs no notice; the other Emscripten system libraries that may be linked (dlmalloc: public domain, CC0; compiler-rt: Apache-2.0 with LLVM Exceptions, which exempts object-code redistribution) need none here.
+
+### Emscripten LICENSE (Emscripten 5.0.0)
+
+\`\`\`text
+${emLicense}
+\`\`\`
+
+### musl COPYRIGHT (system/lib/libc/musl/COPYRIGHT, Emscripten 5.0.0)
+
+\`\`\`text
+${muslCopyright}
 \`\`\`
 `);
 }
