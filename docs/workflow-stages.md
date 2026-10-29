@@ -124,3 +124,29 @@ The prototype is data the Viewer runs, not a picture. A `ui` prototype can decla
 | Honesty | `limitations`: what the prototype does not reproduce |
 
 The Viewer keeps its address in the page `#hash` (`#/screen?status=Shipped&order=A-1003`): deep links, reload and Back/Forward work; there is an address bar for typing a wrong one. Escape closes the top card, focus goes into an opened card and back to the row, a modal keeps Tab inside, and the layout adapts to a mobile width. Three modes: **Preview** (use it), **Inspect** (click an element: requirement, criteria and behaviour), **Review** (click an element to comment on it). Coverage is collapsed and grouped by requirement. The Viewer builds DOM with text only, never evaluates anything from the prototype and makes no network request; nothing it does changes the saved prototype.
+
+
+## Gates between stages (alpha.49, round 7)
+
+| To enter | Needs |
+| --- | --- |
+| prototype | requirements accepted (every criterion) and unchanged since |
+| story_plan | the same, and the prototype accepted or waived with a reason |
+| stories_review | the plan agreed and unchanged since; every planned story detailed |
+| architecture | stories reviewed and accepted, unchanged since; coverage without gaps; **every active story confirmed (`confirm-story`)**; no earlier acceptance (requirements, prototype, plan) gone stale |
+| development | no acceptance gone stale (including the stories review); services with a repository or path; contracts agreed |
+| quality | the same freshness; every service has a current implementation record |
+
+Reviewing a story's items and confirming its behaviour are two decisions. An acceptance the person gave stands only while the content is unchanged: after a later change the gate names what to accept again. Excluding and restoring a plan line returns it exactly as agreed (a reason belongs to the excluded state only).
+
+Required capabilities come from what a requirement statement says a user can do and from what the prototype and endpoints built for it do; each gap names what asked for it. Wording in the criteria only suggests, never blocks. A gap the person waives is recorded with the reason, the channel, the time and what asked for it; the waive control is in the Story Plan and Stories review pages, and waivers are applied before the agreement in the same Save.
+
+## Quality evidence
+
+A requirement or Story is PASS only when every current acceptance criterion has a current, independently executed PASS. Per requirement and Story the result carries total / verified / passed / failed / blocked / missing / stale / attested. `verify-stories`, `quality-check` and `feature-verdict` use the same computation, so they cannot disagree about one state; `feature-verdict` adds workflow readiness (implementation records, approved services). Entries carry their source: `executed` (a module ran), `browser` (a real browser ran), `agent` (attested by an agent, never independent), or none (written before provenance: counted as executed, for unrevised criteria only). `record-verification` merges by scenario id; a scenario id never moves to another criterion; an agent cannot overwrite or retire Runtime evidence; a writer that saw older coverage gets `EVIDENCE_STALE`.
+
+Browser checks are data in `checks.json` (`level: "browser"`, a `browser.serve` root and `steps`); the driver serves the built bundle on loopback, drives Chromium in an isolated process, allows no request outside that origin, and records the bundle and screenshot digests. Unavailable browser or missing bundle: `BLOCKED`, with the reason.
+
+## Approval records
+
+Every decision that needed a person is recorded in the work item (`approvals`): the action, the subjects with revision and content fingerprint, the time, the channel, what the channel proves (`independent-human` client dialog, `review-page` Save in the served page, `host-attested` host permission or Trusted Client mode, `test-only` harness) and the work item revision it produced. No client identifies the person yet (`actor` stays empty). Decisions that predate the record are reported as unverified provenance by `praxis_workflow_inspect` (`view: approvals`).
