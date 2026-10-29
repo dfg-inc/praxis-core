@@ -8,8 +8,9 @@ import { RequirementIdSchema } from "./ids.js";
 import { PlanningStateFields, ScopeSchema, WorkItemKindSchema, WorkflowModeSchema } from "./planning-schemas.js";
 import { PLANNING_ACTIONS, PlanningCommandSchemas, acceptanceStatus, applyPlanningCommand, migrateWorkflowState, type PlanningCommand } from "./planning.js";
 import { humanActContent } from "./human-acts.js";
+import { ApprovalRecordSchema, describeApproval, trustOfApproval, type ApprovalRecord, type ApprovalSubject } from "./approval-audit.js";
 import { verifyUserApproval, type UserApproval } from "./user-approval.js";
-import { verifyUserChannel, type ReviewChannel } from "./planning.js";
+import { isUserDecision, verifyUserChannel, type ReviewChannel } from "./planning.js";
 import {
   ReviewMarkSchema,
   assertStoryNarrative,
@@ -339,6 +340,8 @@ export const WorkflowStateSchema = z.object({
   coverage: z.array(CoverageEntrySchema).default([]),
   /** Bumped on every change to coverage: lets a writer say which coverage it saw (EVIDENCE_STALE). */
   coverageRevision: z.number().int().nonnegative().default(0),
+  /** Every decision that needed a person, with its channel and what that channel proves (approval-audit.ts). */
+  approvals: z.array(ApprovalRecordSchema).default([]),
   changes: z.array(ChangeRecordSchema).default([]),
   stage: WorkflowStageSchema,
   history: z.array(
@@ -595,6 +598,9 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
     const story = state.stories.find((item) => item.id === command.id && item.status !== "superseded");
     if (!story) return null;
     const contentFingerprint = storyContentFingerprint(story);
+    // refused at preview, before the user is asked: a client reads the current revision and fingerprint (praxis_workflow_inspect, view stories) instead of guessing one
+    if (story.revision !== command.revision) throw new WorkflowError("STORY_REVISION", `story ${command.id} is at revision ${story.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view stories)`);
+    if (contentFingerprint !== command.contentFingerprint) throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view stories)`);
     const content = humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint });
     return {
       action: "confirm-story",
@@ -625,6 +631,8 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
     const decision = state.decisions.find((item) => item.id === command.id);
     if (!decision) return null;
     const contentFingerprint = decisionContentFingerprint(decision);
+    if (decision.revision !== command.revision) throw new WorkflowError("DECISION_REVISION", `decision ${command.id} is at revision ${decision.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view decisions)`);
+    if (contentFingerprint !== command.contentFingerprint) throw new WorkflowError("DECISION_FINGERPRINT", `decision ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view decisions)`);
     const content = humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint });
     return {
       action: "confirm-decision",
@@ -1406,7 +1414,66 @@ export function dryRunCommand(state: WorkflowState, raw: unknown): { duplicate: 
   return { duplicate: out.duplicate, result: out.result };
 }
 
+
+type ApplyOptions = { userApproval?: UserApproval; now?: Date; channel?: ReviewChannel; evidenceSource?: EvidenceSource; evidenceSources?: Record<string, EvidenceSource> };
+
+function subjectsOf(command: WorkflowCommand, before: WorkflowState | null, after: WorkflowState): ApprovalSubject[] {
+  const c = command as Record<string, unknown> & { action: string };
+  switch (command.action) {
+    case "confirm-story":
+      return [{ type: "story", id: command.id, revision: command.revision, contentFingerprint: command.contentFingerprint }];
+    case "confirm-decision":
+      return [{ type: "decision", id: command.id, revision: command.revision, contentFingerprint: command.contentFingerprint }];
+    case "set-service":
+      return [{ type: "service", id: command.service.id }];
+    case "revise-acceptance":
+      return command.edits.map((e) => ({ type: "criterion" as const, id: e.id, revision: after.requirements.flatMap((r) => r.acceptanceCriteria).find((x) => x.id === e.id)?.revision }));
+    case "open":
+      return [{ type: "work-item", id: after.workItem.id }];
+    default: {
+      const ids: ApprovalSubject[] = [];
+      for (const d of (c.decisions as Array<{ requirementId?: string; acceptance?: Array<{ id: string }> }> | undefined) ?? []) for (const a of d.acceptance ?? []) ids.push({ type: "criterion", id: a.id });
+      for (const id of (c.requirementIds as string[] | undefined) ?? []) ids.push({ type: "requirement", id });
+      for (const item of (c.items as Array<{ storyId?: string; key?: string }> | undefined) ?? []) if (item.storyId) ids.push({ type: "story", id: item.storyId });
+      if (!ids.length) ids.push({ type: "review", id: command.action, revision: after.workItem.revision });
+      return ids.slice(0, 60);
+    }
+  }
+}
+
+/**
+ * Wraps the contract: when a command was applied on a person's decision, the decision is recorded in the state with its
+ * channel and what that channel proves. The record is derived from the verified approval or channel, never from the command.
+ */
 export function applyWorkflowCommand(
+  state: WorkflowState | null,
+  raw: WorkflowCommand | unknown,
+  /** Set by the Runtime from the user's decision. Never part of the command: nothing an agent sends can carry it. */
+  options?: ApplyOptions,
+): { state: WorkflowState; duplicate: boolean; result: unknown } {
+  const out = applyWorkflowCommandCore(state, raw, options);
+  if (out.duplicate || out.state === state) return out;
+  const command = parseWorkflowCommand(raw);
+  const at = (options?.now ?? new Date()).toISOString();
+  let record: Omit<ApprovalRecord, "id"> | null = null;
+  const userDecision = isUserDecision(command as never);
+  if (options?.userApproval && ["confirm-story", "confirm-decision", "approve-service", "revise-acceptance", "set-service"].includes(command.action)) {
+    const a = options.userApproval;
+    record = { at: a.decidedAt, action: command.action === "set-service" ? "approve-service" : command.action, subjects: subjectsOf(command, state, out.state), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
+  } else if (options?.channel?.via === "approved" && (userDecision || command.action === "open")) {
+    const a = options.channel.approval;
+    record = { at: a.decidedAt, action: command.action === "open" ? "open-classic-work-item" : "review-decisions", subjects: subjectsOf(command, state, out.state), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
+    // one approval covers a batch: the first applied command records it once
+    if ((out.state.approvals ?? []).some((r) => r.subjectDigest === a.subjectDigest && r.at === a.decidedAt)) record = null;
+  } else if (options?.channel?.via === "html-review" && userDecision) {
+    record = { at, action: command.action, subjects: subjectsOf(command, state, out.state), summary: `${command.action} from the review page`, channel: "html-review", assurance: "review-page", trust: "review-page", workItemRevision: out.state.workItem.revision };
+  }
+  if (!record) return out;
+  const approvals = [...(out.state.approvals ?? []), { ...record, id: `APR-${String((out.state.approvals?.length ?? 0) + 1).padStart(4, "0")}` }];
+  return { ...out, state: { ...out.state, approvals } };
+}
+
+function applyWorkflowCommandCore(
   state: WorkflowState | null,
   raw: WorkflowCommand | unknown,
   /** Set by the Runtime from the user's decision. Never part of the command: nothing an agent sends can carry it. */
@@ -1566,7 +1633,9 @@ export function applyWorkflowCommand(
       next = transition(next, "ready", `decision ${command.id} confirmed`);
       next = { ...next, decisions };
     }
-    return { state: next, duplicate: false, result: { decisionId: command.id, confirmed: command.confirmed } };
+    const recorded = next.decisions.find((item) => item.id === command.id)!;
+    // what confirm-decision must carry: the exact revision and digest, so the client never has to guess or compute them
+    return { state: next, duplicate: false, result: { decisionId: command.id, confirmed: command.confirmed, revision: recorded.revision, contentFingerprint: decisionContentFingerprint(recorded) } };
   }
   if (command.action === "record-implementation") {
     if (state.mode === "guided" && !state.services.some((s) => s.id === command.serviceId)) {

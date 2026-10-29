@@ -632,3 +632,6 @@ export { criterionStatus, requirementCoverage, storyCoverage, evaluateEvidence, 
 export type { CriterionState, CriterionCoverage, CoverageCounts, CoverageResult, FeatureEvaluation, Verdict } from "./quality-model.js";
 export { EvidenceSourceSchema } from "./story.js";
 export type { EvidenceSource } from "./story.js";
+
+export { ApprovalRecordSchema, ApprovalSubjectSchema, APPROVAL_TRUST, approvalSummary, describeApproval, trustOfApproval } from "./approval-audit.js";
+export type { ApprovalRecord, ApprovalSubject } from "./approval-audit.js";
