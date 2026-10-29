@@ -302,7 +302,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
           conflicts.push({ item: criterion.id, reason: unbased(`the remark on ${criterion.id}`) });
           continue;
         }
-        if (criterion.fromComment !== undefined && criterion.comment !== undefined && liveComment !== criterion.fromComment) {
+        if (criterion.fromComment !== undefined && criterion.comment !== undefined && liveComment !== criterion.fromComment && criterion.comment !== liveComment) {
           conflicts.push({ item: criterion.id, reason: `the remark changed since you opened this page (now "${liveComment.slice(0, 120)}"): ${reload}; your remark was not saved` });
           continue;
         }
@@ -311,7 +311,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
           conflicts.push({ item: criterion.id, reason: unbased(`the decision on ${criterion.id}`) });
           continue;
         }
-        if (criterion.from !== undefined && criterion.status !== undefined && live.review.status !== criterion.from) {
+        if (criterion.from !== undefined && criterion.status !== undefined && live.review.status !== criterion.from && live.review.status !== criterion.status) {
           conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} since you opened this page (the page showed ${criterion.from}): ${reload}; your decision was not saved` });
           continue;
         }
@@ -488,7 +488,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: unbased(`the remark on ${item.storyId} ${item.key}`) });
         return false;
       }
-      if (item.fromComment !== undefined && item.comment !== undefined && itemComment !== item.fromComment) {
+      if (item.fromComment !== undefined && item.comment !== undefined && itemComment !== item.fromComment && item.comment !== itemComment) {
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the remark changed since you opened this page: ${reload}; your remark was not saved` });
         return false;
       }
@@ -496,7 +496,7 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: unbased(`the decision on ${item.storyId} ${item.key}`) });
         return false;
       }
-      if (item.from !== undefined && current !== item.from) {
+      if (item.from !== undefined && current !== item.from && current !== item.status) {
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `already marked ${current} since you opened this page (the page showed ${item.from}): ${reload}; your decision was not saved` });
         return false;
       }

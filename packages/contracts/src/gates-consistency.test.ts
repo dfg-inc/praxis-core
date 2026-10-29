@@ -69,3 +69,24 @@ describe("S8 / S12: gates between the stages", () => {
     expect(phaseGates(s, "architecture").missing.join("\n")).not.toContain("changed after you accepted");
   });
 });
+
+describe("S7: saving again what is already saved is not a conflict", () => {
+  it("a submission replayed after it was applied adds nothing and reports no conflict", async () => {
+    const { JSDOM } = await import("jsdom");
+    const { renderReview, submissionToCommands } = await import("./index.js");
+    let s = apply(null, { action: "open", projectId: "o", title: "t", request: "r", mode: "guided" }).state;
+    s = ok(s, { action: "add-requirement", id: "REQ-ORD-001", statement: "s", acceptanceCriteria: ["a", "b"] });
+    const dom = new JSDOM(renderReview(s, "requirements", { token: "t" }), { runScripts: "dangerously" });
+    const doc = dom.window.document;
+    (doc.querySelector('[data-ac="REQ-ORD-001-AC-01"] input[value=accepted]') as HTMLElement).click();
+    (doc.querySelector('[data-ac="REQ-ORD-001-AC-01"] [data-f=ac-comment]') as HTMLInputElement).value = "same remark";
+    (doc.querySelector("#btn-copy") as HTMLElement).click();
+    const submission = JSON.parse((doc.querySelector("#out textarea") as HTMLTextAreaElement).value);
+    const first = submissionToCommands(s, submission);
+    expect(first.commands).toHaveLength(1);
+    for (const c of first.commands) s = ok(s, c);
+    const again = submissionToCommands(s, submission);
+    expect(again.commands).toEqual([]);
+    expect(again.conflicts).toEqual([]);
+  });
+});
