@@ -245,7 +245,11 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       : submission.baseState !== stateStamp
         ? `the work item changed since this ${what} was made (mode, stage, requirements, stories, contracts or waivers): render the review again and decide on the current state`
         : null;
+  const seenWaivers = new Set<string>();
   for (const w of submission.waivers) {
+    const waiverKey = JSON.stringify([w.kind, w.requirementId ?? null]);
+    if (seenWaivers.has(waiverKey)) continue; // the same waiver twice in one file adds nothing
+    seenWaivers.add(waiverKey);
     if (state.waivers.some((x) => x.kind === w.kind && (x.requirementId ?? null) === (w.requirementId ?? null) && x.reason === w.reason)) continue; // already on record: replaying the file adds nothing
     const waiverConflict = wholeItemConflict(`waiver of ${w.kind}`);
     if (waiverConflict) {
