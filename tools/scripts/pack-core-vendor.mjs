@@ -19,7 +19,7 @@ const dest = process.argv[2] ? resolve(process.argv[2]) : join(root, "dist", "ve
 const PACKAGES = [
   { npmName: "@praxis/contracts", dir: "packages/contracts", files: ["dist"] },
   { npmName: "@praxis/project-config", dir: "packages/project-config", files: ["dist"] },
-  { npmName: "@praxis/knowledge", dir: "packages/knowledge", files: ["dist", "bin", "dataset"] },
+  { npmName: "@praxis/knowledge", dir: "packages/knowledge", files: ["dist", "bin", "dataset/templates"] },
   { npmName: "@praxis/catalog", dir: "packages/catalog", files: ["dist", "catalog.json"] },
   { npmName: "@praxis/testing", dir: "packages/testing", files: ["dist"] },
   { npmName: "@praxis/jira", dir: "plugins/jira", files: ["dist", "tools", "skills", ".claude-plugin", "README.md"] },
@@ -65,8 +65,9 @@ for (const spec of PACKAGES) {
   );
   pkg.files = spec.files;
   writeFileSync(join(stage, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
-  for (const f of ["README.md", "LICENSE"]) {
+  for (const f of ["README.md", "LICENSE", "NOTICE"]) {
     if (existsSync(join(src, f))) cpSync(join(src, f), join(stage, f));
+    else if ((f === "LICENSE" || f === "NOTICE") && existsSync(join(root, f))) cpSync(join(root, f), join(stage, f));
   }
   for (const rel of spec.files) {
     const from = join(src, rel);

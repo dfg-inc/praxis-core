@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -41,7 +41,7 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const WP = "WP-20260914-002";
 const SSH = "git@github.com:hisagedru/praxis-acceptance-test.git";
-const CONSUMER = "/Users/serg/work/praxis-acceptance/praxis-test";
+const CONSUMER = join(homedir(), "praxis-acceptance", "praxis-test");
 const CONSUMER_HEAD = "b96e9d1e44b1ea7663c399fbe7f41fd3f4992e57";
 const steps = [];
 

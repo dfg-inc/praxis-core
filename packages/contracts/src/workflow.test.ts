@@ -29,7 +29,7 @@ import {
 } from "./workflow.js";
 
 function bulkState(): WorkflowState {
-  let state = openLocalWorkflow({
+  let state = openLocalWorkflow({ mode: "classic",
     projectId: "PRJ-LOCAL",
     title: "Bulk User Import",
     request: "I need to implement bulk user import from CSV in our application.",
@@ -110,7 +110,7 @@ describe("local workflow without Jira", () => {
   });
 
   it("associates a Jira key without changing identity", () => {
-    const state = openLocalWorkflow({
+    const state = openLocalWorkflow({ mode: "classic",
       projectId: "PRJ",
       title: "Bulk User Import",
       source: "jira",
@@ -213,7 +213,7 @@ describe("quality independence", () => {
 
 describe("backward handoff and impact", () => {
   it("returns an ambiguous role decision to BA and stale-marks verdicts", () => {
-    let state = addRequirement(openLocalWorkflow({
+    let state = addRequirement(openLocalWorkflow({ mode: "classic",
       projectId: "PRJ",
       title: "Role assignment",
       request: "Assign roles from the CSV.",
@@ -372,7 +372,7 @@ describe("capabilities, Jira failure, compatibility", () => {
     expect(redactPersistent({ commitSha: "4c7270ce0b4ec1c0353342b9ae32d996c16c47b4" })).toEqual({
       commitSha: "4c7270ce0b4ec1c0353342b9ae32d996c16c47b4",
     });
-    const state = openLocalWorkflow({ projectId: "P", title: "T", request: "r" });
+    const state = openLocalWorkflow({ mode: "classic", projectId: "P", title: "T", request: "r" });
     expect(() => transition(state, "completed", "skip")).toThrow(WorkflowError);
   });
 
@@ -404,7 +404,8 @@ describe("capabilities, Jira failure, compatibility", () => {
       projectId: "PRJ",
       title: "Bulk User Import",
       request: "Import users from CSV",
-    }).state;
+      mode: "classic",
+    }, { channel: { via: "html-review" } }).state; // an alpha.48-style item: the user chose classic
     state = applyWorkflowCommand(state, {
       action: "add-requirement",
       id: "REQ-BUI-061",
@@ -441,7 +442,8 @@ describe("capabilities, Jira failure, compatibility", () => {
       projectId: "PRJ",
       title: "Bulk User Import",
       request: "Import users from CSV",
-    }).state;
+      mode: "classic",
+    }, { channel: { via: "html-review" } }).state; // an alpha.48-style item: the user chose classic
     const clarified = applyWorkflowCommand(state, {
       action: "clarify",
       role: "ba",
@@ -517,7 +519,8 @@ describe("capabilities, Jira failure, compatibility", () => {
       projectId: "PRJ",
       title: "Bulk User Import",
       request: "Import users from CSV",
-    }).state;
+      mode: "classic",
+    }, { channel: { via: "html-review" } }).state; // an alpha.48-style item: the user chose classic
     state = applyWorkflowCommand(state, {
       action: "add-requirement",
       id: "REQ-BUI-061",

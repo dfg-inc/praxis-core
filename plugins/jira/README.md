@@ -1,6 +1,6 @@
 # praxis-jira
 
-Company-internal Jira Server integration for Praxis (WBS 3.x). **UNLICENSED** — not part of the Apache-2.0 role plugin line.
+Jira Server integration for Praxis (WBS 3.x). Licensed under Apache-2.0 (see the repository LICENSE); it ships inside the Praxis Runtime and is not a standalone role plugin.
 
 ## Config
 

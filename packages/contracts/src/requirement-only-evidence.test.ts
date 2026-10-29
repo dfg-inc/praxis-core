@@ -11,7 +11,7 @@ import {
 const REQ = "REQ-QRO-901" as const;
 
 function base(criteria = ["First holds.", "Second holds."]): WorkflowState {
-  const state = openLocalWorkflow({ projectId: "qro", title: "Requirement only", request: "No stories here" });
+  const state = openLocalWorkflow({ mode: "classic", projectId: "qro", title: "Requirement only", request: "No stories here" });
   return applyWorkflowCommand(state, {
     action: "add-requirement",
     id: REQ,
@@ -37,7 +37,7 @@ function scenario(criterion: string, status: "PASS" | "FAIL", id = `S-${criterio
 }
 
 function verify(state: WorkflowState, scenarios: ReturnType<typeof scenario>[]) {
-  return applyWorkflowCommand(state, { action: "record-verification", independentRerun: true, scenarios });
+  return applyWorkflowCommand(state, { action: "record-verification", independentRerun: true, scenarios }, { evidenceSource: { kind: "executed", artifacts: [] } });
 }
 
 describe("requirement-only verification (no Story)", () => {
@@ -58,12 +58,13 @@ describe("requirement-only verification (no Story)", () => {
     expect(verdicts[0]?.evidenceRefs).toEqual(expect.arrayContaining([`requirement:${REQ}@1`, `S-${REQ}-AC-01:PASS`]));
   });
 
-  it("an acceptance criterion without a passing scenario caps the verdict at PASS_WITH_RISKS", () => {
+  it("an acceptance criterion without a passing scenario is not proven: the requirement is not PASS (S17)", () => {
     const evidence = requirementEvidence(verify(base(), [scenario(`${REQ}-AC-01`, "PASS")]).state, REQ);
     expect(evidence.status).toBe("executed");
     if (evidence.status !== "executed") return;
-    expect(evidence.verdict).toBe("PASS_WITH_RISKS");
-    expect(evidence.reasons).toEqual([`ac-not-verified:${REQ}-AC-02`]);
+    expect(evidence.verdict).toBe("FAIL");
+    expect(evidence.reasons.join(" ")).toContain(`${REQ}-AC-02 has no evidence`);
+    expect(evidence.counts).toMatchObject({ total: 2, passed: 1, missing: 1 });
   });
 
   it("a failing scenario is FAIL even when other criteria pass", () => {

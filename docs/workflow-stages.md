@@ -1,0 +1,152 @@
+# The end-to-end workflow
+
+One work item moves through eleven stages. Every stage can be looked at again, changed at a point, confirmed or rejected, and returned to; the work item keeps its context so another chat (or another person) can continue.
+
+```
+request -> discovery -> requirements -> requirements_review -> prototype -> story_plan
+        -> stories_review -> architecture -> development -> quality -> delivery
+```
+
+| Stage | Who | What happens | You decide |
+| --- | --- | --- | --- |
+| request, discovery | BA | Understand the request. For an existing application, register and read its repositories and record the existing behaviour and impact (`change-request`). | Answer blocking questions. |
+| requirements | BA | Requirements with acceptance criteria (stable `REQ-` ids). | |
+| requirements_review | BA | A standard HTML review: one control per acceptance criterion (accept / reject / comment), edit by id, add or remove criteria, move a requirement to *deferred* or *out of scope*. | Every criterion. |
+| prototype | BA | An interactive HTML prototype on mock data using the application's own styles, with loading / empty / error / success / denied states, roles and navigation, linked to requirements and criteria. A backend-only task gets an API prototype (request and response examples). | Comment on any element; accept. |
+| story_plan | BA | One line per story: what is built, what you get, data, prototype parts, requirements, repositories, dependencies. | Edit, exclude, agree. |
+| stories_review | BA | Detailed stories, a checkbox for every criterion, step, rule and result. Coverage check (view, search, create, edit, delete, errors, permissions, states). | Every item; confirm behaviour. |
+| architecture | Architect | Services, repositories, contracts, order. | Architecture decisions. |
+| development | Developer | Implementation per service, per repository. | |
+| quality | Quality | Independent verification per service, then the feature. | |
+| delivery | Developer | Git delivery through the protected tools. | Approve each protected action. |
+
+`praxis_workflow_status` returns the current `phase`, a deterministic `next` step (action, tools, skills) and a `briefing`. `advance-phase` refuses a stage whose conditions are not met and says what is missing. `return-to-phase` (with a reason) goes back; acceptances after that stage become stale, nothing is deleted.
+
+**Modes.** A new work item is `guided` by default. Opening one in `classic` mode is the user's choice: the Runtime asks in the approval dialog (an agent cannot do it; where the client has no dialog it is refused, unless the operator chose Trusted Client or host permission, which stand in for the dialog by design). Work items with the same title are never merged silently: a second `open` with a different request (titles compare ignoring case and surrounding spaces) is refused (`WORK_ITEM_TITLE_EXISTS`) until the user chooses to continue the existing item or start a separate one (`newItem`); ids stay stable (`WI-<TITLE>-<NNN>`, Cyrillic titles are transliterated). The mode rules: the gates above are enforced (stories only after an agreed plan, stages entered only when their conditions hold). Work items created by alpha.48 are read as `classic`: stages are recorded, nothing new is enforced, and they keep working unchanged; their mode is never changed automatically. `set-mode` switches an item: to `guided` is the agent's to propose (nothing is deleted; the result lists the stories without a plan line and the stages the user has not accepted yet); back to `classic` switches the gates off, so only the user can do it (in the review page flow or the approval dialog).
+
+**Contracts.** The architect proposes cross-service contracts; only the user agrees one (contracts review page, or an approved dialog decision). Implementation across services waits for it, and changing an agreed contract makes it proposed again.
+
+## Why the state is JSON, and what you read instead
+
+The workflow state is stored as JSON in `.praxis/workflow/` because it is the one form that every Praxis tool can validate against a schema, version, migrate, diff in Git and read from another session without interpretation. It is internal: you never read or edit it. What you read and decide in is HTML (the reviews above) or the chat. If a page is lost, it is regenerated from the state; if the state and a page disagree, the state wins.
+
+## What Praxis adds over Claude Code with skills alone
+
+Skills tell a model what to do; they cannot make it true. Praxis adds what a skill cannot:
+
+- **Durable, structured state** that survives the chat: requirements, criteria, stories and their revisions, decisions, the prototype, the plan, repositories, verdicts. A new chat continues from records, not from memory.
+- **Gates the agent cannot talk past (in guided work items).** A stage is refused until its conditions hold (for example no detailed stories before an agreed plan, no development stage with a repository that has stories but no service).
+- **Your decisions are yours.** Accepting criteria, the prototype, the plan or stories can be recorded only by your own action, never by the agent. Confirming a story, an architecture decision and approving a service are separate approvals; Git and Jira writes need your approval of the exact change.
+- **Traceability and staleness.** Requirement, criterion, prototype element, plan line, story, service, repository and verdict are linked by stable ids. Changing something marks what depended on it stale instead of leaving old approvals standing.
+- **Independent verification.** Quality executes and records evidence per service and for the feature; green unit tests and developer claims are not evidence.
+- **Several repositories as one piece of work**, with contracts, order and per-repository status.
+
+If you only need a one-off answer, Claude Code with skills is enough. Praxis is for work that has to survive several sessions, several roles and several repositories, and stay checkable.
+
+## HTML reviews
+
+`praxis_review_render` writes a self-contained HTML page (no external scripts) under `.praxis/workflow/reviews/<work item>/`, serves a live copy on `127.0.0.1` and opens it in your browser. The link that opens and saves the page goes to your browser only, never into the agent's tool result: the link token works for 10 minutes, and every page load gets its own save token. Your Save in that page records your decisions directly. If the Runtime cannot open a browser, only the offline copy is given out. If the page cannot save, Copy or Download produces a decisions file, which `praxis_review_apply` records **after you approve exactly those decisions in the client's dialog**.
+
+The page is a view. The workflow state is the source of truth, and the page can be regenerated at any time. If something changed after the page was rendered (you or the agent edited a requirement), the changed items are reported as conflicts and skipped; the rest is applied.
+
+## Who may record what
+
+An agent may write and edit: requirements, criteria, prototype, plan, stories, decisions, repositories, contracts, handoffs. It may **not** record that you accepted or rejected something: accepting criteria, marking items, agreeing the prototype, the plan or the stories. Those come only from your Save in the page or from decisions you approved in the dialog (which lists each decision, for example `REQ-001-AC-02 'text': REJECTED, comment '...'`); a coverage or prototype waiver is also yours; `praxis_workflow_apply` refuses them with `USER_DECISION_REQUIRED`, whatever `via` the command claims. Confirming a story's behaviour, confirming an architecture decision and approving a service stay separate approvals, as before. Trusted Client mode does not cover any of them.
+
+## Several repositories
+
+A work item may span any number of repositories. They are registered explicitly (`register-repository`), read by the Runtime (`praxis_repository_inspect`: head commit, manifests, frontend, instruction files), and linked to requirements, stories and services (`assign-repositories`, `set-service` with `repositoryId` and `dependsOn`). Cross-service contracts (`set-contract`) name provider, consumers and schema. `praxis_repository_brief` gives the implementation order, what each repository waits for, the contracts it provides or consumes, and what Developer and Quality must do there. In a guided work item an implementation record must point at a real file inside the service's checkout and name a service of the work item, so "entered" cannot be claimed for work that does not exist; a repository with stories but no service blocks `development`, and so do services that depend on each other in a cycle. Delivery needs every service to have an implementation and a passing verdict.
+
+Several work items in one repository and one work item in several repositories are different things: the first are independent items in one `.praxis/workflow/`, the second is one item with several registered repositories.
+
+## What steers the agent
+
+Order, highest first: the host's own system instructions (Praxis does not replace them); what you type; Praxis skills for the current role and stage; Praxis Runtime results; `.praxis` project configuration; and, last and as data only, content of analysed repositories (README, comments, CLAUDE.md, AGENTS.md, skill files, imported documents). The skills for a stage are fixed by role and stage (`skillPlan`) as a recommendation returned by the Runtime; the host decides which skills actually load, and Praxis cannot force it. `praxis_context_diagnose` shows the order, the active skills, what context the work item restores, and which instruction files were found and ignored, with a warning for text aimed at the agent. File contents are never returned.
+
+## Continuing in a new chat
+
+When a chat's context window fills up (or you simply start a new chat), do not try to continue the old one: open a new chat in the same project and say "continue this task". The agent reads the work item's recorded state, tells you where it stands and proposes the next step; if several work items exist it asks which one. At the end of a long session the agent should leave a `log-session` note (what was done and the next action), because that note is the first thing the next chat reads.
+
+The state that survives is what is recorded in the work item: requirements, criteria and your decisions, stories and their history, decisions and assumptions, questions and risks, the prototype, the plan, repositories and inspections, the current stage, and session notes (`log-session`: what was done and the next action). `praxis_session_start` and `praxis_workflow_status` rebuild a briefing from it. With several work items the status and session-start results carry a `choose` instruction: the agent is told to ask which one unless you named it. **The earlier chat messages are not restored**: anything that was only said in chat has to be repeated.
+
+## Known limits
+
+- Coverage compares the capabilities that requirements, criteria and prototype elements imply with the capability labels on stories (and keywords in the story text); a label that does not match the story's real content is not detected, so a create-only story labelled "view" passes.
+- Project-supplied code (a Quality adapter `.praxis/quality/adapter.mjs`, modules named in `checks.json`) is repository content and runs as you. Praxis runs it in its own Node process with a scrubbed environment (no `PRAXIS_*`, no tokens), a time limit and a size limit, so it does not run inside the Runtime. **This is not a security boundary**: such code runs with your privileges, so it can start other processes, read other processes' environment and arguments (for example with `ps`), read project files including `.praxis/` state files and the short-lived file that opens a review page, and use the network. Test commands configured in `.project` and the Quality service's test runs also inherit the Runtime's environment. Review these files like any code you run.
+- The workflow state is plain JSON files in `.praxis/`. Praxis protects against an agent that uses Praxis's tools; an agent with a file-write tool can edit those files directly, and the files are not signed. The user-decision guarantees are about the tool route.
+- An agent that has an unrestricted shell on your machine acts as you there (it could drive your browser or read local files). The review page and the dialog protect against an agent that only has the Praxis tools.
+- The instruction-file scanner is a heuristic over a list of English phrases and known file names; it is an aid, not a guarantee. Praxis never returns those files' contents, but text in names and in the values of style files can still reach the agent in small, filtered forms.
+- Two pages saving the same criterion: the second is reported as a conflict only if the criterion was marked differently after the page was opened.
+
+## Upgrading from 0.1.0-alpha.48
+
+Work items written by alpha.48 (contract 1.0.0) are read as they are and open in `classic` mode with every requirement in scope; ids do not change. Reading changes nothing on disk. The first write migrates the item to contract 1.1.0 and keeps the old file next to it as `<id>.json.v1.0.0.bak`. **The migration is one way**: an alpha.48 Runtime cannot read an item after that write; restore the `.bak` file to go back (changes made after the migration are lost). The index file is not backed up. The version string is still alpha.48 until a release is cut.
+
+**Requirements review: remarks and fingerprints.** For each acceptance criterion Praxis stores the user's status and their comment. `at`/`via` describe the status decision only and move when the status changes; `commentAt`/`commentVia` describe the last comment change, so editing a comment never looks like a new decision. When a criterion's text is revised it goes back to `pending` and the earlier decision and reason stay readable as `previous` (shown on the review page). `praxis_workflow_inspect` (`view: requirements` or `all`) returns this for every criterion and a `requirementReview` summary (rejected, commented, pending, progress, acceptance state, fingerprint), so a BA can act on a remark without reading files. The requirements fingerprint covers content (statements, scope, criteria text), not marks or comments: marking or commenting does not invalidate an acceptance, but a rejected or reopened criterion keeps the gate to the next stage shut until every criterion is accepted again.
+
+
+## Changing one acceptance criterion
+
+A criterion has a stable id (`REQ-ORD-002-AC-06`). To change its text, send `revise-acceptance` with one edit per criterion:
+
+```json
+{ "action": "revise-acceptance", "edits": [ { "id": "REQ-ORD-002-AC-06", "statement": "new text", "expectedRevision": 1 } ] }
+```
+
+- Preview first (`praxis_workflow_preview`): the result lists each criterion with its text, revision and review status before and after (`acceptanceChanges`). Then `praxis_workflow_apply`: the Runtime asks the USER to approve the exact wording in the client's own dialog (the existing approval mechanism; an agent's `confirmation=YES` is not that approval). A client without a dialog gets `APPROVAL_CLIENT_UI_REQUIRED` and nothing changes; Trusted Client mode does not cover it; a declined dialog changes nothing. A repeat of the stored text asks for nothing (no-op).
+- Only the named criteria change: their revision goes up by one, their review returns to `pending`, and the decision and remark they had stay readable as `previous`. Other criteria, accepted ones included, are not touched. The owning requirement's revision goes up (its content changed), and verdicts, stories and implementation records that rest on it become stale.
+- `expectedRevision` (optional) refuses the edit when the criterion changed since it was read. Independently of it, a preview is bound to the exact stored state: if anything changed after the preview (a user mark in the HTML Review, another edit), apply fails with `FINGERPRINT_MISMATCH` and the preview is made again.
+- `review-requirements` still accepts `decisions[].acceptance[].statement` for the same edit; `revise-requirement` changes a whole requirement and does not take a criterion id.
+- A command with a key its action does not accept (`editAcceptance`, a misspelt field) is refused with `UNKNOWN_COMMAND_PARAMETER`, naming the key and the accepted ones. Nothing is changed. (Server-owned fields echoed back in `set-contract`, `agreement` and `everAgreed`, are ignored.)
+- A command that changes nothing (same text, same marks, same remarks) is a no-op: the stored state, the revision and the history stay as they were, and the preview says `noChange`.
+- A criterion the user has ACCEPTED cannot be reworded or removed by an agent through `review-requirements` (`USER_DECISION_REQUIRED`); `revise-acceptance` with the user's approval is the only agent route, and the dialog warns that the acceptance is withdrawn. A rejected or pending criterion is reworded the same way (always with approval).
+- Tool arguments are checked too: an argument a tool does not declare (a misspelt `workItemId`) is refused with `INVALID_INPUT` (naming the argument and the accepted ones) before anything runs. It never falls back to the current Work Item.
+- Stale review pages: the page tells the server what it showed (`from` for the status, `fromComment` for the remark, the criterion `revision`). A Save whose decision, remark or wording was changed after the page was opened is not applied for that criterion and is reported as a conflict with "reload the page"; other changes in the same Save still apply. Two tabs cannot silently overwrite each other.
+- Out-of-date pages, all editable fields (Requirements, Story Plan, Story Review): the page sends `baseStamp` (a hash of everything it showed, marks and remarks included) and, for each field it changes, what it showed (`from`, `fromComment`, `fromScope`, `fromScopeNote`, a plan line's `base`, the revision). If the stored state is no longer what the page showed, every changed field must carry its base value and match the live one; a missing base value is a conflict, never a way around the check (this covers files handed to `praxis_review_apply`). Accept-all from an out-of-date page is not applied. While an approval dialog is open the work item can move: the decisions are recomputed after the answer and, if they differ, nothing is recorded (`REVIEW_CHANGED`).
+- Command and submission parameters are checked at every depth (arrays, optionals, records, tuples, intersections, unions): a key nothing accepts is `UNKNOWN_COMMAND_PARAMETER`. Only authority-shaped keys on a command (`via`, `approval`, `userApproval`, `approved` ...) and server-owned fields echoed in `set-contract` are dropped; review submissions tolerate none.
+- Handed-over decisions (`praxis_review_apply`): when the file holds anything that needs the person (a mark or agreement, or a change to a story, a contract, the mode or a waiver), the dialog shows the WHOLE plan (every story edit, exclusion and restore included) and the approval binds every command in it; nothing is applied next to it that was not shown. A mode change or a waiver is a decision about the whole work item: the file must carry `baseState` (returned by `praxis_review_render` and by the page), and is not applied if the item changed since (mode, stage, requirements, stories, contracts, waivers); replaying a waiver file adds nothing.
+- Paths an agent supplies (`implementationPath`, Quality proposal files, check modules) are judged by their real location: links inside the repository that point outside it, dangling links, absolute paths, `..`, NUL, non-regular files and oversized files are refused.
+
+
+## Interactive prototype (alpha.49+)
+
+The prototype is data the Viewer runs, not a picture. A `ui` prototype can declare behaviour on its elements, all optional, so a prototype saved earlier still opens and keeps its acceptance (empty new fields are ignored when the content is fingerprinted).
+
+| Need | Declare |
+| --- | --- |
+| Filter / select | element `kind: filter` with `param` (URL query parameter), `collection`, `filters: [{param, field, unknown?: "all"}]`, `allLabel`; the table narrows by the same `filters` |
+| Table, click on a row | `kind: table` with `filters`, `idField`, `rowOpens: <drawer or modal id>`, `emptyText` (`{param}` is replaced), `emptyAction: {label, clear: [params]}` |
+| Side card / modal | `kind: drawer` or `modal` with `param`, `collection`, `idField`, `detailFields`, `related` (rows of another collection), `withinTable`, `onMissing: close` or `message`, `notFoundText`, `missingText`; a button opens a modal with `action: open-modal` + `rowOpens` |
+| Tabs, conditions | `kind: tabs` with `tabs`, `param`; any element `showWhen: {param, equals / notEquals / present}` |
+| Forms | `kind: field` with `required`, `collection`/`field` (enum becomes a select); a button with `action: submit` validates |
+| Other data | prototype `datasets` (other mock rows, e.g. empty, legacy records), switchable in the page |
+| Checkable situations | prototype `scenarios`: `query`, `dataset`, `role`, and `expect` (`rows`, `overlay`, `contains`, `absent`, `query`, `noQuery`); the Scenarios panel runs them |
+| Honesty | `limitations`: what the prototype does not reproduce |
+
+The Viewer keeps its address in the page `#hash` (`#/screen?status=Shipped&order=A-1003`): deep links, reload and Back/Forward work; there is an address bar for typing a wrong one. Escape closes the top card, focus goes into an opened card and back to the row, a modal keeps Tab inside, and the layout adapts to a mobile width. Three modes: **Preview** (use it), **Inspect** (click an element: requirement, criteria and behaviour), **Review** (click an element to comment on it). Coverage is collapsed and grouped by requirement. The Viewer builds DOM with text only, never evaluates anything from the prototype and makes no network request; nothing it does changes the saved prototype.
+
+
+## Gates between stages (alpha.49, round 7)
+
+| To enter | Needs |
+| --- | --- |
+| prototype | requirements accepted (every criterion) and unchanged since |
+| story_plan | the same, and the prototype accepted or waived with a reason |
+| stories_review | the plan agreed and unchanged since; every planned story detailed |
+| architecture | stories reviewed and accepted, unchanged since; coverage without gaps; **every active story confirmed (`confirm-story`)**; no earlier acceptance (requirements, prototype, plan) gone stale |
+| development | no acceptance gone stale (including the stories review); every story still confirmed; services with a repository or path; contracts agreed |
+| quality | the same freshness and confirmations; every service has a current implementation record |
+
+Reviewing a story's items and confirming its behaviour are two decisions. An acceptance the person gave stands only while the content is unchanged: after a later change the gate names what to accept again. Excluding and restoring a plan line returns it exactly as agreed (a reason belongs to the excluded state only).
+
+Required capabilities come from what a requirement statement says a user can do and from what the prototype and endpoints built for it do; each gap names what asked for it. Wording in the criteria only suggests, never blocks. A gap the person waives is recorded with the reason, the channel, the time and what asked for it; the waive control is in the Story Plan and Stories review pages, and waivers are applied before the agreement in the same Save.
+
+## Quality evidence
+
+A requirement or Story is PASS only when every current acceptance criterion has a current, independently executed PASS. Per requirement and Story the result carries total / verified / passed / failed / blocked / missing / stale / attested. `verify-stories`, `quality-check` and `feature-verdict` use the same computation, so they cannot disagree about one state; `feature-verdict` adds workflow readiness (implementation records, approved services). Entries carry their source: `executed` (a module ran), `browser` (a real browser ran), `agent` (attested by an agent, never independent), or none (written before provenance existed: read, but not independent proof until `verify-stories` runs again). A Story's own criteria are judged like requirement criteria: a failing or unproven Story criterion keeps the feature from PASS. A removed criterion's id is never reused. The delivery gate judges the evidence as it is now, not an earlier recorded verdict. `record-verification` merges by scenario id; a scenario id never moves to another criterion; an agent cannot overwrite or retire Runtime evidence; a writer that saw older coverage gets `EVIDENCE_STALE`.
+
+Browser checks are data in `checks.json` (`level: "browser"`, a `browser.serve` root and `steps`); the driver serves the built bundle on loopback, drives Chromium in an isolated process group with its sandbox on, allows no request (HTTP or WebSocket) outside that origin, and records the bundle and screenshot digests. Playwright comes from the directory the OPERATOR names in `PRAXIS_PLAYWRIGHT_DIR`, never from the project under test. Unavailable browser or missing bundle: `BLOCKED`, with the reason.
+
+## Approval records
+
+Every decision that needed a person is recorded in the work item (`approvals`): the action, the subjects with revision and content fingerprint, the time, the channel, what the channel proves (`independent-human` client dialog, `review-page` Save in the served page, `host-attested` host permission or Trusted Client mode, `test-only` harness) and the work item revision it produced. No client identifies the person yet (`actor` stays empty). Decisions that predate the record are reported as unverified provenance by `praxis_workflow_inspect` (`view: approvals`).

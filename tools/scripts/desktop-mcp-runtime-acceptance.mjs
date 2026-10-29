@@ -104,7 +104,7 @@ try {
   const st = lstatSync(extracted.runtime);
   if (!st.isFile() || st.isSymbolicLink()) fail("runtime is not a regular file");
   const bundled = readFileSync(extracted.runtime, "utf8");
-  if (bundled.includes("/Users/serg/work/praxis/node_modules")) {
+  if (bundled.includes("/work/praxis/node_modules")) {
     fail("bundle embeds monorepo node_modules path");
   }
 
@@ -239,7 +239,7 @@ try {
       if (!envelope?.ok) fail(`runtime[${i}] concurrent doctor failed`);
       if (
         JSON.stringify({ tools, envelope, stderr: session.stderr() }).includes(
-          "/Users/serg/work/praxis/node_modules",
+          "/work/praxis/node_modules",
         )
       ) {
         fail(`runtime[${i}] resolved Praxis monorepo node_modules`);

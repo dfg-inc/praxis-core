@@ -6,8 +6,8 @@
  *   node tools/scripts/quality-praxis-test-acceptance.mjs
  *
  * Env:
- *   PRAXIS_TEST_ROOT  default /Users/serg/work/praxis-acceptance/praxis-test
- *   PRAXIS_ACCEPTANCE_ROOT default /Users/serg/work/praxis-acceptance
+ *   PRAXIS_TEST_ROOT  default ~/praxis-acceptance/praxis-test
+ *   PRAXIS_ACCEPTANCE_ROOT default ~/praxis-acceptance
  */
 import {
   existsSync,
@@ -15,7 +15,7 @@ import {
   readFileSync,
   rmSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -24,10 +24,10 @@ import { createQualityApp, QualityStore } from "../../apps/quality-service/dist/
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const praxisTest =
   process.env.PRAXIS_TEST_ROOT ??
-  "/Users/serg/work/praxis-acceptance/praxis-test";
+  join(homedir(), "praxis-acceptance", "praxis-test");
 const allowedRoot =
   process.env.PRAXIS_ACCEPTANCE_ROOT ??
-  "/Users/serg/work/praxis-acceptance";
+  join(homedir(), "praxis-acceptance");
 
 function fail(msg) {
   console.error(`FAIL: ${msg}`);

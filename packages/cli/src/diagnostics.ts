@@ -3,6 +3,18 @@
  * obtained, and what the operator should do next. No I/O, no secret values: only flags and key names.
  */
 
+/** Why a key from a repository .env file was refused. `trust` keys can never come from a repository; `not-allowed` ones belong in the operator environment. */
+export type DotenvRefusalReason = "not-allowed" | "bad-value-shape" | "trust";
+export type DotenvRefusal = { key: string; reason: DotenvRefusalReason };
+
+const DOTENV_TRUST_KEY = /^(PRAXIS_(APPROVAL|TEST|FIXTURE|ALLOW)_|PRAXIS_QA_ALLOW|PRAXIS_STATE_HOME$|PRAXIS_SKIP_DOTENV$)/;
+
+/** Classify a refused key by name only. `valueRefused` means the key is allowlisted but its value had the wrong shape. */
+export function classifyDotenvRefusal(key: string, valueRefused: boolean): DotenvRefusalReason {
+  if (DOTENV_TRUST_KEY.test(key)) return "trust";
+  return valueRefused ? "bad-value-shape" : "not-allowed";
+}
+
 export type ProviderState = "unconfigured" | "partial" | "configured" | "invalid";
 
 export type ProviderReport = {
@@ -111,6 +123,10 @@ export function doctorNextSteps(input: {
   providers: { jira: ProviderReport; github: ProviderReport; gitlab: ProviderReport };
   approval: ApprovalReport;
   dotenvRejected?: string[];
+  /** Per-call refusals with a reason (names only). Preferred over `dotenvRejected` when present. */
+  dotenvRefused?: DotenvRefusal[];
+  /** Allowlisted keys that WERE loaded from a repository file (names only). */
+  dotenvLoaded?: string[];
 }): string[] {
   const steps: string[] = [];
   if (!input.repoExists) {
@@ -153,9 +169,41 @@ export function doctorNextSteps(input: {
       "This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them. Some hosts (Claude Desktop) have their own tool-permission prompt instead of a dialog: praxis_doctor approval.client shows what yours declared, and the optional host-permission setting (docs/user-approval.md) uses that prompt with the exact plan in the tool arguments; it is weaker, because Praxis cannot see whether the prompt was shown.",
     );
   }
-  if (input.dotenvRejected?.length) {
+  if (input.dotenvRefused?.length) {
+    steps.push(...dotenvRefusalSteps(input.dotenvRefused));
+  } else if (input.dotenvRejected?.length) {
     steps.push(
-      `A repository .env file tried to set ${input.dotenvRejected.join(", ")}. Approval settings are only read from the real environment, so they were ignored. Remove them from the file.`,
+      `A repository .env file tried to set ${input.dotenvRejected.join(", ")}. These settings are only read from the real environment, so they were ignored. Remove them from the file.`,
+    );
+  }
+  return steps;
+}
+
+/** Plain next steps for refused repository .env keys: names only, never values. */
+export function dotenvRefusalSteps(refused: DotenvRefusal[]): string[] {
+  const names = (reason: DotenvRefusalReason) => refused.filter((r) => r.reason === reason).map((r) => r.key).sort();
+  const notAllowed = names("not-allowed");
+  const trust = names("trust");
+  const badShape = names("bad-value-shape");
+  const steps: string[] = [];
+  if (notAllowed.length) {
+    steps.push(
+      `Ignored, move to the operator environment: the repository .env file sets ${notAllowed.join(", ")}. A repository file may not carry URLs, tokens, e-mail, authentication or Quality service settings, so these were NOT loaded. Set them in the Claude Desktop extension settings (Praxis Runtime), or export them in the shell that launches Claude Code, or register the Runtime with \`claude mcp add -e KEY=...\`. Never put them in chat or in a repository file.`,
+    );
+  }
+  if (trust.length) {
+    steps.push(
+      `Never allowed from a repository: the repository .env file sets ${trust.join(", ")} (approval, test, state-location or skip switches). They were ignored and cannot be enabled from a file. Delete them from the file; if you really need one, the operator sets it in the real environment.`,
+    );
+  }
+  if (badShape.length) {
+    steps.push(
+      `Refused for a malformed value: ${badShape.join(", ")} in the repository .env file. The key is allowed but the value does not have the expected shape (for example a project key such as PRX, a numeric issue-type id, github or gitlab), so it was not loaded. Correct the value in the file.`,
+    );
+  }
+  if (notAllowed.length || trust.length) {
+    steps.push(
+      "To migrate: copy the ignored lines from the repository .env into the operator environment, delete them from the file, restart the Claude session, and run praxis_doctor again. See docs/repository-env.md.",
     );
   }
   return steps;

@@ -1,11 +1,9 @@
 import { z } from "zod";
 
-const RequirementIdSchema = z
-  .string()
-  .regex(/^(REQ-[A-Z][A-Z0-9]*-\d{3,}|[A-Z][A-Z0-9]*-(?:FR|NFR|BR)\d+)$/);
+import { RequirementIdSchema, StoryIdSchema, type StoryId } from "./ids.js";
 
-export const StoryIdSchema = z.string().regex(/^US-[A-Z][A-Z0-9]*-\d{3,}$/);
-export type StoryId = z.infer<typeof StoryIdSchema>;
+export { StoryIdSchema };
+export type { StoryId };
 
 export const STORY_NARRATIVE =
   /^As a [^,]+, I want [^,]+, so that .+/i;
@@ -25,6 +23,45 @@ export const StoryCriterionSchema = z.object({
   when: z.string().min(1),
   then: z.string().min(1),
 });
+
+/** What a user decided about one item (an acceptance criterion, a story item). Records who/where, never a security claim. */
+export const ReviewMarkSchema = z.object({
+  status: z.enum(["pending", "accepted", "rejected"]).default("pending"),
+  comment: z.string().optional(),
+  at: z.string().optional(),
+  via: z.enum(["html-review", "approved", "chat", "system"]).optional(),
+  /** When and through which channel the comment last changed. `at`/`via` above are the STATUS decision only, so editing a comment does not look like a new decision. */
+  commentAt: z.string().optional(),
+  commentVia: z.enum(["html-review", "approved", "chat", "system"]).optional(),
+  /** The decision this item had before its text was revised: the reason a user gave stays readable when the item goes back to pending. */
+  previous: z
+    .object({
+      status: z.enum(["pending", "accepted", "rejected"]),
+      comment: z.string().optional(),
+      at: z.string().optional(),
+      via: z.enum(["html-review", "approved", "chat", "system"]).optional(),
+      revision: z.number().int().positive().optional(),
+    })
+    .optional(),
+});
+export type ReviewMark = z.infer<typeof ReviewMarkSchema>;
+
+/** What a story lets the user do. Used to check that a feature is not only "create" stories. */
+export const STORY_CAPABILITIES = [
+  "view",
+  "search",
+  "filter",
+  "create",
+  "edit",
+  "delete",
+  "validation",
+  "error",
+  "permissions",
+  "states",
+  "other",
+] as const;
+export const StoryCapabilitySchema = z.enum(STORY_CAPABILITIES);
+export type StoryCapability = z.infer<typeof StoryCapabilitySchema>;
 
 export const UserStorySchema = z.object({
   id: StoryIdSchema,
@@ -46,11 +83,37 @@ export const UserStorySchema = z.object({
   unresolvedDecisionIds: z.array(z.string()).default([]),
   serviceIds: z.array(z.string()).default([]),
   revision: z.number().int().positive(),
-  status: z.enum(["proposed", "confirmed", "superseded"]),
+  status: z.enum(["proposed", "confirmed", "superseded", "excluded"]),
   confirmedBehavior: z.boolean(),
   stale: z.boolean().default(false),
+  /** Short title shown in the story plan and in reviews. */
+  title: z.string().optional(),
+  capabilities: z.array(StoryCapabilitySchema).default([]),
+  /** Prototype screens/elements this story covers. */
+  screenRefs: z.array(z.string()).default([]),
+  /** Registered repositories this story is implemented in. */
+  repositoryIds: z.array(z.string()).default([]),
+  excludedReason: z.string().optional(),
+  /** Review marks by item key: "ac:<id>", "step:<n>", "alt:<n>", "neg:<n>", "edge:<n>", "rule:<n>", "result:<n>". */
+  review: z.record(z.string(), ReviewMarkSchema).default({}),
 });
 export type UserStory = z.infer<typeof UserStorySchema>;
+
+/** Where a coverage entry came from. Set by the Runtime or by the workflow engine, never taken from what an agent wrote. */
+export const EvidenceSourceSchema = z.object({
+  /** executed: the Runtime ran the check. browser: the Runtime drove a real browser. agent: written by an agent without a Runtime run (self-attested, never independent). */
+  kind: z.enum(["executed", "browser", "agent"]),
+  runId: z.string().optional(),
+  runner: z.string().optional(),
+  startedAt: z.string().optional(),
+  finishedAt: z.string().optional(),
+  /** Digest of what was exercised (the served bundle, or the module). */
+  subjectDigest: z.string().optional(),
+  /** Set only in memory by the Runtime when the bundle this result was recorded for is no longer the bundle on disk. Never persisted. */
+  drifted: z.boolean().optional(),
+  artifacts: z.array(z.object({ path: z.string(), sha256: z.string(), bytes: z.number().int().nonnegative().optional() })).default([]),
+});
+export type EvidenceSource = z.infer<typeof EvidenceSourceSchema>;
 
 export const CoverageEntrySchema = z.object({
   /** Absent for requirement-only evidence: a work item verified without a Story. */
@@ -69,6 +132,10 @@ export const CoverageEntrySchema = z.object({
   findingId: z.string().optional(),
   status: CoverageStatusSchema,
   critical: z.boolean().default(false),
+  /** Revision of the acceptance criterion this scenario verified. A revised criterion is not proven by the older result. */
+  acceptanceCriterionRevision: z.number().int().positive().optional(),
+  recordedAt: z.string().optional(),
+  source: EvidenceSourceSchema.optional(),
 });
 export type CoverageEntry = z.infer<typeof CoverageEntrySchema>;
 

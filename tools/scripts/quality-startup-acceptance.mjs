@@ -219,7 +219,7 @@ const extracted = extractMcpbRuntime(packed.mcpbPath, join(outside, "unpack"));
 if (!existsSync(extracted.quality)) fail("F: extracted MCPB missing praxis-quality.cjs");
 if (!existsSync(extracted.wasm)) fail("F: extracted MCPB missing sql-wasm.wasm");
 const qualitySrc = readFileSync(extracted.quality, "utf8");
-if (qualitySrc.includes("/Users/serg/work/praxis/node_modules")) {
+if (qualitySrc.includes("/work/praxis/node_modules")) {
   fail("F: Quality bundle embeds monorepo node_modules");
 }
 if (qualitySrc.includes("node_modules/@praxis/quality-service")) {

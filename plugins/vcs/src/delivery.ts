@@ -232,7 +232,7 @@ export function previewConnect(opts: DeliveryInputs): ConnectPreview {
   if (!url) {
     throw new VcsError(
       VCS_CODES.GIT_REMOTE_REQUIRED,
-      "No remote configured. Provide remoteUrl for the target GitHub or GitLab repository. Praxis will not guess gl.jetru.by, github.com, or any other host.",
+      "No remote configured. Provide remoteUrl for the target GitHub or GitLab repository. Praxis will not guess github.com, gitlab.com, or any other host.",
     );
   }
   const parsed = parseRemoteUrl(url);

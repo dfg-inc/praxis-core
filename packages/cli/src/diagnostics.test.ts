@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { approvalDiagnostics, checkHttpUrl, doctorNextSteps, providerDiagnostics, type ApprovalReport } from "./diagnostics.js";
 import { withApprovalChannel } from "@praxis/contracts";
 import { doctorOp } from "./operations.js";
+import { writeFileSync } from "node:fs";
 
 const ok = { configured: false, valid: true };
 
@@ -130,6 +131,28 @@ describe("doctorNextSteps", () => {
     expect(steps).toMatch(/PRAXIS_TEST_APPROVALS.*ignored/);
   });
 
+  it("groups refused repository .env keys: operator environment, never allowed, malformed value", () => {
+    const steps = doctorNextSteps({
+      ...base,
+      dotenvRefused: [
+        { key: "PRAXIS_JIRA_TOKEN", reason: "not-allowed" },
+        { key: "PRAXIS_APPROVAL_MODE", reason: "trust" },
+        { key: "PRAXIS_JIRA_PROJECT_KEY", reason: "bad-value-shape" },
+      ],
+    }).join("\n");
+    expect(steps).toMatch(/Ignored, move to the operator environment:.*PRAXIS_JIRA_TOKEN/);
+    expect(steps).toMatch(/extension settings.*shell.*claude mcp add -e KEY=/);
+    expect(steps).toMatch(/Never allowed from a repository:.*PRAXIS_APPROVAL_MODE/);
+    expect(steps).toMatch(/malformed value: PRAXIS_JIRA_PROJECT_KEY/);
+    expect(steps).toMatch(/To migrate: copy.*delete them from the file.*restart.*praxis_doctor again/);
+  });
+
+  it("a malformed value alone gets no migration step", () => {
+    const steps = doctorNextSteps({ ...base, dotenvRefused: [{ key: "PRAXIS_JIRA_PROJECT_KEY", reason: "bad-value-shape" }] }).join("\n");
+    expect(steps).toMatch(/malformed value/);
+    expect(steps).not.toMatch(/To migrate/);
+  });
+
   it("a missing repository short-circuits", () => {
     expect(doctorNextSteps({ ...base, repoExists: false })).toHaveLength(1);
   });
@@ -176,5 +199,47 @@ describe("doctor end to end", () => {
     expect(out.hostPlaceholdersIgnored).toEqual(
       expect.arrayContaining(["PRAXIS_JIRA_BASE_URL", "PRAXIS_GITLAB_TOKEN"]),
     );
+  });
+
+  it("a repository .env with a token, a URL, an approval mode and a malformed project key: names grouped, no value anywhere", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-doctor-"));
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    writeFileSync(
+      join(repo, ".env"),
+      [
+        "PRAXIS_JIRA_TOKEN=tok-SECRET-123",
+        "PRAXIS_JIRA_BASE_URL=https://evil.example.test/SECRET-URL",
+        "PRAXIS_APPROVAL_MODE=trusted-client",
+        "PRAXIS_JIRA_PROJECT_KEY=bad/key?SECRET",
+        "PRAXIS_JIRA_STORY_TYPE=Story",
+        "PRAXIS_GIT_PROVIDER=github",
+      ].join("\n"),
+    );
+    const out = (await doctorOp({ repo } as never, "test")) as Record<string, any>;
+    expect(out.dotenvRefused).toEqual([
+      { key: "PRAXIS_APPROVAL_MODE", reason: "trust" },
+      { key: "PRAXIS_JIRA_BASE_URL", reason: "not-allowed" },
+      { key: "PRAXIS_JIRA_PROJECT_KEY", reason: "bad-value-shape" },
+      { key: "PRAXIS_JIRA_TOKEN", reason: "not-allowed" },
+    ]);
+    expect(out.dotenvLoaded).toEqual(["PRAXIS_GIT_PROVIDER", "PRAXIS_JIRA_STORY_TYPE"]);
+    // alpha.48-compatible fields are still there
+    expect(out.dotenvRejected).toEqual(expect.arrayContaining(["PRAXIS_JIRA_TOKEN", "PRAXIS_APPROVAL_MODE"]));
+    expect(out.jira.tokenConfigured).toBe(false);
+    const text = JSON.stringify(out);
+    for (const secret of ["tok-SECRET-123", "SECRET-URL", "evil.example.test", "trusted-client", "bad/key"]) expect(text).not.toContain(secret);
+    const steps = out.nextSteps.join("\n");
+    expect(steps).toMatch(/Ignored, move to the operator environment: .*PRAXIS_JIRA_BASE_URL, PRAXIS_JIRA_TOKEN/);
+    expect(steps).toMatch(/Never allowed from a repository: .*PRAXIS_APPROVAL_MODE/);
+    expect(steps).toMatch(/malformed value: PRAXIS_JIRA_PROJECT_KEY/);
+  });
+
+  it("an empty repository .env refuses nothing", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-doctor-"));
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    writeFileSync(join(repo, ".env"), "DATABASE_URL=postgres://x\nPRAXIS_JIRA_PROJECT_KEY=PRX\n");
+    const out = (await doctorOp({ repo } as never, "test")) as Record<string, any>;
+    expect(out.dotenvRefused).toEqual([]);
+    expect(out.dotenvLoaded).toEqual(["PRAXIS_JIRA_PROJECT_KEY"]);
   });
 });

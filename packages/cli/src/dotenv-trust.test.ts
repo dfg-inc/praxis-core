@@ -71,3 +71,4 @@ describe("repository dotenv files cannot set approval or trust configuration", (
     expect(process.env.PRAXIS_APPROVAL_FORGED).toBe("1");
   });
 });
+

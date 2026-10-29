@@ -413,6 +413,7 @@ export {
   WorkflowStateSchema,
   WorkflowError,
   redactPersistent,
+  redactState,
   assertTransition,
   transition,
   openLocalWorkflow,
@@ -422,6 +423,7 @@ export {
   resumeWorkflow,
   featureReadiness,
   evaluateFeature,
+  effectiveServices,
   evaluateRequirementBehavior,
   recordVerdict,
   requirementEvidence,
@@ -437,6 +439,8 @@ export {
   classifyJiraFailure,
   diagnoseCompatibility,
   WorkflowCommandSchema,
+  parseWorkflowCommand,
+  dryRunCommand,
   commandFingerprint,
   applyWorkflowCommand,
   storyContentFingerprint,
@@ -570,3 +574,67 @@ export type {
   UserApproval,
   UserApprovalChannel,
 } from "./user-approval.js";
+
+// Planning: stages, scope and review, prototype, story plan, story editing, repositories, impact, next step.
+export * from "./planning-schemas.js";
+export {
+  PlanningCommandSchemas,
+  PLANNING_ACTIONS,
+  analyzeStoryCoverage,
+  acceptanceStatus,
+  applyPlanningCommand,
+  currentFingerprint,
+  expectedCapabilities,
+  inferCapabilities,
+  maskLiterals,
+  capabilityEvidence,
+  statedOperations,
+  inferPhase,
+  migrateWorkflowState,
+  nextStep,
+  phaseGates,
+  phaseIndex,
+  prototypeFingerprint,
+  requirementsFingerprint,
+  isUserDecision,
+  contractsFingerprint,
+  modeSwitchReport,
+  REVIEW_DECISION_ACTION,
+  reviewApprovalRequest,
+  reviewBatchSubject,
+  reviewProgress,
+  storiesFingerprint,
+  storyCapabilities,
+  storyPlanFingerprint,
+  storyReviewProgress,
+} from "./planning.js";
+export type { CoverageGap, CoverageReport, GateResult, NextStep, PlanningCommand, PlanningResult, ReviewChannel } from "./planning.js";
+export { RepositoryIdSchema } from "./ids.js";
+export { SUPPORTED_WORKFLOW_VERSIONS } from "./workflow.js";
+export { ReviewMarkSchema, StoryCapabilitySchema, STORY_CAPABILITIES } from "./story.js";
+export type { ReviewMark, StoryCapability } from "./story.js";
+
+// Standard HTML reviews and how their decisions come back.
+export * from "./review-submission.js";
+export { parseStrict, unknownParameters } from "./command-strict.js";
+export { canonicalText } from "./human-acts.js";
+export { renderReview, renderRequirementsReview, renderPrototypeReview, renderStoryPlanReview, renderStoriesReview } from "./review-html.js";
+export type { RenderReviewOptions } from "./review-html.js";
+
+// Instruction precedence, deterministic skill plan, untrusted-content handling.
+export * from "./context-trust.js";
+
+// Briefing for continuing a work item in a new chat.
+export * from "./briefing.js";
+
+// Command discovery for agents.
+export { commandCatalog, explainCommandError } from "./command-catalog.js";
+export type { CommandInfo } from "./command-catalog.js";
+
+export { criterionStatus, requirementCoverage, storyCoverage, evaluateEvidence, requiredRequirements } from "./quality-model.js";
+export type { CriterionState, CriterionCoverage, CoverageCounts, CoverageResult, FeatureEvaluation, Verdict } from "./quality-model.js";
+export { EvidenceSourceSchema } from "./story.js";
+export type { EvidenceSource } from "./story.js";
+
+export { ApprovalRecordSchema, ApprovalSubjectSchema, APPROVAL_TRUST, approvalSummary, describeApproval, trustOfApproval } from "./approval-audit.js";
+export type { ApprovalRecord, ApprovalSubject } from "./approval-audit.js";

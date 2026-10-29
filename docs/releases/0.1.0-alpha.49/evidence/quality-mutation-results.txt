@@ -1,0 +1,102 @@
+M01 001-AC-01 drop Cancelled option 
+   browser-fail: ['001-AC-01', '001-AC-06-EMPTY'] 
+   unit-fail: ['S1-STATUS-SET']
+M02 001-AC-01 label renamed (Статус->Filter) 
+   browser-fail: [] 
+   unit-fail: []
+M03 001-AC-01 filter moved BELOW table 
+   browser-fail: [] 
+   unit-fail: []
+M04 001-AC-02 default list hides last row 
+   browser-fail: ['001-AC-02', '005-AC-06', '001-AC-06-EMPTY', '004-AC-03-BACKFWD'] 
+   unit-fail: []
+M05 001-AC-03 select multiple 
+   browser-fail: ['001-AC-03', '004-AC-04', '004-AC-03-BACKFWD'] 
+   unit-fail: []
+M06 001-AC-06 empty msg lacks status 
+   browser-fail: ['001-AC-06-EMPTY'] 
+   unit-fail: []
+M07 001-AC-06 reset button sets New 
+   browser-fail: ['001-AC-06-EMPTY'] 
+   unit-fail: []
+M08 001-AC-07 Customer/Status cells swapped 
+   browser-fail: [] 
+   unit-fail: []
+M09 002-AC-01 selected class removed 
+   browser-fail: ['002-AC-01', '002-AC-08'] 
+   unit-fail: []
+M10 002-AC-01 drawer on LEFT (not right) 
+   browser-fail: [] 
+   unit-fail: []
+M11 002-AC-01 highlight CSS removed 
+   browser-fail: [] 
+   unit-fail: []
+M12 002-AC-02 filter hidden when drawer open 
+   browser-fail: ['002-AC-02'] 
+   unit-fail: []
+M13 002-AC-03 Created/Total values swapped 
+   browser-fail: [] 
+   unit-fail: []
+M14 002-AC-04 Qty/Price cells swapped 
+   browser-fail: [] 
+   unit-fail: []
+M15 002-AC-04 Sum = qty+price 
+   browser-fail: ['002-AC-04'] 
+   unit-fail: []
+M16 002-AC-05 email/phone values swapped 
+   browser-fail: [] 
+   unit-fail: []
+M17 002-AC-06 add status history section titled "Status log" 
+   browser-fail: [] 
+   unit-fail: []
+M18 002-AC-07 missing value rendered blank (dash() -> "") 
+   browser-fail: [] 
+   unit-fail: []
+M19 002-AC-08 other-row click ignored while drawer open 
+   browser-fail: ['002-AC-08'] 
+   unit-fail: []
+M20 002-AC-09 Esc handler removed 
+   browser-fail: ['002-AC-09'] 
+   unit-fail: []
+M21 002-AC-09/004-AC-02 close() does not update URL 
+   browser-fail: [] 
+   unit-fail: []
+M22 003-AC-01 filter change keeps open order even if filtered out 
+   browser-fail: [] 
+   unit-fail: []
+M23 003-AC-02 filter change always closes drawer 
+   browser-fail: ['002-AC-02'] 
+   unit-fail: []
+M24 004-AC-01 UI pushes status lower-cased in URL 
+   browser-fail: ['004-AC-03-BACKFWD'] 
+   unit-fail: []
+M25 004-AC-04 initial state ignores URL 
+   browser-fail: ['002-AC-07', '004-AC-04', '005-AC-02', '005-AC-03', '005-AC-04', '005-AC-05', '001-AC-06-EMPTY'] 
+   unit-fail: []
+M26 004-AC-06 URL cleanup effect (replaceState) removed 
+   browser-fail: [] 
+   unit-fail: []
+M27 004-AC-03 popstate listener removed 
+   browser-fail: ['004-AC-03-BACKFWD'] 
+   unit-fail: []
+M28 004-AC-05 unknown status kept (UI shows empty, not All) 
+   browser-fail: [] 
+   unit-fail: ['S4-UNKNOWN-STATUS']
+M29 005-AC-01 STATUSES gets extra Bogus value 
+   browser-fail: ['001-AC-01'] 
+   unit-fail: ['S4-UNKNOWN-STATUS']
+M30 005-AC-02 createdAt not shown 
+   browser-fail: ['002-AC-03', '002-AC-07', '005-AC-02'] 
+   unit-fail: []
+M31 005-AC-07 legacy order crashes list (reads order.items.length in row) 
+   browser-fail: ['001-AC-01', '001-AC-02', '001-AC-03', '001-AC-07', '002-AC-01', '002-AC-02', '002-AC-03', '002-AC-04', '002-AC-05', '002-AC-06', '002-AC-07', '002-AC-08', '002-AC-09', '005-AC-02', '005-AC-03', '005-AC-04', '005-AC-05', '005-AC-06', '001-AC-06-EMPTY', '004-AC-03-BACKFWD'] 
+   unit-fail: []
+M32 005-AC-06 duplicate order number ORD-2002 in data 
+   browser-fail: ['001-AC-03', '002-AC-01', '002-AC-02', '002-AC-03', '002-AC-05', '002-AC-06', '002-AC-08', '002-AC-09', '005-AC-06', '004-AC-03-BACKFWD'] 
+   unit-fail: []
+M33 005-AC-05 drawer shows status twice w/ "History" absent but status from wrong field 
+   browser-fail: ['002-AC-07'] 
+   unit-fail: []
+M34 002-AC-09 close button does nothing 
+   browser-fail: ['002-AC-09'] 
+   unit-fail: []

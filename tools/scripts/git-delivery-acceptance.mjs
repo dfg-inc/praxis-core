@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -106,9 +106,9 @@ const built = spawnSync(
 );
 if ((built.status ?? 1) !== 0) fail(`build failed\n${built.stderr || built.stdout}`);
 
-if (existsSync("/Users/serg/work/praxis-acceptance/praxis-test/.git")) {
+if (existsSync(join(homedir(), "praxis-acceptance", "praxis-test", ".git"))) {
   const before = spawnSync("git", ["status", "--porcelain"], {
-    cwd: "/Users/serg/work/praxis-acceptance/praxis-test",
+    cwd: join(homedir(), "praxis-acceptance", "praxis-test"),
     encoding: "utf8",
   });
   void before;
@@ -122,7 +122,7 @@ if (existsSync("/Users/serg/work/praxis-acceptance/praxis-test/.git")) {
   if (st.remoteConfigured !== false || st.provider !== "unknown" || st.pushReady || st.mergeRequestReady) {
     fail(`A no-remote ${JSON.stringify(st)}`);
   }
-  if (JSON.stringify(st).includes("gl.jetru.by")) fail("A guessed gl.jetru.by");
+  if (JSON.stringify(st).includes("gitlab.example.internal")) fail("A guessed gitlab.example.internal");
   proven.push("A no remote");
 }
 
@@ -542,7 +542,7 @@ void applyPublish;
 void applyMergeRequest;
 
 {
-  const consumer = "/Users/serg/work/praxis-acceptance/praxis-test";
+  const consumer = join(homedir(), "praxis-acceptance", "praxis-test");
   if (existsSync(join(consumer, ".git"))) {
     const after = spawnSync("git", ["rev-parse", "HEAD"], { cwd: consumer, encoding: "utf8" });
     if ((after.stdout || "").trim() && after.status === 0) {

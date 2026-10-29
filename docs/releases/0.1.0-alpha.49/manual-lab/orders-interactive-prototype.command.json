@@ -1,0 +1,825 @@
+{
+ "action": "set-prototype",
+ "summary": "Интерактивный прототип: фильтр, карточка заказа, параметры status/order, сценарии",
+ "prototype": {
+  "kind": "ui",
+  "title": "Список заказов: фильтр по статусу и карточка заказа",
+  "startScreen": "orders",
+  "roles": [
+   "manager"
+  ],
+  "notes": "Интерактивный прототип на mock-данных: фильтр, боковая панель, параметры status и order в адресе.",
+  "styles": {
+   "colors": {
+    "primary": "#0b6bcb",
+    "danger": "#c0392b",
+    "background": "#ffffff",
+    "text": "#1b1f24"
+   },
+   "fonts": {
+    "body": "Inter, system-ui, sans-serif"
+   },
+   "radius": "10px",
+   "sources": [
+    {
+     "repositoryId": "web",
+     "file": "src/styles/theme.css",
+     "note": "токены theme.css"
+    }
+   ]
+  },
+  "limitations": [
+   "Компонент Button и страница OrdersPage приложения не воспроизводятся: прототип повторяет токены и общую компоновку, но не код приложения.",
+   "Данные позиций, контактов и адресов выдуманы для показа и не связаны с реальной базой."
+  ],
+  "mock": [
+   {
+    "id": "orders",
+    "name": "Orders",
+    "fields": [
+     {
+      "key": "number",
+      "label": "Number",
+      "type": "string"
+     },
+     {
+      "key": "customer",
+      "label": "Customer",
+      "type": "string"
+     },
+     {
+      "key": "status",
+      "label": "Status",
+      "type": "enum",
+      "options": [
+       "New",
+       "In progress",
+       "Shipped",
+       "Delivered",
+       "Cancelled"
+      ]
+     },
+     {
+      "key": "createdAt",
+      "label": "Создан",
+      "type": "string"
+     },
+     {
+      "key": "total",
+      "label": "Сумма",
+      "type": "string"
+     },
+     {
+      "key": "email",
+      "label": "Email",
+      "type": "string"
+     },
+     {
+      "key": "phone",
+      "label": "Телефон",
+      "type": "string"
+     },
+     {
+      "key": "address",
+      "label": "Адрес доставки",
+      "type": "string"
+     }
+    ],
+    "rows": [
+     {
+      "number": "A-1000",
+      "customer": "Legacy Customer",
+      "status": "Delivered",
+      "createdAt": null,
+      "total": null
+     },
+     {
+      "number": "A-1001",
+      "customer": "Иван Петров",
+      "status": "New",
+      "createdAt": "2026-10-20",
+      "total": "12 400 ₽",
+      "email": "ivan.petrov@example.test",
+      "phone": "+7 900 000-00-01",
+      "address": "Москва, ул. Тестовая, 1"
+     },
+     {
+      "number": "A-1002",
+      "customer": "ООО «Вектор»",
+      "status": "In progress",
+      "createdAt": "2026-10-21",
+      "total": "48 900 ₽",
+      "email": "office@vector.example.test",
+      "phone": "+7 900 000-00-02",
+      "address": "Казань, пр. Образцовый, 12"
+     },
+     {
+      "number": "A-1003",
+      "customer": "Анна Смирнова",
+      "status": "Shipped",
+      "createdAt": "2026-10-22",
+      "total": "7 350 ₽",
+      "email": "anna.s@example.test",
+      "phone": "+7 900 000-00-03",
+      "address": "Тверь, ул. Примерная, 5"
+     },
+     {
+      "number": "A-1004",
+      "customer": "Павел Орлов",
+      "status": "Shipped",
+      "createdAt": "2026-10-22",
+      "total": "15 200 ₽",
+      "email": "p.orlov@example.test",
+      "phone": "+7 900 000-00-04",
+      "address": "Самара, ул. Условная, 7"
+     },
+     {
+      "number": "A-1005",
+      "customer": "Мария Козлова",
+      "status": "Delivered",
+      "createdAt": "2026-10-18",
+      "total": "3 990 ₽",
+      "email": "m.kozlova@example.test",
+      "phone": "+7 900 000-00-05",
+      "address": "Омск, ул. Макетная, 3"
+     }
+    ]
+   },
+   {
+    "id": "orderItems",
+    "name": "Order items",
+    "fields": [
+     {
+      "key": "orderNumber",
+      "label": "Order",
+      "type": "string"
+     },
+     {
+      "key": "product",
+      "label": "Товар",
+      "type": "string"
+     },
+     {
+      "key": "qty",
+      "label": "Кол-во",
+      "type": "number"
+     },
+     {
+      "key": "price",
+      "label": "Цена",
+      "type": "number"
+     },
+     {
+      "key": "sum",
+      "label": "Сумма",
+      "type": "number"
+     }
+    ],
+    "rows": [
+     {
+      "orderNumber": "A-1001",
+      "product": "Кофемашина",
+      "qty": 1,
+      "price": 12400,
+      "sum": 12400
+     },
+     {
+      "orderNumber": "A-1002",
+      "product": "Монитор 27\"",
+      "qty": 3,
+      "price": 14000,
+      "sum": 42000
+     },
+     {
+      "orderNumber": "A-1002",
+      "product": "Кабель HDMI",
+      "qty": 3,
+      "price": 2300,
+      "sum": 6900
+     },
+     {
+      "orderNumber": "A-1003",
+      "product": "Чайник",
+      "qty": 1,
+      "price": 7350,
+      "sum": 7350
+     },
+     {
+      "orderNumber": "A-1004",
+      "product": "Клавиатура",
+      "qty": 2,
+      "price": 7600,
+      "sum": 15200
+     },
+     {
+      "orderNumber": "A-1005",
+      "product": "Мышь",
+      "qty": 1,
+      "price": 3990,
+      "sum": 3990
+     }
+    ]
+   }
+  ],
+  "datasets": [
+   {
+    "id": "full",
+    "label": "Есть заказы во всех статусах",
+    "description": "Добавлен отменённый заказ A-1006",
+    "rows": {
+     "orders": [
+      {
+       "number": "A-1000",
+       "customer": "Legacy Customer",
+       "status": "Delivered",
+       "createdAt": null,
+       "total": null
+      },
+      {
+       "number": "A-1001",
+       "customer": "Иван Петров",
+       "status": "New",
+       "createdAt": "2026-10-20",
+       "total": "12 400 ₽",
+       "email": "ivan.petrov@example.test",
+       "phone": "+7 900 000-00-01",
+       "address": "Москва, ул. Тестовая, 1"
+      },
+      {
+       "number": "A-1002",
+       "customer": "ООО «Вектор»",
+       "status": "In progress",
+       "createdAt": "2026-10-21",
+       "total": "48 900 ₽",
+       "email": "office@vector.example.test",
+       "phone": "+7 900 000-00-02",
+       "address": "Казань, пр. Образцовый, 12"
+      },
+      {
+       "number": "A-1003",
+       "customer": "Анна Смирнова",
+       "status": "Shipped",
+       "createdAt": "2026-10-22",
+       "total": "7 350 ₽",
+       "email": "anna.s@example.test",
+       "phone": "+7 900 000-00-03",
+       "address": "Тверь, ул. Примерная, 5"
+      },
+      {
+       "number": "A-1004",
+       "customer": "Павел Орлов",
+       "status": "Shipped",
+       "createdAt": "2026-10-22",
+       "total": "15 200 ₽",
+       "email": "p.orlov@example.test",
+       "phone": "+7 900 000-00-04",
+       "address": "Самара, ул. Условная, 7"
+      },
+      {
+       "number": "A-1005",
+       "customer": "Мария Козлова",
+       "status": "Delivered",
+       "createdAt": "2026-10-18",
+       "total": "3 990 ₽",
+       "email": "m.kozlova@example.test",
+       "phone": "+7 900 000-00-05",
+       "address": "Омск, ул. Макетная, 3"
+      },
+      {
+       "number": "A-1006",
+       "customer": "Олег Белов",
+       "status": "Cancelled",
+       "createdAt": "2026-10-19",
+       "total": "2 100 ₽",
+       "email": "o.belov@example.test",
+       "phone": "+7 900 000-00-06",
+       "address": "Пермь, ул. Отмены, 9"
+      }
+     ]
+    }
+   },
+   {
+    "id": "none",
+    "label": "Заказов нет",
+    "description": "Пустой список",
+    "rows": {
+     "orders": [],
+     "orderItems": []
+    }
+   }
+  ],
+  "screens": [
+   {
+    "id": "orders",
+    "title": "Заказы",
+    "description": "Список заказов с фильтром по статусу. Клик по строке открывает карточку справа.",
+    "states": [
+     "default",
+     "loading",
+     "empty",
+     "error"
+    ],
+    "stateMessages": {
+     "loading": "Загружаем заказы...",
+     "empty": "Заказов пока нет.",
+     "error": "Не удалось загрузить заказы."
+    },
+    "elements": [
+     {
+      "id": "status",
+      "kind": "filter",
+      "label": "Статус",
+      "intent": "search",
+      "collection": "orders",
+      "param": "status",
+      "allLabel": "Все",
+      "filters": [
+       {
+        "param": "status",
+        "field": "status",
+        "unknown": "all"
+       }
+      ],
+      "requirementIds": [
+       "REQ-ORD-001",
+       "REQ-ORD-004"
+      ],
+      "acIds": [
+       "REQ-ORD-001-AC-01",
+       "REQ-ORD-001-AC-02",
+       "REQ-ORD-001-AC-03",
+       "REQ-ORD-001-AC-04",
+       "REQ-ORD-001-AC-05",
+       "REQ-ORD-004-AC-01",
+       "REQ-ORD-004-AC-05"
+      ]
+     },
+     {
+      "id": "tbl",
+      "kind": "table",
+      "label": "Заказы",
+      "intent": "view",
+      "collection": "orders",
+      "columns": [
+       "number",
+       "customer",
+       "status"
+      ],
+      "filters": [
+       {
+        "param": "status",
+        "field": "status",
+        "unknown": "all"
+       }
+      ],
+      "idField": "number",
+      "rowOpens": "card",
+      "emptyText": "Нет заказов со статусом {status}",
+      "emptyAction": {
+       "label": "Сбросить фильтр",
+       "clear": [
+        "status"
+       ]
+      },
+      "requirementIds": [
+       "REQ-ORD-001",
+       "REQ-ORD-002",
+       "REQ-ORD-005"
+      ],
+      "acIds": [
+       "REQ-ORD-001-AC-04",
+       "REQ-ORD-001-AC-05",
+       "REQ-ORD-001-AC-06",
+       "REQ-ORD-001-AC-07",
+       "REQ-ORD-002-AC-01",
+       "REQ-ORD-002-AC-02",
+       "REQ-ORD-005-AC-06"
+      ]
+     },
+     {
+      "id": "card",
+      "kind": "drawer",
+      "label": "Заказ",
+      "intent": "view",
+      "collection": "orders",
+      "param": "order",
+      "idField": "number",
+      "withinTable": "tbl",
+      "onMissing": "close",
+      "missingText": "—",
+      "detailFields": [
+       {
+        "field": "number"
+       },
+       {
+        "field": "customer"
+       },
+       {
+        "field": "status"
+       },
+       {
+        "field": "createdAt"
+       },
+       {
+        "field": "total"
+       },
+       {
+        "field": "email"
+       },
+       {
+        "field": "phone"
+       },
+       {
+        "field": "address"
+       }
+      ],
+      "related": [
+       {
+        "collection": "orderItems",
+        "matchField": "orderNumber",
+        "columns": [
+         "product",
+         "qty",
+         "price",
+         "sum"
+        ],
+        "label": "Позиции"
+       }
+      ],
+      "requirementIds": [
+       "REQ-ORD-002",
+       "REQ-ORD-003",
+       "REQ-ORD-004",
+       "REQ-ORD-005"
+      ],
+      "acIds": [
+       "REQ-ORD-002-AC-01",
+       "REQ-ORD-002-AC-03",
+       "REQ-ORD-002-AC-04",
+       "REQ-ORD-002-AC-05",
+       "REQ-ORD-002-AC-06",
+       "REQ-ORD-002-AC-07",
+       "REQ-ORD-002-AC-08",
+       "REQ-ORD-002-AC-09",
+       "REQ-ORD-003-AC-01",
+       "REQ-ORD-003-AC-02",
+       "REQ-ORD-004-AC-02",
+       "REQ-ORD-004-AC-03",
+       "REQ-ORD-004-AC-04",
+       "REQ-ORD-004-AC-06",
+       "REQ-ORD-005-AC-02",
+       "REQ-ORD-005-AC-03",
+       "REQ-ORD-005-AC-04",
+       "REQ-ORD-005-AC-05",
+       "REQ-ORD-005-AC-07"
+      ]
+     }
+    ]
+   }
+  ],
+  "scenarios": [
+   {
+    "id": "all",
+    "title": "Страница без параметров",
+    "description": "Выбрано «Все», видны все заказы",
+    "query": {},
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 6
+      }
+     ],
+     "overlay": [
+      {
+       "element": "card",
+       "state": "closed"
+      }
+     ],
+     "noQuery": [
+      "status",
+      "order"
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-001"
+    ],
+    "acIds": [
+     "REQ-ORD-001-AC-02"
+    ]
+   },
+   {
+    "id": "st-new",
+    "title": "Статус New",
+    "query": {
+     "status": "New"
+    },
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 1
+      }
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-001"
+    ],
+    "acIds": [
+     "REQ-ORD-001-AC-04"
+    ]
+   },
+   {
+    "id": "st-prog",
+    "title": "Статус In progress",
+    "query": {
+     "status": "In progress"
+    },
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 1
+      }
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-001"
+    ],
+    "acIds": [
+     "REQ-ORD-001-AC-04"
+    ]
+   },
+   {
+    "id": "st-ship",
+    "title": "Статус Shipped",
+    "query": {
+     "status": "Shipped"
+    },
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 2
+      }
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-001"
+    ],
+    "acIds": [
+     "REQ-ORD-001-AC-04"
+    ]
+   },
+   {
+    "id": "st-deliv",
+    "title": "Статус Delivered",
+    "query": {
+     "status": "Delivered"
+    },
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 2
+      }
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-001"
+    ],
+    "acIds": [
+     "REQ-ORD-001-AC-04"
+    ]
+   },
+   {
+    "id": "st-cancel",
+    "title": "Статус Cancelled: заказов нет",
+    "description": "Сообщение и кнопка «Сбросить фильтр»",
+    "query": {
+     "status": "Cancelled"
+    },
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 0
+      }
+     ],
+     "contains": [
+      "Нет заказов со статусом Cancelled",
+      "Сбросить фильтр"
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-001"
+    ],
+    "acIds": [
+     "REQ-ORD-001-AC-06"
+    ]
+   },
+   {
+    "id": "st-cancel-full",
+    "title": "Cancelled при данных во всех статусах",
+    "dataset": "full",
+    "query": {
+     "status": "Cancelled"
+    },
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 1
+      }
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-001"
+    ],
+    "acIds": [
+     "REQ-ORD-001-AC-04"
+    ]
+   },
+   {
+    "id": "open",
+    "title": "Открытый заказ",
+    "query": {
+     "order": "A-1003"
+    },
+    "expect": {
+     "overlay": [
+      {
+       "element": "card",
+       "state": "open"
+      }
+     ],
+     "contains": [
+      "Анна Смирнова",
+      "Чайник"
+     ],
+     "query": {
+      "order": "A-1003"
+     }
+    },
+    "requirementIds": [
+     "REQ-ORD-002"
+    ],
+    "acIds": [
+     "REQ-ORD-002-AC-01",
+     "REQ-ORD-002-AC-03",
+     "REQ-ORD-002-AC-04",
+     "REQ-ORD-002-AC-05"
+    ]
+   },
+   {
+    "id": "deep",
+    "title": "Ссылка: фильтр и заказ",
+    "query": {
+     "status": "Shipped",
+     "order": "A-1003"
+    },
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 2
+      }
+     ],
+     "overlay": [
+      {
+       "element": "card",
+       "state": "open"
+      }
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-004"
+    ],
+    "acIds": [
+     "REQ-ORD-004-AC-03"
+    ]
+   },
+   {
+    "id": "order-outside-filter",
+    "title": "Заказ не входит в фильтр",
+    "description": "Панель не открывается, order удаляется, status сохраняется",
+    "query": {
+     "status": "New",
+     "order": "A-1003"
+    },
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 1
+      }
+     ],
+     "overlay": [
+      {
+       "element": "card",
+       "state": "closed"
+      }
+     ],
+     "query": {
+      "status": "New"
+     },
+     "noQuery": [
+      "order"
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-003",
+     "REQ-ORD-004"
+    ],
+    "acIds": [
+     "REQ-ORD-003-AC-01",
+     "REQ-ORD-004-AC-06"
+    ]
+   },
+   {
+    "id": "unknown-order",
+    "title": "Несуществующий заказ",
+    "query": {
+     "status": "Shipped",
+     "order": "NOPE-1"
+    },
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 2
+      }
+     ],
+     "overlay": [
+      {
+       "element": "card",
+       "state": "closed"
+      }
+     ],
+     "query": {
+      "status": "Shipped"
+     },
+     "noQuery": [
+      "order"
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-004"
+    ],
+    "acIds": [
+     "REQ-ORD-004-AC-06"
+    ]
+   },
+   {
+    "id": "unknown-status",
+    "title": "Неизвестный статус в ссылке",
+    "description": "Применяется «Все»",
+    "query": {
+     "status": "Bogus"
+    },
+    "expect": {
+     "rows": [
+      {
+       "element": "tbl",
+       "count": 6
+      }
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-004"
+    ],
+    "acIds": [
+     "REQ-ORD-004-AC-05"
+    ]
+   },
+   {
+    "id": "legacy",
+    "title": "Старый заказ без новых полей",
+    "description": "Пропущенные значения показаны как «—»",
+    "query": {
+     "order": "A-1000"
+    },
+    "expect": {
+     "overlay": [
+      {
+       "element": "card",
+       "state": "open"
+      }
+     ],
+     "contains": [
+      "Legacy Customer",
+      "—"
+     ]
+    },
+    "requirementIds": [
+     "REQ-ORD-002",
+     "REQ-ORD-005"
+    ],
+    "acIds": [
+     "REQ-ORD-002-AC-07",
+     "REQ-ORD-005-AC-07"
+    ]
+   }
+  ]
+ }
+}

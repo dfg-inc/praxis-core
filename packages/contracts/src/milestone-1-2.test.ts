@@ -29,7 +29,7 @@ const story = {
 };
 
 function workflowWithStories() {
-  let state = openLocalWorkflow({
+  let state = openLocalWorkflow({ mode: "classic",
     projectId: "beta",
     title: "Beta confirmation",
     request: "Reproduce the unseen story confirmation",
@@ -77,7 +77,7 @@ describe("story confirmation", () => {
   });
 
   it("rejects a caller boolean on story creation", () => {
-    const state = openLocalWorkflow({ projectId: "beta", title: "Reject flag", request: "no" });
+    const state = openLocalWorkflow({ mode: "classic", projectId: "beta", title: "Reject flag", request: "no" });
     const withRequirement = applyWorkflowCommand(state, {
       action: "add-requirement",
       id: "REQ-BETA-001",

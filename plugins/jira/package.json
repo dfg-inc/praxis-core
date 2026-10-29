@@ -1,10 +1,10 @@
 {
   "name": "@praxis/jira",
-  "version": "0.1.0-alpha.48",
+  "version": "0.1.0-alpha.49",
   "private": true,
   "type": "module",
   "description": "Praxis Jira Cloud and Data Center orchestration (company infra)",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

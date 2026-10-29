@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, lstatSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   inferProjectConfig,
@@ -36,7 +36,7 @@ import {
   type QualityCommentReadback,
 } from "@praxis/jira/workflow";
 import { resolveWorkPackageRef, type ResolvedIdentifier } from "./identity.js";
-import { approvalDiagnostics, doctorNextSteps, providerDiagnostics } from "./diagnostics.js";
+import { approvalDiagnostics, classifyDotenvRefusal, doctorNextSteps, providerDiagnostics, type DotenvRefusal } from "./diagnostics.js";
 import { VcsError, githubTokenFlags, gitlabTokenFlags, type GitDeliveryJournal, type GitWriteFields } from "@praxis/vcs";
 import {
   ApprovalError,
@@ -246,16 +246,53 @@ export function scrubUnexpandedPlaceholders(env: NodeJS.ProcessEnv = process.env
 let hostPlaceholdersIgnored: string[] = [];
 
 /**
- * Keys that decide how a mutation is approved. Repository files are writable by the agent, so
- * they must never supply these: only the operator's real environment can.
+ * What a repository file may configure: an explicit allowlist, not "everything with a PRAXIS_ prefix". Repository files are
+ * writable by the agent, so they must never supply anything that decides how an action is approved, where credentials go,
+ * which program runs, or where Praxis keeps its journal. Those come only from the operator's real environment (the extension
+ * settings or the shell). Allowed here: Jira issue-type and field names for this project, the project key, the Git provider
+ * choice and the work-package time box: non-secret naming that is legitimately per-project and cannot redirect a request,
+ * carry a credential, run code or relax an approval.
  */
-const DOTENV_FORBIDDEN_PREFIXES = [
-  "PRAXIS_APPROVAL_",
-  "PRAXIS_ALLOW_",
-  "PRAXIS_FIXTURE_",
-  "PRAXIS_TEST_",
-  "PRAXIS_STATE_HOME",
+const DOTENV_ALLOWED_KEYS = new Set([
+  "PRAXIS_JIRA_PROJECT_KEY",
+  "PRAXIS_JIRA_EPIC_TYPE",
+  "PRAXIS_JIRA_EPIC_TYPE_ID",
+  "PRAXIS_JIRA_STORY_TYPE",
+  "PRAXIS_JIRA_STORY_TYPE_ID",
+  "PRAXIS_JIRA_TASK_TYPE",
+  "PRAXIS_JIRA_TASK_TYPE_ID",
+  "PRAXIS_JIRA_BUG_TYPE",
+  "PRAXIS_JIRA_BUG_TYPE_ID",
+  "PRAXIS_JIRA_WORK_PACKAGE_TYPE",
+  "PRAXIS_JIRA_STORY_POINTS_FIELD",
+  "PRAXIS_JIRA_ARCHITECT_ESTIMATE_FIELD",
+  "PRAXIS_GIT_PROVIDER",
+  "PRAXIS_WORK_PACKAGE_MAX_HOURS",
+]);
+const DOTENV_ALLOWED_PREFIXES = ["PRAXIS_JIRA_TRANSITION_"];
+
+/**
+ * An allowed key still gets only a value of the right shape: a project key, an issue-type name, a numeric id or a field id are
+ * spliced into Jira paths, JQL and request bodies, so a value from a file the agent can write must not be able to carry
+ * path or query syntax.
+ */
+const DOTENV_VALUE_SHAPES: Array<[RegExp, RegExp]> = [
+  [/^PRAXIS_JIRA_PROJECT_KEY$/, /^[A-Z][A-Z0-9_]{1,19}$/],
+  [/^PRAXIS_JIRA_[A-Z_]+_TYPE_ID$/, /^\d{1,10}$/],
+  [/^PRAXIS_JIRA_[A-Z_]+_TYPE$/, /^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,59}$/],
+  [/^PRAXIS_JIRA_(STORY_POINTS|ARCHITECT_ESTIMATE)_FIELD$/, /^(customfield_\d{1,8}|[A-Za-z][A-Za-z0-9_ .\-]{0,59})$/],
+  [/^PRAXIS_JIRA_TRANSITION_/, /^[A-Za-z0-9][A-Za-z0-9 _.\-]{0,39}$/],
+  [/^PRAXIS_GIT_PROVIDER$/, /^(github|gitlab)$/],
+  [/^PRAXIS_WORK_PACKAGE_MAX_HOURS$/, /^\d{1,3}$/],
 ];
+export function dotenvValueValid(key: string, value: string): boolean {
+  const shape = DOTENV_VALUE_SHAPES.find(([k]) => k.test(key));
+  return shape ? shape[1].test(value) : false;
+}
+
+export function dotenvKeyAllowed(key: string): boolean {
+  return DOTENV_ALLOWED_KEYS.has(key) || DOTENV_ALLOWED_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
 
 let dotenvRejected: string[] = [];
 
@@ -264,8 +301,33 @@ export function dotenvRejectedKeys(): string[] {
   return dotenvRejected;
 }
 
+/** Refusals from the most recent load (one repository), with a reason; names only. */
+let dotenvRefusals: DotenvRefusal[] = [];
+/** Allowlisted keys the most recent load actually took from a repository file (names only). */
+export function dotenvRefusalList(): DotenvRefusal[] {
+  return dotenvRefusals;
+}
+export function dotenvLoadedKeys(): string[] {
+  return [...fileSourced.keys()].sort();
+}
+
 function dotenvKeyForbidden(key: string): boolean {
-  return DOTENV_FORBIDDEN_PREFIXES.some((prefix) => key.startsWith(prefix));
+  return !dotenvKeyAllowed(key);
+}
+
+/** Values a repository file put into process.env, so the next call can take them back: one repository's file must not apply to another. */
+const fileSourced = new Map<string, string>();
+const DOTENV_MAX_BYTES = 64 * 1024;
+
+function parseDotenvLine(raw: string): { key: string; value: string } | undefined {
+  const line = raw.replace(/^\uFEFF/, "").trim().replace(/^export\s+/, "");
+  const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+  if (!m) return undefined;
+  let value = m[2]!.trim();
+  const quoted = value.match(/^(["'])(.*)\1$/);
+  if (quoted) value = quoted[2]!;
+  else value = value.replace(/\s+#.*$/, "").trim();
+  return { key: m[1]!, value };
 }
 
 export function loadPraxisDotenv(repo: string): void {
@@ -273,21 +335,39 @@ export function loadPraxisDotenv(repo: string): void {
   if (removed.length) {
     hostPlaceholdersIgnored = [...new Set([...hostPlaceholdersIgnored, ...removed])].sort();
   }
+  // take back what the previous call's repository file set, unless the operator has since set the same variable
+  for (const [key, value] of fileSourced) if (process.env[key] === value) delete process.env[key];
+  fileSourced.clear();
+  dotenvRefusals = [];
   if (process.env.PRAXIS_SKIP_DOTENV === "1") return;
   const resolved = resolve(repo);
   if (!existsSync(resolved)) return;
   for (const f of [".env.praxis", ".env", ".env.praxis.local"]) {
     const p = join(resolved, f);
-    if (!existsSync(p)) continue;
-    for (const line of readFileSync(p, "utf8").split("\n")) {
-      const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-      if (!m) continue;
-      if (dotenvKeyForbidden(m[1]!)) {
-        if (!dotenvRejected.includes(m[1]!)) dotenvRejected = [...dotenvRejected, m[1]!].sort();
+    let text: string;
+    try {
+      // only a regular file of sensible size: a FIFO or a device would block the whole Runtime, a link may point anywhere
+      const st = lstatSync(p);
+      if (!st.isFile() || st.size > DOTENV_MAX_BYTES) continue;
+      text = readFileSync(p, "utf8");
+    } catch {
+      continue;
+    }
+    for (const raw of text.split(/\r?\n/)) {
+      const parsed = parseDotenvLine(raw);
+      if (!parsed) continue;
+      const { key, value } = parsed;
+      if (dotenvKeyForbidden(key) || !dotenvValueValid(key, value)) {
+        // only Praxis-looking keys are worth reporting; the product's own variables (DATABASE_URL ...) are simply not loaded
+        if (key.startsWith("PRAXIS_") && !dotenvRejected.includes(key)) dotenvRejected = [...dotenvRejected, key].sort();
+        if (key.startsWith("PRAXIS_") && !dotenvRefusals.some((r) => r.key === key)) {
+          dotenvRefusals = [...dotenvRefusals, { key, reason: classifyDotenvRefusal(key, !dotenvKeyForbidden(key)) }].sort((a, b) => a.key.localeCompare(b.key));
+        }
         continue;
       }
-      if (process.env[m[1]!]) continue;
-      process.env[m[1]!] = m[2]!.replace(/^["']|["']$/g, "");
+      if (process.env[key]) continue;
+      process.env[key] = value;
+      fileSourced.set(key, value);
     }
   }
 }
@@ -673,6 +753,8 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     capabilities,
     hostPlaceholdersIgnored,
     dotenvRejected,
+    dotenvRefused: dotenvRefusals,
+    dotenvLoaded: dotenvLoadedKeys(),
     providers,
     approval,
     nextSteps: [
@@ -684,6 +766,8 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
       providers,
       approval,
       dotenvRejected,
+      dotenvRefused: dotenvRefusals,
+      dotenvLoaded: dotenvLoadedKeys(),
     }),
     ],
     codes: {

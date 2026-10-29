@@ -124,7 +124,7 @@ describe("git url", () => {
     const p = parseRemoteUrl("git@gitlab.example.com:group/project.git");
     expect(p.protocol).toBe("ssh");
     expect(p.inferredProvider).toBe("gitlab");
-    expect(p.identity).not.toContain("gl.jetru.by");
+    expect(p.identity).not.toContain("gitlab.example.internal");
   });
 });
 
@@ -152,7 +152,7 @@ describe("git status / connect", () => {
     expect(st.provider).toBe("unknown");
     expect(st.pushReady).toBe(false);
     expect(st.mergeRequestReady).toBe(false);
-    expect(JSON.stringify(st)).not.toMatch(/gl\.jetru\.by/);
+    expect(JSON.stringify(st)).not.toMatch(/gitlab\.example\.internal/);
   });
 
   it("requires identity when local and global name/email are unset", () => {
