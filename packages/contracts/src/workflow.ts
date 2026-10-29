@@ -1816,7 +1816,7 @@ function applyWorkflowCommandCore(
       if ((command.replaceSource === "agent") === runtime) throw new WorkflowError("EVIDENCE_PROTECTED", `a ${runtime ? "Runtime" : "agent"} record cannot replace ${command.replaceSource} evidence`);
       coverage = coverage.filter((e) => !(ownedBy(e) && !seen.has(e.scenarioId)));
     }
-    const comparable = (e: CoverageEntry) => JSON.stringify({ ...e, recordedAt: undefined, source: e.source && { kind: e.source.kind, runner: e.source.runner, runId: e.source.runId, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });
+    const comparable = (e: CoverageEntry) => JSON.stringify({ ...e, recordedAt: undefined, source: e.source && { kind: e.source.kind, runner: e.source.runner, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });
     for (const scenario of incoming) {
       const index = coverage.findIndex((e) => e.scenarioId === scenario.scenarioId);
       if (index < 0) {
@@ -1852,6 +1852,7 @@ function applyWorkflowCommandCore(
       const entries = coverage.filter((e) => e.serviceId === serviceId);
       const current = entries.filter((e) => {
         const story = e.storyId ? next.stories.find((st) => st.id === e.storyId) : undefined;
+        if (e.source?.drifted) return false;
         return !e.storyId || (story && story.status !== "superseded" && (e.storyRevision ?? 1) === story.revision);
       });
       const rolled = rollupStoryVerdict(current);
