@@ -3,6 +3,7 @@ import { z } from "zod";
 import { WorkflowError } from "./errors.js";
 import { canonicalText } from "./human-acts.js";
 import { verifyUserApproval, type ApprovalRequest, type UserApproval } from "./user-approval.js";
+import { evaluateEvidence } from "./quality-model.js";
 import { RepositoryIdSchema, RequirementIdSchema, StoryIdSchema } from "./ids.js";
 import {
   ACCEPTABLE_PHASES,
@@ -206,11 +207,13 @@ export function inferCapabilities(text: string): StoryCapability[] {
  * option values of the prototype's enum fields ("New", "Cancelled" are statuses, not "create" and "delete").
  */
 export function maskLiterals(text: string, dataValues: string[] = []): string {
+  // an apostrophe inside a word (the customer's order) is not a quote
   let out = text
-    .replace(/«[^»]*»|“[^”]*”|"[^"]*"|`[^`]*`|'[^']*'/g, " ")
+    .replace(/«[^»]*»|“[^”]*”|"[^"]*"|`[^`]*`|(?<![A-Za-z0-9])'[^']*'(?![A-Za-z0-9])/g, " ")
     .replace(/[?&]?\b[\w.-]+=\S*/g, " ")
     .replace(/\bhttps?:\/\/\S+/g, " ");
-  for (const value of dataValues.filter((v) => v.length > 1)) out = out.replace(new RegExp(`\\b${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), " ");
+  // data values are matched with their own case: the option "Open" is data, the word "open" in a sentence is an operation
+  for (const value of dataValues.filter((v) => v.length > 1)) out = out.replace(new RegExp(`\\b${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"), " ");
   return out;
 }
 
@@ -227,7 +230,8 @@ export function capabilityEvidence(text: string): Array<{ capability: StoryCapab
 /** What the requirement statement says a user CAN do: only the clause after "can / may / must / allows ..." counts, so descriptions and data around it do not. */
 const MODAL = /\b(?:can|may|must|should|shall|able to|allows?|lets?|enables?|needs? to)\b([^.;:]{0,200})/gi;
 export function statedOperations(statement: string, dataValues: string[] = []): Array<{ capability: StoryCapability; phrase: string }> {
-  const masked = maskLiterals(statement, dataValues);
+  // "e.g." / "i.e." / "etc." end no sentence
+  const masked = maskLiterals(statement, dataValues).replace(/\b(?:e\.g\.|i\.e\.|etc\.|vs\.)/gi, " ");
   const out: Array<{ capability: StoryCapability; phrase: string }> = [];
   for (const m of masked.matchAll(MODAL)) for (const hit of capabilityEvidence(m[1] ?? "")) if (!out.some((x) => x.capability === hit.capability)) out.push(hit);
   return out;
@@ -718,7 +722,8 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
       requirement.acceptanceCriteria[index] = criterion;
     }
     for (const statement of decision.addAcceptance) {
-      const used = requirement.acceptanceCriteria.map((c) => Number(c.id.match(/-AC-(\d+)$/)?.[1] ?? 0));
+      // a retired id is never handed out again: a result recorded for the removed criterion must not count for a new one
+      const used = [...requirement.acceptanceCriteria.map((c) => c.id), ...(requirement.retiredCriteria ?? [])].map((id) => Number(id.match(/-AC-(\d+)$/)?.[1] ?? 0));
       const nextNumber = Math.max(0, ...used) + 1;
       requirement.acceptanceCriteria.push({
         id: `${requirement.id}-AC-${String(nextNumber).padStart(2, "0")}`,
@@ -736,6 +741,7 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
         throw new WorkflowError("USER_DECISION_REQUIRED", `${id} is accepted by the user; an agent does not remove it. The user removes it in the review page.`);
       }
       requirement.acceptanceCriteria = requirement.acceptanceCriteria.filter((c) => c.id !== id);
+      requirement.retiredCriteria = [...new Set([...(requirement.retiredCriteria ?? []), id])];
       revised = true;
       summary.push(`${id} removed`);
     }
@@ -1251,6 +1257,12 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
   const upstreamFresh = (phases: AcceptablePhase[]) => {
     for (const phase of phases) need(acceptanceStatus(state, phase) !== "stale", `${STALE_LABEL[phase]} changed after you accepted ${phase === "story_plan" ? "it" : "them"}: review and accept again`);
   };
+  // Reviewing a story and confirming its behaviour are two decisions: Quality compares the code with the CONFIRMED behaviour. A story
+  // edited after its confirmation is unconfirmed again, so this is checked at every later gate, not only the first.
+  const confirmedStories = () => {
+    const unconfirmed = activeStories(state).filter((st) => !st.confirmedBehavior);
+    need(unconfirmed.length === 0, `every story confirmed by the user (confirm-story): ${unconfirmed.map((st) => st.id).join(", ")} still ${unconfirmed.length === 1 ? "needs" : "need"} it`);
+  };
   switch (to) {
     case "requirements_review":
       need(reqs.length > 0, "at least one in-scope requirement");
@@ -1277,15 +1289,14 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
     case "architecture": {
       need(acceptanceStatus(state, "stories_review") === "accepted", "stories reviewed and accepted, unchanged since");
       upstreamFresh(["requirements_review", "prototype", "story_plan"]);
-      // Reviewing a story and confirming its behaviour are two decisions: Quality compares the code with the CONFIRMED behaviour
-      const unconfirmed = activeStories(state).filter((st) => !st.confirmedBehavior);
-      need(unconfirmed.length === 0, `every story confirmed by the user (confirm-story): ${unconfirmed.map((st) => st.id).join(", ")} still ${unconfirmed.length === 1 ? "needs" : "need"} it`);
+      confirmedStories();
       const coverage = analyzeStoryCoverage(state);
       need(coverage.ok, `coverage gaps: ${coverage.gaps.map((g) => g.reason).concat(coverage.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
       break;
     }
     case "development":
       upstreamFresh(["requirements_review", "prototype", "story_plan", "stories_review"]);
+      confirmedStories();
       need(state.services.length > 0, "at least one service (set-service)");
       for (const service of state.services) {
         const repo = service.repositoryId ? state.repositories.find((r) => r.id === service.repositoryId) : undefined;
@@ -1303,6 +1314,7 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
       break;
     case "quality": {
       upstreamFresh(["requirements_review", "prototype", "story_plan", "stories_review"]);
+      confirmedStories();
       for (const contract of state.contracts) need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user (it was changed after implementation started?)`);
       for (const service of state.services) need(state.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
       break;
@@ -1310,6 +1322,10 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
     case "delivery":
       for (const contract of state.contracts) need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user`);
       need(state.verdicts.some((v) => v.scope === "feature" && v.verdict !== "FAIL" && !v.stale), "a current feature verdict that is not FAIL");
+      // a recorded verdict is a snapshot: delivery is judged on what the evidence says NOW (a criterion revised or a result that was only attested since changes it)
+      const evidence = evaluateEvidence(state);
+      need(evidence.totals.attested === 0, `every passing criterion has an independently executed result (${evidence.totals.attested} rest on an agent's own record or on a record from before provenance existed: run verify-stories)`);
+      need(evidence.verdict !== "FAIL", `the evidence for the current criteria and stories is complete and passing${evidence.gaps.length ? `: ${evidence.gaps.slice(0, 4).join("; ")}${evidence.gaps.length > 4 ? "; ..." : ""}` : ""}`);
       // A feature verdict is only as good as the services under it: each one needs its own implementation and a passing verdict.
       for (const service of state.services) {
         need(state.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);

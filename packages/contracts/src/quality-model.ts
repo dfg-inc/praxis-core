@@ -46,9 +46,9 @@ export type CoverageResult = {
   noEvidence: boolean;
 };
 
-const TRUSTED = new Set(["executed", "browser", "legacy"]);
+const TRUSTED = new Set(["executed", "browser"]);
 
-/** Entries written before provenance existed have no source: they count as executed (they could only come from verify-stories) but only for unrevised criteria. */
+/** Entries written before provenance existed have no source: nobody can tell whether the Runtime ran them or an agent wrote them, so they are not independent proof. One verify-stories re-run replaces them. */
 function trusted(entry: CoverageEntry): boolean {
   return TRUSTED.has(entry.source?.kind ?? "legacy");
 }
@@ -71,7 +71,7 @@ function locate(state: WorkflowState, entry: CoverageEntry, ac: { id: string; re
 }
 
 export function criterionStatus(state: WorkflowState, requirementId: string, ac: { id: string; revision: number } | undefined, acId: string): CriterionCoverage {
-  const mine = state.coverage.filter((e) => e.requirementId === requirementId && e.acceptanceCriterionId === acId && !e.scenarioId.endsWith("-CONFIRMATION"));
+  const mine = state.coverage.filter((e) => e.requirementId === requirementId && e.acceptanceCriterionId === acId);
   const located = mine.map((e) => locate(state, e, ac));
   const current = located.filter((l) => l.current).map((l) => l.entry);
   const stale = located.filter((l) => !l.current).map((l) => l.entry.scenarioId);
@@ -100,7 +100,7 @@ function describe(c: CriterionCoverage): string {
     case "stale":
       return `${c.id} only has results for an older revision (${c.stale.join(", ")}): verify it again`;
     case "attested":
-      return `${c.id} is attested by an agent, not independently executed (${c.scenarios.join(", ")})`;
+      return `${c.id} has no independently executed result: it was attested by an agent or recorded before provenance existed (${c.scenarios.join(", ")}); run verify-stories again`;
     case "risk":
       return `${c.id} passed with risks (${c.scenarios.join(", ")})`;
     case "missing":
@@ -140,7 +140,7 @@ export function requirementCoverage(state: WorkflowState, requirementId: string)
   }
   let extraRisks = 0;
   for (const story of state.stories.filter((s) => s.status !== "superseded" && s.status !== "excluded" && s.requirementIds.includes(requirementId))) {
-    const verified = state.coverage.some((e) => e.storyId === story.id && e.requirementId === requirementId && (e.storyRevision ?? 1) === story.revision && !e.scenarioId.endsWith("-CONFIRMATION"));
+    const verified = state.coverage.some((e) => e.storyId === story.id && e.requirementId === requirementId && (e.storyRevision ?? 1) === story.revision);
     if (!verified) {
       reasons.push(`story-not-verified:${story.id}@${story.revision}`);
       extraRisks += 1;
@@ -152,7 +152,7 @@ export function requirementCoverage(state: WorkflowState, requirementId: string)
   // results that name a criterion the requirement does not have prove nothing, but they are not "no evidence": say so
   const own = new Set(requirement.acceptanceCriteria.map((c) => c.id));
   let anyCurrent = false;
-  for (const e of state.coverage.filter((x) => x.requirementId === requirementId && !x.scenarioId.endsWith("-CONFIRMATION"))) {
+  for (const e of state.coverage.filter((x) => x.requirementId === requirementId)) {
     if (!locate(state, e, undefined).current) continue;
     anyCurrent = true;
     if (requirement.acceptanceCriteria.length > 0 && !own.has(e.acceptanceCriterionId)) reasons.push(`${e.scenarioId} proves ${e.acceptanceCriterionId}, which is not an acceptance criterion of ${requirementId}`);
@@ -207,13 +207,18 @@ export function evaluateEvidence(state: WorkflowState): FeatureEvaluation {
     }
     return { id: r.id, verdict: cov.verdict, counts: cov.counts };
   });
+  // A Story's own criteria count too: a failing or unproven Story criterion cannot hide behind the requirement it belongs to
   const stories = state.stories
     .filter((s) => s.status !== "superseded" && s.status !== "excluded")
     .map((s) => {
       const cov = storyCoverage(state, s.id);
+      if (cov.verdict === "FAIL") {
+        gaps.push(cov.noEvidence ? `${s.id}: no evidence for any of its ${cov.counts.total} criteria` : `${s.id} is FAIL: ${cov.counts.passed} of ${cov.counts.total} criteria passed (failed ${cov.counts.failed}, blocked ${cov.counts.blocked}, missing ${cov.counts.missing}, stale ${cov.counts.stale})`);
+        if (!cov.noEvidence) for (const reason of cov.reasons) gaps.push(`  ${reason}`);
+      }
       return { id: s.id, verdict: cov.verdict, counts: cov.counts };
     });
   const totals = requirements.reduce((sum, r) => ({ total: sum.total + r.counts.total, verified: sum.verified + r.counts.verified, passed: sum.passed + r.counts.passed, failed: sum.failed + r.counts.failed, blocked: sum.blocked + r.counts.blocked, missing: sum.missing + r.counts.missing, stale: sum.stale + r.counts.stale, attested: sum.attested + r.counts.attested, risk: sum.risk + r.counts.risk }), count([]));
-  const verdict: Verdict = requirements.length === 0 || requirements.some((r) => r.verdict === "FAIL") ? "FAIL" : requirements.some((r) => r.verdict === "PASS_WITH_RISKS") ? "PASS_WITH_RISKS" : "PASS";
+  const verdict: Verdict = requirements.length === 0 || requirements.some((r) => r.verdict === "FAIL") || stories.some((x) => x.verdict === "FAIL") ? "FAIL" : requirements.some((r) => r.verdict === "PASS_WITH_RISKS") || stories.some((x) => x.verdict === "PASS_WITH_RISKS") ? "PASS_WITH_RISKS" : "PASS";
   return { verdict, gaps, requirements, stories, totals };
 }

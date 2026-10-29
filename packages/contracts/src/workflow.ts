@@ -163,6 +163,8 @@ export const RequirementSchema = z.object({
   scopeNote: z.string().optional(),
   repositoryIds: z.array(z.string()).default([]),
   comment: z.string().optional(),
+  /** Ids of criteria that were removed: never handed out again, so a result recorded for the old one cannot count for a new one. */
+  retiredCriteria: z.array(z.string()).default([]),
 });
 export type Requirement = z.infer<typeof RequirementSchema>;
 
@@ -503,6 +505,7 @@ export function addRequirement(
       review: { status: "pending" as const },
     })),
     scope: "in",
+    retiredCriteria: [],
     repositoryIds: [],
   };
   return { ...state, requirements: [...state.requirements, requirement] };
@@ -1462,7 +1465,14 @@ export function applyWorkflowCommand(
     record = { at: a.decidedAt, action: command.action === "set-service" ? "approve-service" : command.action, subjects: subjectsOf(command, state, out.state), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
   } else if (options?.channel?.via === "approved" && (userDecision || command.action === "open")) {
     const a = options.channel.approval;
-    record = { at: a.decidedAt, action: command.action === "open" ? "open-classic-work-item" : "review-decisions", subjects: subjectsOf(command, state, out.state), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
+    const batchSubjects = options.channel.batch.flatMap((c) => {
+      try {
+        return subjectsOf(parseWorkflowCommand(c), state, out.state);
+      } catch {
+        return [];
+      }
+    });
+    record = { at: a.decidedAt, action: command.action === "open" ? "open-classic-work-item" : "review-decisions", subjects: (batchSubjects.length ? batchSubjects : subjectsOf(command, state, out.state)).slice(0, 200), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
     // one approval covers a batch: the first applied command records it once
     if ((out.state.approvals ?? []).some((r) => r.subjectDigest === a.subjectDigest && r.at === a.decidedAt)) record = null;
   } else if (options?.channel?.via === "html-review" && userDecision) {
@@ -1838,7 +1848,7 @@ function applyWorkflowCommandCore(
     const touchedServices = [...new Set(incoming.map((scenario) => scenario.serviceId))];
     const serviceVerdicts = [];
     for (const serviceId of touchedServices) {
-      const entries = coverage.filter((e) => e.serviceId === serviceId && !e.scenarioId.endsWith("-CONFIRMATION"));
+      const entries = coverage.filter((e) => e.serviceId === serviceId);
       const current = entries.filter((e) => {
         const story = e.storyId ? next.stories.find((st) => st.id === e.storyId) : undefined;
         return !e.storyId || (story && story.status !== "superseded" && (e.storyRevision ?? 1) === story.revision);
