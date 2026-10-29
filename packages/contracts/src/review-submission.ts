@@ -237,6 +237,25 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
   const reload = "reload the page and decide again";
   const unbased = (what: string) => `this page is out of date and does not say what it showed for ${what}: ${reload}`;
 
+  // Waivers come first: a gap the person waives in the same submission must be waived when the plan is agreed or the stories accepted
+  const stateStamp = workStateStamp(state);
+  const wholeItemConflict = (what: string): string | null =>
+    submission.baseState === undefined
+      ? `${what} is a decision about the whole work item and this file does not say which state it was made for: render the review again (it returns baseState) and decide on the current state`
+      : submission.baseState !== stateStamp
+        ? `the work item changed since this ${what} was made (mode, stage, requirements, stories, contracts or waivers): render the review again and decide on the current state`
+        : null;
+  for (const w of submission.waivers) {
+    if (state.waivers.some((x) => x.kind === w.kind && (x.requirementId ?? null) === (w.requirementId ?? null) && x.reason === w.reason)) continue; // already on record: replaying the file adds nothing
+    const waiverConflict = wholeItemConflict(`waiver of ${w.kind}`);
+    if (waiverConflict) {
+      conflicts.push({ item: `waive ${w.kind}`, reason: waiverConflict });
+      continue;
+    }
+    commands.push({ action: "waive-coverage", kind: w.kind, ...(w.requirementId ? { requirementId: w.requirementId } : {}), reason: w.reason });
+    summary.push(`waive ${w.kind}`);
+    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason}'`);
+  }
   if (submission.view === "requirements" && submission.requirements) {
     const decisions: Array<Record<string, unknown>> = [];
     for (const item of submission.requirements.requirements) {
@@ -539,30 +558,12 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       details.push(`REMOVE contract ${id} '${contract.name}' (${contract.status})`);
     }
   }
-  const stateStamp = workStateStamp(state);
-  const wholeItemConflict = (what: string): string | null =>
-    submission.baseState === undefined
-      ? `${what} is a decision about the whole work item and this file does not say which state it was made for: render the review again (it returns baseState) and decide on the current state`
-      : submission.baseState !== stateStamp
-        ? `the work item changed since this ${what} was made (mode, stage, requirements, stories, contracts or waivers): render the review again and decide on the current state`
-        : null;
   if (submission.modeChange && submission.modeChange.to !== state.mode && wholeItemConflict("mode change")) {
     conflicts.push({ item: "mode change", reason: wholeItemConflict("mode change") as string });
   } else if (submission.modeChange && submission.modeChange.to !== state.mode) {
     commands.push({ action: "set-mode", via, mode: submission.modeChange.to, ...(submission.modeChange.reason ? { reason: submission.modeChange.reason } : {}) });
     summary.push(`mode -> ${submission.modeChange.to}`);
     details.push(`SWITCH this work item from ${state.mode} to ${submission.modeChange.to}${submission.modeChange.to === "classic" ? ": stage gates, plan-before-stories and coverage checks stop being enforced (nothing is deleted)" : ""}`);
-  }
-  for (const w of submission.waivers) {
-    if (state.waivers.some((x) => x.kind === w.kind && (x.requirementId ?? null) === (w.requirementId ?? null) && x.reason === w.reason)) continue; // already on record: replaying the file adds nothing
-    const waiverConflict = wholeItemConflict(`waiver of ${w.kind}`);
-    if (waiverConflict) {
-      conflicts.push({ item: `waive ${w.kind}`, reason: waiverConflict });
-      continue;
-    }
-    commands.push({ action: "waive-coverage", kind: w.kind, ...(w.requirementId ? { requirementId: w.requirementId } : {}), reason: w.reason });
-    summary.push(`waive ${w.kind}`);
-    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason}'`);
   }
   return { commands, conflicts, stale, summary, details, affectsStories };
 }

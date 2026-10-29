@@ -201,6 +201,38 @@ export function inferCapabilities(text: string): StoryCapability[] {
   return [...found];
 }
 
+/**
+ * Words that are DATA, not an operation: what sits in quotes or guillemets, "key=value" / "?param" tokens, code spans, and the
+ * option values of the prototype's enum fields ("New", "Cancelled" are statuses, not "create" and "delete").
+ */
+export function maskLiterals(text: string, dataValues: string[] = []): string {
+  let out = text
+    .replace(/«[^»]*»|“[^”]*”|"[^"]*"|`[^`]*`|'[^']*'/g, " ")
+    .replace(/[?&]?\b[\w.-]+=\S*/g, " ")
+    .replace(/\bhttps?:\/\/\S+/g, " ");
+  for (const value of dataValues.filter((v) => v.length > 1)) out = out.replace(new RegExp(`\\b${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), " ");
+  return out;
+}
+
+/** The operation words that fired, with the capability each one points at (shown next to a gap so the person can judge it). */
+export function capabilityEvidence(text: string): Array<{ capability: StoryCapability; phrase: string }> {
+  const found: Array<{ capability: StoryCapability; phrase: string }> = [];
+  for (const [capability, pattern] of KEYWORDS) {
+    const match = pattern.exec(text);
+    if (match) found.push({ capability, phrase: match[0] });
+  }
+  return found;
+}
+
+/** What the requirement statement says a user CAN do: only the clause after "can / may / must / allows ..." counts, so descriptions and data around it do not. */
+const MODAL = /\b(?:can|may|must|should|shall|able to|allows?|lets?|enables?|needs? to)\b([^.;:]{0,200})/gi;
+export function statedOperations(statement: string, dataValues: string[] = []): Array<{ capability: StoryCapability; phrase: string }> {
+  const masked = maskLiterals(statement, dataValues);
+  const out: Array<{ capability: StoryCapability; phrase: string }> = [];
+  for (const m of masked.matchAll(MODAL)) for (const hit of capabilityEvidence(m[1] ?? "")) if (!out.some((x) => x.capability === hit.capability)) out.push(hit);
+  return out;
+}
+
 const storyText = (story: Pick<UserStory, "narrative" | "objective" | "happyPath" | "alternatives" | "negative" | "edgeCases" | "businessRules" | "acceptanceCriteria" | "title">) =>
   [story.title ?? "", story.narrative, story.objective, ...story.happyPath, ...story.alternatives, ...story.negative, ...story.edgeCases, ...story.businessRules, ...story.acceptanceCriteria.map((c) => `${c.given} ${c.when} ${c.then}`)].join(" ");
 
@@ -227,42 +259,74 @@ function elementCapability(element: PrototypeElement): StoryCapability | null {
   }
 }
 
-export type CoverageGap = { requirementId: string; expected: StoryCapability[]; covered: StoryCapability[]; missing: StoryCapability[]; reason: string };
+export type CoverageGap = { requirementId: string; expected: StoryCapability[]; covered: StoryCapability[]; missing: StoryCapability[]; reason: string; /** Per missing capability: which phrase or prototype element asked for it. */ because: Record<string, string> };
 
-/** What a requirement implies the user must be able to do. */
-export function expectedCapabilities(state: WorkflowState, requirement: Requirement): StoryCapability[] {
-  const expected = new Set<StoryCapability>(inferCapabilities([requirement.statement, ...requirement.acceptanceCriteria.map((c) => c.statement)].join(" ")));
-  const screens = state.prototype?.screens ?? [];
+/** Values of enum fields in the prototype: statuses and the like are data. */
+function dataValuesOf(state: WorkflowState): string[] {
+  return (state.prototype?.mock ?? []).flatMap((c) => c.fields.flatMap((f) => f.options ?? []));
+}
+
+type Expectation = { required: StoryCapability[]; advisory: Array<{ capability: StoryCapability; because: string }>; because: Record<string, string> };
+
+function expectationsFor(state: WorkflowState, requirement: Requirement): Expectation {
+  const data = dataValuesOf(state);
+  const because: Record<string, string> = {};
+  const required = new Set<StoryCapability>();
+  const need = (c: StoryCapability, why: string) => {
+    required.add(c);
+    because[c] ??= why;
+  };
+  // 1. what the requirement statement says a user can do (its own words, outside quotes and data values)
+  for (const hit of statedOperations(requirement.statement, data)) need(hit.capability, `the statement says "${hit.phrase}"`);
+  // 2. what the prototype built for this requirement does
   let uiLinked = false;
-  for (const screen of screens) {
+  for (const screen of state.prototype?.screens ?? []) {
     for (const element of screen.elements) {
       if (!element.requirementIds.includes(requirement.id)) continue;
       uiLinked = true;
       const capability = elementCapability(element);
-      if (capability) expected.add(capability);
-      if (element.allowedRoles.length > 0) expected.add("permissions");
+      if (capability) need(capability, `prototype element ${screen.id}#${element.id} (${element.intent ? `intent ${element.intent}` : element.kind})`);
+      if (element.allowedRoles.length > 0) need("permissions", `prototype element ${screen.id}#${element.id} is limited to roles`);
     }
     if (screen.states.some((s) => s !== "default") && screen.elements.some((e) => e.requirementIds.includes(requirement.id))) {
-      expected.add("states");
-      if (screen.states.includes("denied")) expected.add("permissions");
+      need("states", `prototype screen ${screen.id} has states besides default`);
+      if (screen.states.includes("denied")) need("permissions", `prototype screen ${screen.id} has a denied state`);
     }
   }
+  // 3. what the endpoints do, by HTTP method
   for (const endpoint of state.prototype?.endpoints ?? []) {
     if (!endpoint.requirementIds.includes(requirement.id)) continue;
-    expected.add(endpoint.method === "GET" ? "view" : endpoint.method === "DELETE" ? "delete" : endpoint.method === "POST" ? "create" : "edit");
-    if (endpoint.auth) expected.add("permissions");
-    if (endpoint.responses.some((r) => r.status >= 400)) expected.add("error");
+    const why = `endpoint ${endpoint.method} ${endpoint.path}`;
+    need(endpoint.method === "GET" ? "view" : endpoint.method === "DELETE" ? "delete" : endpoint.method === "POST" ? "create" : "edit", why);
+    if (endpoint.auth) need("permissions", `${why} needs authorization`);
+    if (endpoint.responses.some((r) => r.status >= 400)) need("error", `${why} has an error response`);
   }
   // The data a user creates or changes must be viewable: a feature of only "create" stories is incomplete.
-  if (expected.has("create") || expected.has("edit")) expected.add("view");
+  if ((required.has("create") || required.has("edit")) && !required.has("view")) need("view", `${required.has("create") ? "create" : "edit"} implies the result can be seen`);
   // A screen that can fail or be empty needs its states and an error path.
-  if (uiLinked && expected.has("view")) expected.add("states");
-  return STORY_CAPABILITIES.filter((c) => c !== "other" && expected.has(c));
+  if (uiLinked && required.has("view") && !required.has("states")) need("states", "the prototype shows this requirement on a screen");
+  // 4. the criteria texts and the rest of the statement only SUGGEST: never a blocking gap, always with the phrase that fired
+  const advisory: Expectation["advisory"] = [];
+  const texts = [requirement.statement, ...requirement.acceptanceCriteria.map((c) => c.statement)];
+  for (const text of texts) {
+    for (const hit of capabilityEvidence(maskLiterals(text, data))) {
+      if (required.has(hit.capability) || advisory.some((a) => a.capability === hit.capability)) continue;
+      advisory.push({ capability: hit.capability, because: `the text says "${hit.phrase}"` });
+    }
+  }
+  return { required: STORY_CAPABILITIES.filter((c) => c !== "other" && required.has(c)), advisory, because };
+}
+
+/** What a requirement implies the user must be able to do: its stated operations and what the prototype and endpoints built for it do. */
+export function expectedCapabilities(state: WorkflowState, requirement: Requirement): StoryCapability[] {
+  return expectationsFor(state, requirement).required;
 }
 
 export type CoverageReport = {
   ok: boolean;
   gaps: CoverageGap[];
+  /** Suggestions from wording in the criteria: shown with the phrase that fired, never blocking, never needed to be waived. */
+  advisories: CoverageGap[];
   requirementsWithoutStories: string[];
   criteriaWithoutStory: string[];
   waived: string[];
@@ -277,6 +341,7 @@ export function analyzeStoryCoverage(state: WorkflowState): CoverageReport {
   const stories = activeStories(state);
   const planEntries = (state.storyPlan?.entries ?? []).filter((e) => e.status !== "excluded");
   const gaps: CoverageGap[] = [];
+  const advisories: CoverageGap[] = [];
   const requirementsWithoutStories: string[] = [];
   const criteriaWithoutStory: string[] = [];
   const used: string[] = [];
@@ -290,7 +355,8 @@ export function analyzeStoryCoverage(state: WorkflowState): CoverageReport {
       for (const c of inferCapabilities(`${entry.title} ${entry.implementation} ${entry.userGets}`)) caps.add(c);
     }
     if (covering.length + planned.length === 0 && !waived("requirement-without-story", requirement.id)) requirementsWithoutStories.push(requirement.id);
-    const expected = expectedCapabilities(state, requirement);
+    const expectation = expectationsFor(state, requirement);
+    const expected = expectation.required;
     const missing = expected.filter((c) => !caps.has(c) && !waived(c, requirement.id));
     if (missing.length > 0 && covering.length + planned.length > 0) {
       gaps.push({
@@ -298,7 +364,19 @@ export function analyzeStoryCoverage(state: WorkflowState): CoverageReport {
         expected,
         covered: [...caps],
         missing,
-        reason: `${requirement.id} implies ${expected.join(", ")}; no story covers ${missing.join(", ")}`,
+        reason: `${requirement.id} implies ${expected.join(", ")}; no story covers ${missing.join(", ")} (${missing.map((c) => `${c}: ${expectation.because[c]}`).join("; ")})`,
+        because: Object.fromEntries(missing.map((c) => [c, expectation.because[c] ?? ""])),
+      });
+    }
+    const suggested = expectation.advisory.filter((a) => !caps.has(a.capability) && !waived(a.capability, requirement.id));
+    if (suggested.length > 0 && covering.length + planned.length > 0) {
+      advisories.push({
+        requirementId: requirement.id,
+        expected: suggested.map((a) => a.capability),
+        covered: [...caps],
+        missing: suggested.map((a) => a.capability),
+        reason: `${requirement.id}: the wording suggests ${suggested.map((a) => `${a.capability} (${a.because})`).join("; ")}. A suggestion, not a gap: nothing blocks on it.`,
+        because: Object.fromEntries(suggested.map((a) => [a.capability, a.because])),
       });
     }
     for (const criterion of requirement.acceptanceCriteria) {
@@ -315,6 +393,7 @@ export function analyzeStoryCoverage(state: WorkflowState): CoverageReport {
   return {
     ok: gaps.length === 0 && requirementsWithoutStories.length === 0 && storiesOutOfScope.length === 0,
     gaps,
+    advisories,
     requirementsWithoutStories,
     criteriaWithoutStory,
     waived: waivers.map((w) => `${w.kind}${w.requirementId ? `:${w.requirementId}` : ""}`),
@@ -1849,7 +1928,7 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
     }
     case "waive-coverage": {
       if (command.requirementId) requirementOf(state, command.requirementId);
-      const waiver = CoverageWaiverSchema.parse({ id: `W-${String(state.waivers.length + 1).padStart(3, "0")}`, kind: command.kind, requirementId: command.requirementId, reason: command.reason, at: iso(now) });
+      const waiver = CoverageWaiverSchema.parse({ id: `W-${String(state.waivers.length + 1).padStart(3, "0")}`, kind: command.kind, requirementId: command.requirementId, reason: command.reason, at: iso(now), decidedVia: verified ?? "chat", ...(command.requirementId ? { gap: analyzeStoryCoverage(state).gaps.find((g) => g.requirementId === command.requirementId)?.because[command.kind] || undefined } : {}) });
       return { state: touch({ ...state, waivers: [...state.waivers, waiver] }, now, `waived ${command.kind}${command.requirementId ? ` for ${command.requirementId}` : ""}: ${command.reason}`), duplicate: false, result: { waiverId: waiver.id } };
     }
     case "set-mode": {

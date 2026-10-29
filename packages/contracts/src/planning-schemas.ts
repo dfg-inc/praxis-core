@@ -445,6 +445,10 @@ export const CoverageWaiverSchema = z.object({
   requirementId: RequirementIdSchema.optional(),
   reason: z.string().min(1),
   at: z.string(),
+  /** How the person decided (the review page, or an approved batch). Absent on waivers recorded before this existed. */
+  decidedVia: z.enum(["html-review", "approved", "chat", "system"]).optional(),
+  /** What asked for the capability when the person waived it (the phrase or prototype element): lets a reader check the waiver closes that and not a real requirement. */
+  gap: z.string().optional(),
 });
 export type CoverageWaiver = z.infer<typeof CoverageWaiverSchema>;
 

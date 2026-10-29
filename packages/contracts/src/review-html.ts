@@ -69,6 +69,7 @@ ${PROTOTYPE_CSS}
 .grouph{font-size:15px;margin:22px 0 4px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .card.req{padding:14px 16px;scroll-margin-top:150px}
 .reqhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.reqhead h2{font-size:16px}.rid{font-family:ui-monospace,Menlo,monospace}
+.gap{border-top:1px solid var(--line);padding:8px 0}.card.gaps{border-color:var(--warn)}
 textarea.auto{overflow:hidden;line-height:1.55;min-height:28px}
 textarea.reqtext{font-size:16px;font-weight:500;margin:6px 0 8px;border-color:transparent;background:transparent;padding:4px 0}
 textarea.reqtext:hover,textarea.reqtext:focus{border-color:var(--line);background:var(--bg);padding:4px 8px}
@@ -165,11 +166,14 @@ function collect(){
     });
     s.stories={items:items,stories:sts,accept:!!($('#accept-stories')&&$('#accept-stories').checked)};
   }
+  var wv=[];$$('[data-gap]').forEach(function(g){var c=$('[data-f=waive]',g);if(c&&c.checked)wv.push({kind:g.getAttribute('data-kind'),requirementId:g.getAttribute('data-req'),reason:val($('[data-f=waive-reason]',g))})});if(wv.length)s.waivers=wv;
   return s
 }
 function showOut(text){var o=$('#out');o.style.display='block';$('textarea',o).value=text}
 function summary(s){return JSON.stringify(s,null,2)}
 $('#btn-save').addEventListener('click',function(){
+  var noReason=$$('[data-gap]').filter(function(g){var c=$('[data-f=waive]',g);return c&&c.checked&&val($('[data-f=waive-reason]',g)).length<3});
+  if(noReason.length){toast('Give a reason (at least 3 characters) for each gap you waive.',true);return}
   var s=collect();var text=summary(s);
   if(!D.saveUrl){showOut(text);toast('No live connection: copy or download the decisions and give them to Claude: it records them with praxis_review_apply after you approve them in the dialog.',false);return}
   toast('Saving...',false);
@@ -287,12 +291,31 @@ export function renderPrototypeReview(state: WorkflowState, options: RenderRevie
   return shell(state, "prototype", "Prototype review", body, clientData, options, `<label class="marks"><input type="checkbox" id="accept-proto"> Accept this prototype</label>`, proto.kind === "ui");
 }
 
+/** Coverage gaps that block agreement, each with the phrase or prototype element that asked for it and a way to waive it (a reason is required), and the non-blocking suggestions. */
+function gapsPanel(state: WorkflowState): string {
+  const coverage = analyzeStoryCoverage(state);
+  const rows = coverage.gaps
+    .flatMap((g) => g.missing.map((cap) => ({ g, cap })))
+    .map(
+      ({ g, cap }) => `<div class="gap" data-gap data-kind="${esc(cap)}" data-req="${esc(g.requirementId)}"><div><strong>${esc(g.requirementId)}: ${esc(cap)}</strong> <span class="meta">asked for by: ${esc(g.because[cap] ?? "")}</span></div>
+<div class="row"><label class="marks"><input type="checkbox" data-f="waive"> This is not needed: waive it</label><input type="text" data-f="waive-reason" class="grow" placeholder="Why it is not needed (required to waive)" aria-label="Reason for waiving ${esc(cap)} for ${esc(g.requirementId)}"></div></div>`,
+    )
+    .join("");
+  const missingStories = coverage.requirementsWithoutStories.map((id) => `<li>${esc(id)} has no story at all (waive it only if the requirement needs none)</li>`).join("");
+  const advice = coverage.advisories.map((a) => `<li>${esc(a.reason)}</li>`).join("");
+  const waived = state.waivers.map((w) => `<li>${esc(w.kind)}${w.requirementId ? ` for ${esc(w.requirementId)}` : ""}: ${esc(w.reason)} <span class="meta">(${esc(w.decidedVia ?? "recorded earlier")}, ${esc(w.at)}${w.gap ? `; closed: ${esc(w.gap)}` : ""})</span></li>`).join("");
+  if (!rows && !missingStories && !advice && !waived) return "";
+  return `<section class="card gaps" aria-label="Coverage">
+${rows || missingStories ? `<h2>Gaps that block agreement</h2>${rows}${missingStories ? `<ul>${missingStories}</ul>` : ""}<p class="meta">Each gap says what asked for it. A gap you waive is recorded with your reason, the channel and the time; a criterion that no story covers can never be waived here.</p>` : ""}
+${advice ? `<h3>Suggestions from the wording (nothing blocks on these)</h3><ul>${advice}</ul>` : ""}
+${waived ? `<h3>Waived so far</h3><ul>${waived}</ul>` : ""}</section>`;
+}
+
 // --- story plan --------------------------------------------------------------------------------------------------
 
 export function renderStoryPlanReview(state: WorkflowState, options: RenderReviewOptions = {}): string {
   const plan = state.storyPlan;
   if (!plan) return shell(state, "story-plan", "Story plan review", `<p class="muted">There is no story plan yet.</p>`, {}, options, "");
-  const coverage = analyzeStoryCoverage(state);
   const cards = plan.entries
     .map((e) => {
       const out = e.status === "excluded";
@@ -312,10 +335,9 @@ ${out ? `<p class="meta">Excluded: ${esc(e.excludedReason ?? "")}</p><label clas
 <label class="meta">Comment<input type="text" data-f="comment" value="${esc(e.review.comment ?? "")}"></label></section>`;
     })
     .join("");
-  const gaps = coverage.gaps.map((g) => `<li>${esc(g.requirementId)}: ${esc(g.reason)}</li>`).join("");
   const body = `${staleBanner(state, "story_plan")}
 <p>${pill(`revision ${plan.revision}`)} ${pill(plan.status, plan.status === "agreed" ? "ok" : "warn")} ${pill(`${plan.entries.length} planned stories`)}</p>
-${gaps ? `<div class="stale"><strong>Possible gaps</strong><ul>${gaps}</ul></div>` : ""}
+${gapsPanel(state)}
 ${cards}`;
   return shell(state, "story-plan", "Story plan review", body, {}, options, `<label class="marks"><input type="checkbox" id="agree-plan"> Agree this plan</label>`);
 }
@@ -357,6 +379,7 @@ ${out ? `<p class="meta">Excluded: ${esc(story.excludedReason ?? "")}</p><label 
   const body = `${staleBanner(state, "stories_review")}
 <div class="card"><div class="kv"><span class="muted">Stories</span><span>${progress.stories}</span><span class="muted">Items</span><span>${progress.items}</span><span class="muted">Accepted</span><span>${progress.accepted}</span><span class="muted">Rejected</span><span>${progress.rejected}</span><span class="muted">Undecided</span><span>${progress.pending}</span></div>
 <p class="meta">Editing a story creates a new revision. Items you did not change keep their marks; an item whose text changed starts over, and so does the story's confirmation.</p></div>
+${gapsPanel(state)}
 ${cards || `<p class="muted">No stories yet.</p>`}`;
   return shell(state, "stories", "User stories review", body, {}, options, `<label class="marks"><input type="checkbox" id="accept-stories"> Accept the stories</label>`);
 }
