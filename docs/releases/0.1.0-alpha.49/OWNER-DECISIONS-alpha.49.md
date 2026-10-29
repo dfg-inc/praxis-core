@@ -2,7 +2,7 @@
 
 The release candidate is built, verified and committed locally; nothing is published. These decisions are open. None changes the build unless stated. The release itself needs your separate go.
 
-Heads: core `ed53970` (code `5e78f55` + documents), runtime `c796606`, ba `a2d6916`, architect `84c5378`, developer `2014cfe`, quality `0e24520`, marketplace `67f252d`; all `0.1.0-alpha.49`, branch `feature/ux-overhaul`, working trees clean.
+Heads: core code `5e78f55` (plus documents-only commits on top), runtime `c796606`, ba `a2d6916`, architect `84c5378`, developer `2014cfe`, quality `0e24520`, marketplace `67f252d`; all `0.1.0-alpha.49`, branch `feature/ux-overhaul`, working trees clean.
 
 | # | Decision | Options | Engineering view |
 |---|---|---|---|
