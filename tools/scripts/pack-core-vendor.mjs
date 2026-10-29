@@ -65,8 +65,9 @@ for (const spec of PACKAGES) {
   );
   pkg.files = spec.files;
   writeFileSync(join(stage, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
-  for (const f of ["README.md", "LICENSE"]) {
+  for (const f of ["README.md", "LICENSE", "NOTICE"]) {
     if (existsSync(join(src, f))) cpSync(join(src, f), join(stage, f));
+    else if ((f === "LICENSE" || f === "NOTICE") && existsSync(join(root, f))) cpSync(join(root, f), join(stage, f));
   }
   for (const rel of spec.files) {
     const from = join(src, rel);

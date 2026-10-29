@@ -1,10 +1,10 @@
 {
   "name": "@praxis/cli",
-  "version": "0.1.0-alpha.48",
+  "version": "0.1.0-alpha.49",
   "private": true,
   "type": "module",
   "description": "Public Praxis CLI — canonical machine/runtime interface for agents, CI, and plugins",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "bin": {
     "praxis": "./bin/praxis.js"
   },

@@ -1,11 +1,11 @@
 {
   "name": "praxis-jira",
-  "version": "0.1.0-alpha.48",
+  "version": "0.1.0-alpha.49",
   "description": "Praxis Jira Server integration (company infra, closed).",
   "author": {
     "name": "dfuture-co"
   },
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "keywords": [
     "praxis",
     "jira"

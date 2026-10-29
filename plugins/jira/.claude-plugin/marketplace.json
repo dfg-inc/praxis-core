@@ -3,13 +3,13 @@
   "owner": {
     "name": "dfuture-co"
   },
-  "description": "Internal marketplace entry for praxis-jira (not public Apache).",
+  "description": "Marketplace entry for praxis-jira (Apache-2.0).",
   "plugins": [
     {
       "name": "praxis-jira",
       "source": "./",
       "description": "Jira Server client with human-gated mutations.",
-      "version": "0.1.0-alpha.48"
+      "version": "0.1.0-alpha.49"
     }
   ]
 }

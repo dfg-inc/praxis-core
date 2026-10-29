@@ -50,8 +50,8 @@ for (const id of ["ba", "architect", "developer"]) {
 }
 const jiraPkg = JSON.parse(readFileSync(join(root, "plugins/jira/package.json"), "utf8"));
 const qPkg = JSON.parse(readFileSync(join(root, "apps/quality-service/package.json"), "utf8"));
-if (jiraPkg.license !== "UNLICENSED") fail("jira must stay UNLICENSED");
-if (qPkg.license !== "UNLICENSED") fail("quality-service must stay UNLICENSED");
+if (jiraPkg.license !== "Apache-2.0") fail(`jira license ${jiraPkg.license}`);
+if (qPkg.license !== "Apache-2.0") fail(`quality-service license ${qPkg.license}`);
 
 const mdFiles = walk(docs).filter((f) => extname(f) === ".md");
 for (const file of mdFiles) {
