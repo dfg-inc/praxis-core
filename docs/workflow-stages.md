@@ -134,8 +134,8 @@ The Viewer keeps its address in the page `#hash` (`#/screen?status=Shipped&order
 | story_plan | the same, and the prototype accepted or waived with a reason |
 | stories_review | the plan agreed and unchanged since; every planned story detailed |
 | architecture | stories reviewed and accepted, unchanged since; coverage without gaps; **every active story confirmed (`confirm-story`)**; no earlier acceptance (requirements, prototype, plan) gone stale |
-| development | no acceptance gone stale (including the stories review); services with a repository or path; contracts agreed |
-| quality | the same freshness; every service has a current implementation record |
+| development | no acceptance gone stale (including the stories review); every story still confirmed; services with a repository or path; contracts agreed |
+| quality | the same freshness and confirmations; every service has a current implementation record |
 
 Reviewing a story's items and confirming its behaviour are two decisions. An acceptance the person gave stands only while the content is unchanged: after a later change the gate names what to accept again. Excluding and restoring a plan line returns it exactly as agreed (a reason belongs to the excluded state only).
 
@@ -143,9 +143,9 @@ Required capabilities come from what a requirement statement says a user can do 
 
 ## Quality evidence
 
-A requirement or Story is PASS only when every current acceptance criterion has a current, independently executed PASS. Per requirement and Story the result carries total / verified / passed / failed / blocked / missing / stale / attested. `verify-stories`, `quality-check` and `feature-verdict` use the same computation, so they cannot disagree about one state; `feature-verdict` adds workflow readiness (implementation records, approved services). Entries carry their source: `executed` (a module ran), `browser` (a real browser ran), `agent` (attested by an agent, never independent), or none (written before provenance: counted as executed, for unrevised criteria only). `record-verification` merges by scenario id; a scenario id never moves to another criterion; an agent cannot overwrite or retire Runtime evidence; a writer that saw older coverage gets `EVIDENCE_STALE`.
+A requirement or Story is PASS only when every current acceptance criterion has a current, independently executed PASS. Per requirement and Story the result carries total / verified / passed / failed / blocked / missing / stale / attested. `verify-stories`, `quality-check` and `feature-verdict` use the same computation, so they cannot disagree about one state; `feature-verdict` adds workflow readiness (implementation records, approved services). Entries carry their source: `executed` (a module ran), `browser` (a real browser ran), `agent` (attested by an agent, never independent), or none (written before provenance existed: read, but not independent proof until `verify-stories` runs again). A Story's own criteria are judged like requirement criteria: a failing or unproven Story criterion keeps the feature from PASS. A removed criterion's id is never reused. The delivery gate judges the evidence as it is now, not an earlier recorded verdict. `record-verification` merges by scenario id; a scenario id never moves to another criterion; an agent cannot overwrite or retire Runtime evidence; a writer that saw older coverage gets `EVIDENCE_STALE`.
 
-Browser checks are data in `checks.json` (`level: "browser"`, a `browser.serve` root and `steps`); the driver serves the built bundle on loopback, drives Chromium in an isolated process, allows no request outside that origin, and records the bundle and screenshot digests. Unavailable browser or missing bundle: `BLOCKED`, with the reason.
+Browser checks are data in `checks.json` (`level: "browser"`, a `browser.serve` root and `steps`); the driver serves the built bundle on loopback, drives Chromium in an isolated process group with its sandbox on, allows no request (HTTP or WebSocket) outside that origin, and records the bundle and screenshot digests. Playwright comes from the directory the OPERATOR names in `PRAXIS_PLAYWRIGHT_DIR`, never from the project under test. Unavailable browser or missing bundle: `BLOCKED`, with the reason.
 
 ## Approval records
 
