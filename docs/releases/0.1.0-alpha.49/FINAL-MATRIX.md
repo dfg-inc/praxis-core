@@ -167,3 +167,14 @@ Result of round 7: Core contracts 354 tests, Runtime MCP 246 tests, packaged sce
 | D55 | Quality runner security model | documented, unconfirmed scenarios labelled | `QUALITY-RUNNER-SECURITY-MODEL.md` | DONE |
 | D56 | Quality backlog (3 FORMAL, 15 WEAK, 13 survivors) | recorded | `QUALITY-BACKLOG.md` | DONE |
 | D57 | H3 controlled retest | prepared, needs the owner's Reject click | `h3-check.mjs` | PENDING |
+
+## Round 14 (notices, H3 control, closing out)
+
+| # | Item | Result | Evidence | Status |
+|---|---|---|---|---|
+| D58 | Emscripten (MIT/UIUC) and musl (MIT) notices for `sql-wasm.wasm` | added to the Runtime THIRD-PARTY-NOTICES (repo, plugin, stage, MCPB); texts from the Emscripten 5.0.0 tag | `check-public-content` requires them wherever a `.wasm` ships | DONE |
+| D59 | licences in the final archives | LICENSE and NOTICE identical, `license` Apache-2.0, `author` dfuture-co in the MCPB and four ZIPs; THIRD-PARTY-NOTICES in the MCPB (Emscripten, musl) and BA ZIP (MIT notice) | archive extraction | PASS |
+| D60 | H3 negative control, automated | decline, cancel, decision=reject, no-dialog client, confirmation=NO: nothing executed, Story `proposed`, `approvals[]` empty, file byte-identical | `manual-lab/h3-automated.mjs` | PASS (automated) |
+| D61 | H3 with a person's Reject in the real Claude Code dialog | not done | - | NOT VERIFIED |
+| D62 | `extension-functions.c` inside the upstream wasm; upstream toolchain | no licence text; not provable | PROVENANCE-AUDIT round 13 B | RESIDUAL (inherited) |
+| D63 | public dataset in history, old Releases, vendor archives | untouched by decision | OWNER-DECISIONS | ACCEPTED RISK |

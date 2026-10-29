@@ -6,13 +6,13 @@ Status 2026-10-29: **release candidate prepared locally, not published.** Everyt
 
 | Repo (branch `feature/ux-overhaul`) | Head | Version | Licence files |
 |---|---|---|---|
-| praxis-core | `5e78f55` (code; release documents are committed on top) | 0.1.0-alpha.49 | LICENSE (Apache-2.0, official text, sha256 `cfc7749b…`), NOTICE |
-| praxis-runtime | `c796606` | alpha.49 | LICENSE, NOTICE, THIRD-PARTY-NOTICES.md (18 packages) |
+| praxis-core | code `7e4fe59` (documents-only commits on top) | 0.1.0-alpha.49 | LICENSE (Apache-2.0, official text, sha256 `cfc7749b…`), NOTICE |
+| praxis-runtime | `13c3cba` | alpha.49 | LICENSE, NOTICE, THIRD-PARTY-NOTICES.md (18 packages + Emscripten and musl notices for `sql-wasm.wasm`) |
 | praxis-ba | `a2d6916` | alpha.49 | LICENSE, NOTICE, THIRD-PARTY-NOTICES.md (9 packages + the MIT notice for the adapted `grill-cr` text) |
 | praxis-architect | `84c5378` | alpha.49 | LICENSE, NOTICE, THIRD-PARTY-NOTICES.md (9 packages) |
 | praxis-developer | `2014cfe` | alpha.49 | same |
 | praxis-quality | `0e24520` | alpha.49 | same |
-| praxis-marketplace | `67f252d` | alpha.49 | LICENSE, NOTICE at the root and in every plugin (staged) |
+| praxis-marketplace | `bd5ecc7` | alpha.49 | LICENSE, NOTICE at the root and in every plugin (staged) |
 
 - `npm run verify`: exit 0 in all seven on this state, including the new content gate (`check:public`, 28 archives and vendor tarballs extracted and scanned). See FINAL-REPORT round 12.
 - Marketplace install in a clean profile (Claude Code CLI 2.1.304): PASS, 11 checks, including the in-place upgrade alpha.48 to alpha.49 (praxis-ba, praxis-runtime) and a single-role install. Rollback (uninstall, then install from the previous marketplace revision) verified: back to alpha.48.
@@ -22,30 +22,28 @@ Status 2026-10-29: **release candidate prepared locally, not published.** Everyt
 ## B. Licensing: DECIDED (owner, 2026-10-29): Apache-2.0
 - [x] Full official Apache License 2.0 text in LICENSE of all seven repositories (and every distributed plugin/archive).
 - [x] All `package.json`, `plugin.json`, MCPB manifest, catalog, READMEs, marketplace entries: `Apache-2.0`.
-- [x] Copyright line: `Copyright 2026 dfuture-co`, as chosen by the owner (the name used as `author` in the manifests). **Open for the owner:** the full legal name of the rights holder; I did not invent one.
-- [x] Third-party notices shipped with every build output that bundles third-party code (MIT, ISC, BSD-3-Clause, MCP SDK MIT/Apache transition text). Nothing third-party was relicensed.
+- [x] Copyright line: `Copyright 2026 dfuture-co`, as chosen by the owner (the name used as `author` in the manifests). The owner keeps `dfuture-co` until the official legal name is given; none was invented.
+- [x] Third-party notices shipped with every build output that bundles third-party code (MIT, ISC, BSD-3-Clause, MCP SDK MIT/Apache transition text; Emscripten MIT/UIUC and musl MIT for `sql-wasm.wasm`, texts from the Emscripten 5.0.0 tag). Nothing third-party was relicensed.
 - [x] The unconfirmed corporate knowledge dataset is no longer shipped (see C0). Originality of the other prompts and skills: no match found against the checked sources (PROVENANCE-AUDIT section 3); `grill-cr` carries the MIT notice.
 - [x] `author` is dfuture-co in every manifest; the personal e-mail is gone.
 - Website imagery and the Claude/GitHub marks are outside this change.
 - Known gap (not required by Apache-2.0 for internal build inputs): the vendored `@praxis/*` tarballs carry LICENSE but not NOTICE; the shipped artifacts carry both.
 
-## C0. Provenance audit (rounds 11-12): state, see `PROVENANCE-AUDIT.md`
+## C. Decisions and remaining items (state after round 14)
 
-**Closed:** corporate dataset removed from every package (vendor tarballs rebuilt) and from the Core tree; `grill-cr` MIT attribution (comment, BA THIRD-PARTY-NOTICES in repo, plugin, stage and ZIP); personal e-mail removed, `author` dfuture-co everywhere; internal host, developer paths removed from sources, messages, tests and release documents; archive-content gate in `verify`.
+**Accepted by the owner (closed, not blockers):** Apache-2.0 is cleared for publication; `Copyright 2026 dfuture-co` until the official legal name is given; Git history, old GitHub Releases, vendor archives and the corporate dataset in earlier releases are left as they are (accepted residual risk: internal process information stays publicly available there; alpha.49 excludes the dataset); `owner.name: Praxis` stays; `sql-wasm.wasm` is the unmodified upstream `sql.js@1.14.2` and now ships its Emscripten and musl notices.
 
-**Residual risks (not blockers for the artifacts):** the dataset is still in the public git history of the six repositories, in the public release asset `v0.1.0-alpha.47` of praxis-core (2 downloads) and in the alpha.48 vendor tarballs of the public masters (content assessed: general process rules); `sql-wasm.wasm` is the unmodified upstream `sql.js@1.14.2` but contains the unlicensed contrib `extension-functions.c` and lacks the Emscripten/musl notice; the audit is "no match found", not legal clearance. All open decisions: `OWNER-DECISIONS-alpha.49.md`.
+**Closed by work:** dataset out of every package and the Core tree; `grill-cr` MIT notice; `author` dfuture-co, personal e-mail removed; no developer paths or internal hosts in packages, messages, tests, documents; archive-content gate in `verify`; install, upgrade and rollback verified; H3 negative control automated (below).
 
-**Needs the rights holder (owner decision, blocks a "clean" public statement, not the build):**
-1. What to do about the already public dataset: leave, delete the alpha.47 release asset, rewrite history and force-push, or make the repositories private meanwhile. Nothing was done; each option needs a separate go.
-2. Legal name behind `Copyright 2026 dfuture-co` (NOTICE unchanged).
-3. Confirmation that the corporate Apache-2.0 grant covers all material since 2026-08-25.
+**Real remaining limits (not blocking the build; stated in the release notes):**
+1. A person pressing Reject in the real Claude Code dialog is **NOT VERIFIED**. The automated negative control (`manual-lab/h3-automated.mjs`, real Runtime alpha.49 from the Marketplace plugin, official MCP client, scripted decline, cancel and decision=reject, plus an agent with no dialog) PASSED: `APPROVAL_REJECTED` / `APPROVAL_CLIENT_UI_REQUIRED`, Story stays `proposed`, `approvals[]` empty, Work Item file byte-identical, no `independent-human`. It is not a human refusal. APR-0002 (earlier unexplained client approval) stays INCONCLUSIVE.
+2. Claude Desktop Code/GUI dialog, Desktop Chat on alpha.49, live Jira, Linux and Windows: NOT VERIFIED.
+3. `sql-wasm.wasm`: inherited from upstream, the contrib file `extension-functions.c` inside it has no licence text (not used by Praxis); the Emscripten toolchain of the upstream build is not provable from the binary.
+4. Legal name behind the NOTICE line is not official yet; the corporate Apache-2.0 grant is taken as given.
+5. Quality: no OS sandbox for project code, trusted projects only; browser checks need an operator-installed Playwright; 31/31 of the lab Work Item is honest execution but not strong proof (`QUALITY-BACKLOG.md`); deferred S5, S6, S14, RD2, P3.
+6. `check-public-content` and the provenance checks are pattern and overlap checks with no secret scanner and no legal clearance.
 
-## C. Remaining owner decisions before publication
-1. Confirm the legal name of the copyright holder (B) and the corporate grant (C0).
-2. Decide what to do about the already public dataset (C0, item 1).
-3. Controlled H3 retest (press Reject on the real confirm-story dialog) and, if wanted, the Desktop Code/GUI dialog check; otherwise publish with those stated as NOT VERIFIED.
-4. Accept the residual security risks and the Quality backlog (`QUALITY-RUNNER-SECURITY-MODEL.md`, `QUALITY-BACKLOG.md`).
-5. The go for merge, tags, GitHub Releases and Marketplace publication.
+**Before publication (owner action):** the go for merge, tags, GitHub Releases (Releases alpha.45-48 already exist), Marketplace push; optionally the real-client Reject check (commands in `OWNER-DECISIONS-alpha.49.md`).
 
 ## D. Pre-publication re-check (run, in `<praxis-split>`)
 ```bash
@@ -54,7 +52,7 @@ export PRAXIS_BA_ROOT=$PWD/praxis-ba PRAXIS_DEVELOPER_ROOT=$PWD/praxis-developer
 for r in praxis-core praxis-runtime praxis-ba praxis-architect praxis-developer praxis-quality praxis-marketplace; do (cd $r && npm run verify) || break; done
 git -C praxis-runtime checkout -- claude-extensions; for r in praxis-ba praxis-architect praxis-developer praxis-quality; do git -C $r checkout -- claude-plugins; done   # the scripts rewrite archives; timestamp-only changes
 (cd praxis-runtime && node tools/scripts/marketplace-install-acceptance.mjs --previous 3c0ab03)
-(cd praxis-marketplace && node tools/scripts/check-public-content.mjs)   # extracts and scans the archives and vendor tarballs
+(cd praxis-marketplace && node tools/scripts/check-public-content.mjs)   # extracts and scans the archives and vendor tarballs; requires the Emscripten/musl notices wherever a .wasm ships
 ```
 
 ## E. Publication sequence (nothing here has been run; each step needs the owner's explicit go)
