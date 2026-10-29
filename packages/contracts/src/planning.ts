@@ -121,7 +121,9 @@ export function prototypeFingerprint(prototype: Prototype | undefined): string {
 export function storyPlanFingerprint(plan: StoryPlan | undefined): string {
   if (!plan) return "none";
   // Detailing a planned story does not change the plan the user agreed to; excluding one does.
-  return hash(plan.entries.map(({ review: _r, status, ...entry }) => ({ ...entry, excluded: status === "excluded" })));
+  return hash(
+    plan.entries.map(({ review: _r, status, excludedReason, ...entry }) => ({ ...entry, excluded: status === "excluded", ...(status === "excluded" && excludedReason !== undefined ? { excludedReason } : {}) })),
+  );
 }
 
 export function storiesFingerprint(state: WorkflowState): string {
@@ -1084,7 +1086,12 @@ function setPlanStatusFor(state: WorkflowState, storyId: string, status: "detail
     ...state,
     storyPlan: {
       ...state.storyPlan,
-      entries: state.storyPlan.entries.map((e) => (e.id === storyId ? { ...e, status, ...(reason ? { excludedReason: reason } : {}) } : e)),
+      // excludedReason belongs to the excluded state only: it is cleared when the entry leaves it
+      entries: state.storyPlan.entries.map((e) => {
+        if (e.id !== storyId) return e;
+        const { excludedReason: _drop, ...rest } = e;
+        return { ...rest, status, ...(status === "excluded" && reason ? { excludedReason: reason } : {}) };
+      }),
     },
   };
 }
@@ -1144,6 +1151,11 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
     if (!condition) missingItems.push(text);
   };
   const kind = state.workItem.kind;
+  const STALE_LABEL: Record<string, string> = { requirements_review: "the requirements", prototype: "the prototype", story_plan: "the story plan", stories_review: "the stories" };
+  // an acceptance the user gave stands only while the content is the same: a later change must be accepted again before work moves on
+  const upstreamFresh = (phases: AcceptablePhase[]) => {
+    for (const phase of phases) need(acceptanceStatus(state, phase) !== "stale", `${STALE_LABEL[phase]} changed after you accepted ${phase === "story_plan" ? "it" : "them"}: review and accept again`);
+  };
   switch (to) {
     case "requirements_review":
       need(reqs.length > 0, "at least one in-scope requirement");
@@ -1169,11 +1181,16 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
     }
     case "architecture": {
       need(acceptanceStatus(state, "stories_review") === "accepted", "stories reviewed and accepted, unchanged since");
+      upstreamFresh(["requirements_review", "prototype", "story_plan"]);
+      // Reviewing a story and confirming its behaviour are two decisions: Quality compares the code with the CONFIRMED behaviour
+      const unconfirmed = activeStories(state).filter((st) => !st.confirmedBehavior);
+      need(unconfirmed.length === 0, `every story confirmed by the user (confirm-story): ${unconfirmed.map((st) => st.id).join(", ")} still ${unconfirmed.length === 1 ? "needs" : "need"} it`);
       const coverage = analyzeStoryCoverage(state);
       need(coverage.ok, `coverage gaps: ${coverage.gaps.map((g) => g.reason).concat(coverage.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
       break;
     }
     case "development":
+      upstreamFresh(["requirements_review", "prototype", "story_plan", "stories_review"]);
       need(state.services.length > 0, "at least one service (set-service)");
       for (const service of state.services) {
         const repo = service.repositoryId ? state.repositories.find((r) => r.id === service.repositoryId) : undefined;
@@ -1190,6 +1207,7 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
       }
       break;
     case "quality": {
+      upstreamFresh(["requirements_review", "prototype", "story_plan", "stories_review"]);
       for (const contract of state.contracts) need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user (it was changed after implementation started?)`);
       for (const service of state.services) need(state.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
       break;
