@@ -201,9 +201,9 @@ export function evaluateEvidence(state: WorkflowState): FeatureEvaluation {
   const requirements = reqs.map((r) => {
     const cov = requirementCoverage(state, r.id);
     if (cov.verdict !== "PASS") {
-      const head = cov.noEvidence ? `${r.id}: no evidence for any of ${cov.counts.total} acceptance criteria` : `${r.id} is ${cov.verdict}: ${cov.counts.passed} of ${cov.counts.total} criteria passed (failed ${cov.counts.failed}, blocked ${cov.counts.blocked}, missing ${cov.counts.missing}, stale ${cov.counts.stale}, attested ${cov.counts.attested})`;
+      const head = cov.noEvidence ? (cov.counts.stale > 0 ? `${r.id}: no current evidence for any of ${cov.counts.total} acceptance criteria; the earlier results are for an older revision of the Story or criterion: verify again` : `${r.id}: no evidence for any of ${cov.counts.total} acceptance criteria`) : `${r.id} is ${cov.verdict}: ${cov.counts.passed} of ${cov.counts.total} criteria passed (failed ${cov.counts.failed}, blocked ${cov.counts.blocked}, missing ${cov.counts.missing}, stale ${cov.counts.stale}, attested ${cov.counts.attested})`;
       gaps.push(head);
-      if (!cov.noEvidence) for (const reason of cov.reasons) gaps.push(`  ${reason}`);
+      if (!(cov.noEvidence && cov.counts.stale === 0)) for (const reason of cov.reasons) gaps.push(`  ${reason}`);
     }
     return { id: r.id, verdict: cov.verdict, counts: cov.counts };
   });
