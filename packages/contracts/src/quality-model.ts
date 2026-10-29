@@ -57,6 +57,8 @@ type Located = { entry: CoverageEntry; current: boolean };
 
 function locate(state: WorkflowState, entry: CoverageEntry, ac: { id: string; revision: number } | undefined): Located {
   let current = true;
+  // the bundle that was exercised is not the bundle that exists now (set by the Runtime when it reads the state)
+  if (entry.source?.drifted) current = false;
   if (entry.storyId !== undefined) {
     const story = state.stories.find((s) => s.id === entry.storyId);
     if (!story || story.status === "superseded" || story.status === "excluded") current = false;

@@ -109,6 +109,8 @@ export const EvidenceSourceSchema = z.object({
   finishedAt: z.string().optional(),
   /** Digest of what was exercised (the served bundle, or the module). */
   subjectDigest: z.string().optional(),
+  /** Set only in memory by the Runtime when the bundle this result was recorded for is no longer the bundle on disk. Never persisted. */
+  drifted: z.boolean().optional(),
   artifacts: z.array(z.object({ path: z.string(), sha256: z.string(), bytes: z.number().int().nonnegative().optional() })).default([]),
 });
 export type EvidenceSource = z.infer<typeof EvidenceSourceSchema>;

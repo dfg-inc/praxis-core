@@ -379,7 +379,8 @@ export function redactPersistent<T>(value: T): T {
     typeof value === "string" &&
     /^(Bearer\s+)?[A-Za-z0-9_\-]{40,}$/.test(value) &&
     !/^[0-9a-f]{40}$/i.test(value) &&
-    !/^[0-9a-f]{64}$/i.test(value)
+    !/^[0-9a-f]{64}$/i.test(value) &&
+    !/^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
   ) {
     return "[redacted]" as T;
   }
@@ -1815,7 +1816,7 @@ function applyWorkflowCommandCore(
       if ((command.replaceSource === "agent") === runtime) throw new WorkflowError("EVIDENCE_PROTECTED", `a ${runtime ? "Runtime" : "agent"} record cannot replace ${command.replaceSource} evidence`);
       coverage = coverage.filter((e) => !(ownedBy(e) && !seen.has(e.scenarioId)));
     }
-    const comparable = (e: CoverageEntry) => JSON.stringify({ ...e, recordedAt: undefined, source: e.source && { kind: e.source.kind, runner: e.source.runner, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });
+    const comparable = (e: CoverageEntry) => JSON.stringify({ ...e, recordedAt: undefined, source: e.source && { kind: e.source.kind, runner: e.source.runner, runId: e.source.runId, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });
     for (const scenario of incoming) {
       const index = coverage.findIndex((e) => e.scenarioId === scenario.scenarioId);
       if (index < 0) {

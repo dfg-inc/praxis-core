@@ -96,3 +96,24 @@ describe("round 7 review: capability masking keeps real operations", () => {
     expect(() => maskLiterals("x".repeat(100_000), ["(a+)+"])).not.toThrow();
   });
 });
+
+describe("round 8: a bundle that changed since the evidence was recorded is not current", () => {
+  it("an entry marked drifted by the Runtime is stale, and a story and the feature fall with it", async () => {
+    const { criterionStatus } = await import("./quality-model.js");
+    const mk = (drifted: boolean) => ({
+      stories: [] as never[],
+      coverage: [{ requirementId: "REQ-X-001", acceptanceCriterionId: "REQ-X-001-AC-01", scenarioId: "B-1", status: "PASS", kind: "happy", serviceId: "svc", repository: "", implementationPath: "", testRef: "", evidence: [], critical: false, acceptanceCriterionRevision: 1, source: { kind: "browser", subjectDigest: "abc", artifacts: [], ...(drifted ? { drifted: true } : {}) } }],
+    }) as never;
+    expect(criterionStatus(mk(false), "REQ-X-001", { id: "REQ-X-001-AC-01", revision: 1 }, "REQ-X-001-AC-01").state).toBe("passed");
+    expect(criterionStatus(mk(true), "REQ-X-001", { id: "REQ-X-001-AC-01", revision: 1 }, "REQ-X-001-AC-01").state).toBe("stale");
+  });
+});
+
+describe("round 8: run ids", () => {
+  it("a run id stays readable in the persisted state (it was masked as a secret)", async () => {
+    const { redactState } = await import("./index.js");
+    const id = "run-0b7a157b-0c90-4585-8918-9a9c58e52ac3";
+    const out = redactState({ a: { runId: id } } as never) as { a: { runId: string } };
+    expect(out.a.runId).toBe(id);
+  });
+});
