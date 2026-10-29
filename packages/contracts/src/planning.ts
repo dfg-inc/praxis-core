@@ -241,16 +241,29 @@ export function storyCapabilities(story: UserStory): StoryCapability[] {
   return [...new Set<StoryCapability>([...story.capabilities, ...inferCapabilities(storyText(story))])];
 }
 
+/**
+ * What an element lets a user do. For elements whose kind already says it (a filter filters, a search searches, a table or a card shows
+ * data) the kind wins: an `intent` that contradicts it (a filter tagged "search") must not turn into a second required story. For the
+ * generic kinds (button, field, form, link) the author's `intent` is the only signal there is.
+ */
 function elementCapability(element: PrototypeElement): StoryCapability | null {
-  if (element.intent) return element.intent;
   switch (element.kind) {
     case "table":
     case "list":
+    case "drawer":
+    case "modal":
       return "view";
     case "search":
       return "search";
     case "filter":
       return "filter";
+    case "tabs":
+      return element.intent ?? "view";
+    default:
+      break;
+  }
+  if (element.intent) return element.intent;
+  switch (element.kind) {
     case "form":
     case "field":
       return "create";
@@ -283,6 +296,9 @@ function expectationsFor(state: WorkflowState, requirement: Requirement): Expect
   for (const screen of state.prototype?.screens ?? []) {
     for (const element of screen.elements) {
       if (!element.requirementIds.includes(requirement.id)) continue;
+      // An element that names the criteria it serves asks for its capability only from the requirements that own one of them: linking a
+      // filter to a data-model requirement because one criterion mentions its values must not demand a filter story there.
+      if (element.acIds.length > 0 && !requirement.acceptanceCriteria.some((c) => element.acIds.includes(c.id))) continue;
       uiLinked = true;
       const capability = elementCapability(element);
       if (capability) need(capability, `prototype element ${screen.id}#${element.id} (${element.intent ? `intent ${element.intent}` : element.kind})`);
