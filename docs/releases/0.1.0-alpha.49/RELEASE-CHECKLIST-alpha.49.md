@@ -31,6 +31,14 @@ Status 2026-10-29: **release candidate prepared locally, not published.** Everyt
   4. Website imagery and the Claude/GitHub marks are outside this change.
 - Known gap (not required by Apache-2.0 for internal build inputs): the vendored `@praxis/*` tarballs carry LICENSE but not NOTICE; the shipped artifacts carry both.
 
+## C0. Provenance audit (2026-10-29): release blockers, see `PROVENANCE-AUDIT.md`
+1. **BLOCKER, owner/legal:** origin of `packages/knowledge/dataset/company/**` (labels `corp-engineering-handbook`, `corp-quality-policy`). Until confirmed: apply C1 (exclude from the published `@praxis/knowledge`; tested, patch `proposed-exclusion-core.patch`).
+2. **BLOCKER, owner/legal:** provenance of all material since 2026-08-25 (original remote `gl.jetru.by`, `jetruby.com` merge commits; no file content authored from that address).
+3. **BLOCKER, owner decision:** `grill-cr` opening paragraph overlaps the MIT `mattpocock/skills` grill-me text: rewrite or add the MIT notice (C5).
+4. **BLOCKER before any push of Core:** `docs/releases/0.1.0-alpha.49/**` carries local paths and internal references (C7).
+5. Should fix: `gl.jetru.by` in the Runtime message (C4); the personal e-mail in the BA manifests (C6); inconsistent `author` fields.
+6. Not blockers: sub-agent stubs, caveman, tdd, other skills, icons, LICENSE/NOTICE/third-party notices (consistent), artifact scan (no secrets, no local paths).
+
 ## C. Remaining owner decisions before publication
 1. Confirm the legal name of the copyright holder (B).
 2. Confirm the three rights items in B.

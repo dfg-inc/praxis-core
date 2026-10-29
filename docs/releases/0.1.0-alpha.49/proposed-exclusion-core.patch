@@ -1,0 +1,39 @@
+diff --git a/packages/knowledge/package.json b/packages/knowledge/package.json
+index b98a95b..9c952e9 100644
+--- a/packages/knowledge/package.json
++++ b/packages/knowledge/package.json
+@@ -27,7 +27,7 @@
+   "files": [
+     "dist",
+     "bin",
+-    "dataset"
++    "dataset/templates"
+   ],
+   "devDependencies": {
+     "@types/node": "^22.20.0",
+diff --git a/plugins/vcs/src/delivery.ts b/plugins/vcs/src/delivery.ts
+index 5562462..2f8d9b3 100644
+--- a/plugins/vcs/src/delivery.ts
++++ b/plugins/vcs/src/delivery.ts
+@@ -232,7 +232,7 @@ export function previewConnect(opts: DeliveryInputs): ConnectPreview {
+   if (!url) {
+     throw new VcsError(
+       VCS_CODES.GIT_REMOTE_REQUIRED,
+-      "No remote configured. Provide remoteUrl for the target GitHub or GitLab repository. Praxis will not guess gl.jetru.by, github.com, or any other host.",
++      "No remote configured. Provide remoteUrl for the target GitHub or GitLab repository. Praxis will not guess github.com, gitlab.com, or any other host.",
+     );
+   }
+   const parsed = parseRemoteUrl(url);
+diff --git a/tools/scripts/pack-core-vendor.mjs b/tools/scripts/pack-core-vendor.mjs
+index 376ef08..f0c371a 100644
+--- a/tools/scripts/pack-core-vendor.mjs
++++ b/tools/scripts/pack-core-vendor.mjs
+@@ -19,7 +19,7 @@ const dest = process.argv[2] ? resolve(process.argv[2]) : join(root, "dist", "ve
+ const PACKAGES = [
+   { npmName: "@praxis/contracts", dir: "packages/contracts", files: ["dist"] },
+   { npmName: "@praxis/project-config", dir: "packages/project-config", files: ["dist"] },
+-  { npmName: "@praxis/knowledge", dir: "packages/knowledge", files: ["dist", "bin", "dataset"] },
++  { npmName: "@praxis/knowledge", dir: "packages/knowledge", files: ["dist", "bin", "dataset/templates"] },
+   { npmName: "@praxis/catalog", dir: "packages/catalog", files: ["dist", "catalog.json"] },
+   { npmName: "@praxis/testing", dir: "packages/testing", files: ["dist"] },
+   { npmName: "@praxis/jira", dir: "plugins/jira", files: ["dist", "tools", "skills", ".claude-plugin", "README.md"] },
