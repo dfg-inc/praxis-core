@@ -23,7 +23,7 @@ roles: [ba, architect, developer]
 stages: [research, plan, implement]
 severity: mandatory   # or advisory
 overridable: true
-sourceDoc: corp-engineering-handbook   # optional (migrated norms)
+sourceDoc: example-handbook            # optional (migrated norms)
 sourceVersion: "1.0.0"                 # optional
 obsoleteToolBinding:                   # optional (WBS 2.6.2)
   toolId: legacy-jira-server

@@ -19,7 +19,7 @@ const dest = process.argv[2] ? resolve(process.argv[2]) : join(root, "dist", "ve
 const PACKAGES = [
   { npmName: "@praxis/contracts", dir: "packages/contracts", files: ["dist"] },
   { npmName: "@praxis/project-config", dir: "packages/project-config", files: ["dist"] },
-  { npmName: "@praxis/knowledge", dir: "packages/knowledge", files: ["dist", "bin", "dataset"] },
+  { npmName: "@praxis/knowledge", dir: "packages/knowledge", files: ["dist", "bin", "dataset/templates"] },
   { npmName: "@praxis/catalog", dir: "packages/catalog", files: ["dist", "catalog.json"] },
   { npmName: "@praxis/testing", dir: "packages/testing", files: ["dist"] },
   { npmName: "@praxis/jira", dir: "plugins/jira", files: ["dist", "tools", "skills", ".claude-plugin", "README.md"] },

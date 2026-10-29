@@ -4,13 +4,14 @@
  * output (esbuild drops the banners). The list is maintained here; check it against the bundles with
  * `grep -aoE 'node_modules/[^ "]+'` when a dependency changes.
  *
- *   node tools/scripts/gen-third-party-notices.mjs --profile runtime|roles --modules <node_modules dir>
+ *   node tools/scripts/gen-third-party-notices.mjs --profile runtime|roles|ba --modules <node_modules dir>
  *        --nested <packages/mcp/node_modules dir> --inlined <dir with <name@version>/package/LICENSE> --out <file>
  *
  * Nothing is relicensed: every entry keeps its own licence and copyright lines verbatim.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const argv = process.argv.slice(2);
 const arg = (n) => { const i = argv.indexOf(`--${n}`); return i >= 0 ? argv[i + 1] : undefined; };
@@ -19,8 +20,8 @@ const modules = arg("modules");
 const nested = arg("nested");
 const inlined = arg("inlined");
 const out = arg("out");
-if (!["runtime", "roles"].includes(profile) || !modules || !out) {
-  console.error("usage: --profile runtime|roles --modules <dir> [--nested <dir>] [--inlined <dir>] --out <file>");
+if (!["runtime", "roles", "ba"].includes(profile) || !modules || !out) {
+  console.error("usage: --profile runtime|roles|ba --modules <dir> [--nested <dir>] [--inlined <dir>] --out <file>");
   process.exit(2);
 }
 
@@ -35,11 +36,12 @@ const runtimeOnly = [
   })),
 ];
 const entries = profile === "runtime" ? [...common, ...runtimeOnly] : common;
+const here = dirname(fileURLToPath(import.meta.url));
 
 const parts = [];
 parts.push(`# Third-party notices
 
-Praxis is licensed under the Apache License, Version 2.0 (see LICENSE and NOTICE). This ${profile === "runtime" ? "Praxis Runtime build output" : "Praxis plugin build output"} bundles the third-party packages below, which keep their own licences. Their copyright and licence texts follow unchanged.
+Praxis is licensed under the Apache License, Version 2.0 (see LICENSE and NOTICE). This ${profile === "runtime" ? "Praxis Runtime build output" : "Praxis plugin build output"} bundles the third-party packages (and, for BA, the adapted text) listed below, which keep their own licences. Their copyright and licence texts follow unchanged.
 `);
 const missing = [];
 for (const e of entries) {
@@ -50,6 +52,19 @@ for (const e of entries) {
   const licFile = ["LICENSE", "LICENSE.md", "LICENSE.txt", "LICENSE.BSD", "license"].map((f) => join(d, f)).find(existsSync);
   if (!licFile) { missing.push(`${e.name} (no licence file)`); continue; }
   parts.push(`---\n\n## ${pkg.name} ${pkg.version}${e.note ? ` ${e.note}` : ""}\n\nDeclared licence: ${typeof pkg.license === "string" ? pkg.license : JSON.stringify(pkg.license)}\n\n\`\`\`text\n${readFileSync(licFile, "utf8").replace(/\s+$/, "")}\n\`\`\`\n`);
+}
+if (profile === "ba") {
+  const licFile = join(here, "third-party", "mattpocock-skills.LICENSE");
+  parts.push(`---
+
+## Adapted text: the \`grill-me\` skill of mattpocock/skills
+
+The opening paragraph of \`skills/grill-cr/SKILL.md\` (the BA change-request interview) is adapted from the \`grill-me\` skill in https://github.com/mattpocock/skills, which is licensed under the MIT License. The adaptation is not original Praxis text and is not offered under Apache-2.0 as such; the rest of that skill file is Praxis's own. The upstream licence follows unchanged.
+
+\`\`\`text
+${readFileSync(licFile, "utf8").replace(/\s+$/, "")}
+\`\`\`
+`);
 }
 if (missing.length) { console.error(`missing: ${missing.join(", ")}`); process.exit(1); }
 writeFileSync(out, parts.join("\n"));

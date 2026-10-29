@@ -27,7 +27,7 @@
   "files": [
     "dist",
     "bin",
-    "dataset"
+    "dataset/templates"
   ],
   "devDependencies": {
     "@types/node": "^22.20.0",

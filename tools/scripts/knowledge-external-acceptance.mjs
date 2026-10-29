@@ -359,7 +359,47 @@ writeProject();
 
 // --- WBS Epic 2 remaining coverage (CLI / dataset / findings) ---
 
-const dataset = join(root, "packages/knowledge/dataset");
+const dataset = mkdtempSync(join(tmpdir(), "praxis-know-fixture-"));
+// Neutral example corpus written here: the product ships no company rules, and the CLI is exercised on this one.
+write(
+  join(dataset, "company/rules/task-schema.md"),
+  [
+    "---", "id: task-schema", "title: Task schema", "roles: [ba, architect, developer, quality]",
+    "stages: [research, plan, implement, verify]", "severity: mandatory", "overridable: true",
+    "sourceDoc: example-handbook", 'sourceVersion: "1.0.0"', "---", "",
+    "# Task schema", "", "Every task that enters implementation names its type, a one-line summary and acceptance criteria.", "",
+  ].join("\n"),
+);
+write(
+  join(dataset, "company/rules/tracker-workflow.md"),
+  [
+    "---", "id: tracker-workflow", "title: Tracker workflow", "roles: [ba, developer]", "stages: [research, implement]",
+    "severity: advisory", "overridable: true", "sourceDoc: example-handbook", 'sourceVersion: "1.0.0"',
+    "obsoleteToolBinding:", "  toolId: legacy-jira-server", "  reason: Example tracker retired; procedural gates remain, binding needs review",
+    "  proceduralContentApplicable: true", "  reviewRequired: true", "---", "",
+    "# Tracker workflow", "", "Procedural gates for work entering implementation:", "", "1. Capture type, summary and acceptance criteria before coding starts.", "",
+  ].join("\n"),
+);
+write(
+  join(dataset, "company/precedents/sync-within-dc.md"),
+  [
+    "---", "id: PREC-company-sync-default", "title: Prefer sync within a single datacenter", "roles: [architect]", "stages: [plan]", "---", "",
+    "## Circumstances", "", "Two services in one datacenter exchange infrequent status updates.", "",
+    "## Chosen", "", "Synchronous HTTP with short timeouts.", "",
+    "## Rejected", "", "A message broker for every cross-service call.", "",
+    "## Why", "", "The broker cost more to operate than it saved for low-volume traffic.", "",
+  ].join("\n"),
+);
+write(
+  join(dataset, "product/demo/precedents/async-queue-gds.md"),
+  [
+    "---", "id: PREC-async-queue-gds", "title: Prefer queue for cross-service write fan-out", "roles: [architect, developer]", "stages: [plan, implement]", "---", "",
+    "## Circumstances", "", "Two services needed durable write fan-out without coupling their deploy cycles.", "",
+    "## Chosen", "", "An asynchronous queue for write-side events.", "",
+    "## Rejected", "", "Synchronous calls on every write.", "",
+    "## Why", "", "Backpressure and independent scaling avoided cascading timeouts; this product override of the company default held up.", "",
+  ].join("\n"),
+);
 
 // 2.2.1 — one rule, multiple roles (no duplicate files)
 {
@@ -507,7 +547,7 @@ const dataset = join(root, "packages/knowledge/dataset");
     `node "${knowledgeCli}" slice --root "${dataset}" --role ba --stage research`,
     root,
   );
-  if (!/source: corp-engineering-handbook@1\.0\.0/.test(slice.stdout)) {
+  if (!/source: example-handbook@1\.0\.0/.test(slice.stdout)) {
     fail(`expected sourceDoc@version on migrated rules:\n${slice.stdout}`);
   }
 }
