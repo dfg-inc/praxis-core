@@ -161,7 +161,7 @@ Result of round 7: Core contracts 354 tests, Runtime MCP 246 tests, packaged sce
 | D49 | local bump alpha.48 to alpha.49, 7 repos, vendor refresh | done on `feature/ux-overhaul`, not published | `set-ecosystem-version.mjs`, verify | DONE |
 | D50 | licence decision | Apache-2.0, holder `dfuture-co` 2026 | LICENSE/NOTICE in 7 repos and archives | DONE |
 | D51 | third-party notices | 18 (Runtime/MCPB) and 9 (roles) packages, texts unchanged | `gen-third-party-notices.mjs` | DONE; wasm internals NOT VERIFIED |
-| D52 | holder legal name, handbook dataset, unattributed prompts, `jetruby.com` commits | cannot be settled from files | - | OPEN (owner) |
+| D52 | holder legal name, handbook dataset, unattributed prompts, `<corporate-domain>` commits | cannot be settled from files | - | OPEN (owner) |
 | D53 | install + in-place upgrade alpha.48 to alpha.49, single role, Approval/Trusted Client | PASS, clean profile | `marketplace-install-acceptance.mjs` 11 checks | PASS |
 | D54 | rollback to alpha.48 | uninstall + install from the previous marketplace revision | throwaway profile | PASS |
 | D55 | Quality runner security model | documented, unconfirmed scenarios labelled | `QUALITY-RUNNER-SECURITY-MODEL.md` | DONE |

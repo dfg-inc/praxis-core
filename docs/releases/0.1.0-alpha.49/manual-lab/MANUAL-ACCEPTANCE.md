@@ -6,7 +6,7 @@
 
 ```bash
 # запуск (один раз подготовить, дальше только start)
-cd /Users/serg/work/praxis-split/release/ux-overhaul/manual-lab
+cd <praxis-split>/release/ux-overhaul/manual-lab
 ./setup-lab.sh                 # создаёт ~/praxis-alpha49-lab (профиль, marketplace, проекты); можно повторять
 ./start-alpha49.sh orders-app  # или: multi | legacy | new     (в сессии при первом запуске: /login)
 
@@ -27,7 +27,7 @@ rm -rf ~/praxis-alpha49-lab
 ## 0. Подготовка (один раз)
 
 ```bash
-cd /Users/serg/work/praxis-split/release/ux-overhaul/manual-lab
+cd <praxis-split>/release/ux-overhaul/manual-lab
 ./setup-lab.sh
 ```
 
@@ -50,7 +50,7 @@ cd /Users/serg/work/praxis-split/release/ux-overhaul/manual-lab
 Проверка того, что реально сохранено (из **другого** терминала, не из Claude):
 
 ```bash
-node /Users/serg/work/praxis-split/release/ux-overhaul/manual-lab/lab-status.mjs ~/praxis-alpha49-lab/projects/orders-app
+node <praxis-split>/release/ux-overhaul/manual-lab/lab-status.mjs ~/praxis-alpha49-lab/projects/orders-app
 ```
 
 Эта команда читает файлы `.praxis/workflow/` и показывает режим, стадию, отметки по каждому критерию, прототип, план, истории, контракты, репозитории и записи сессий. **Верить ей, а не пересказу Claude.**
@@ -258,7 +258,7 @@ M6. Новая сессия для multi-repo: выйти, `./start-alpha49.sh m
 Это единственная часть, которую не может сделать агент: в тестах ответ в диалоге даёт скрипт. Работаем только с КОПИЕЙ Work Item в `~/praxis-alpha49-approval-copy`; исходный Work Item в `~/praxis-alpha49-lab/projects/orders-app` не читается Claude и не пишется (в конце скрипт сверяет его хэш).
 
 ```bash
-cd /Users/serg/work/praxis-split/release/ux-overhaul/manual-lab && ./make-approval-copy.sh && node approval-check.mjs
+cd <praxis-split>/release/ux-overhaul/manual-lab && ./make-approval-copy.sh && node approval-check.mjs
 ```
 
 Ожидается: `approvals[]: 0`; четыре решения (requirements_review, prototype, story_plan, stories_review) «without a record (unverified provenance)»; «source Work Item: unchanged». Старые решения не становятся «подтверждёнными человеком» задним числом.

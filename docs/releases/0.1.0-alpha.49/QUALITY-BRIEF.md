@@ -4,7 +4,7 @@ You are Quality. You did not write this code. Do not trust the implementer's cla
 
 ## What was asked (owner's requirements, condensed)
 
-Source remarks: `/Users/serg/work/praxis-split/release/ux-overhaul/original-remarks.txt` (18 remarks from the owner's dogfooding, in Russian). The owner asked for an end-to-end flow:
+Source remarks: `<praxis-split>/release/ux-overhaul/original-remarks.txt` (18 remarks from the owner's dogfooding, in Russian). The owner asked for an end-to-end flow:
 
 Request -> Discovery -> Requirements -> HTML Review -> Prototype -> Story Plan -> User Stories Review -> Architecture -> Development -> Quality -> Delivery. Every stage must support viewing, point edits, confirm/reject, returning to an earlier stage, context preservation, continuation in a new session, and traceability.
 
@@ -26,12 +26,12 @@ Constraints that must hold: extend existing Core/Runtime/workflow contracts (no 
 
 | Repo | Path | What changed |
 | --- | --- | --- |
-| Core | `/Users/serg/work/praxis-split/praxis-core` | contracts: `packages/contracts/src/{planning-schemas,planning,review-html,review-submission,context-trust,briefing,ids,errors}.ts`, changes in `workflow.ts`, `story.ts`; docs `docs/workflow-stages.md`, `docs/jira-vs-local.md` |
-| Runtime | `/Users/serg/work/praxis-split/praxis-runtime` | `packages/mcp/src/{review-service,frontend-discover,repository-tools,context-tool,session-start,workflow-store,tools,catalog}.ts`; tests `planning-tools.test.ts`; `tools/scripts/ux-overhaul-acceptance.mjs` |
-| BA / Architect / Developer / Quality | `/Users/serg/work/praxis-split/praxis-{ba,architect,developer,quality}` | new BA skills `requirements-review, prototype, story-plan, stories-review, change-request, resume-work`; updated local-workflow / present-plan / session-start |
-| Marketplace | `/Users/serg/work/praxis-split/praxis-marketplace` | restaged plugins |
+| Core | `<praxis-split>/praxis-core` | contracts: `packages/contracts/src/{planning-schemas,planning,review-html,review-submission,context-trust,briefing,ids,errors}.ts`, changes in `workflow.ts`, `story.ts`; docs `docs/workflow-stages.md`, `docs/jira-vs-local.md` |
+| Runtime | `<praxis-split>/praxis-runtime` | `packages/mcp/src/{review-service,frontend-discover,repository-tools,context-tool,session-start,workflow-store,tools,catalog}.ts`; tests `planning-tools.test.ts`; `tools/scripts/ux-overhaul-acceptance.mjs` |
+| BA / Architect / Developer / Quality | `<praxis-split>/praxis-{ba,architect,developer,quality}` | new BA skills `requirements-review, prototype, story-plan, stories-review, change-request, resume-work`; updated local-workflow / present-plan / session-start |
+| Marketplace | `<praxis-split>/praxis-marketplace` | restaged plugins |
 
-Use `git log master..HEAD` (marketplace: `github/master..HEAD`) in each repo to see the commits. Example pages: `/Users/serg/work/praxis-split/release/ux-overhaul/examples/*.html`.
+Use `git log master..HEAD` (marketplace: `github/master..HEAD`) in each repo to see the commits. Example pages: `<praxis-split>/release/ux-overhaul/examples/*.html`.
 
 ## Rules for you
 

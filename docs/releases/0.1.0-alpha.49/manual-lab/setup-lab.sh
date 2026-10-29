@@ -9,7 +9,7 @@
 # Safe to run again: it never deletes anything; use ./reset-lab.sh to start over.
 set -euo pipefail
 LAB="${PRAXIS_LAB:-$HOME/praxis-alpha49-lab}"
-SRC="${PRAXIS_MARKETPLACE_SRC:-/Users/serg/work/praxis-split/praxis-marketplace}"
+SRC="${PRAXIS_MARKETPLACE_SRC:-<praxis-split>/praxis-marketplace}"
 BRANCH="${PRAXIS_MARKETPLACE_BRANCH:-feature/ux-overhaul}"
 mkdir -p "$LAB/claude-config" "$LAB/projects"
 
