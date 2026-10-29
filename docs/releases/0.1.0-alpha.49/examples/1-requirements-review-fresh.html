@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Requirements review</title><style>
+:root{--bg:#fff;--fg:#1d2330;--muted:#5d6678;--line:#d9dde6;--card:#f7f8fb;--accent:#2457d6;--ok:#17803d;--bad:#b42318;--warn:#a15c00;--okbg:#e7f6ec;--badbg:#fdeceb;--on-accent:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#14171f;--fg:#e6e9f0;--muted:#9aa3b5;--line:#2c3242;--card:#1c202b;--accent:#7aa2ff;--ok:#5ad08a;--bad:#ff8a80;--warn:#ffc266;--okbg:#14301f;--badbg:#3a1a18;--on-accent:#0b1020}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:980px;margin:0 auto;padding:16px 16px 120px}
+h1{font-size:22px;margin:8px 0}h2{font-size:17px;margin:0}h3{font-size:14px;margin:12px 0 4px}
+.muted{color:var(--muted)}.meta{font-size:13px;color:var(--muted)}
+.card{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:12px 14px;margin:12px 0}
+.card.out{opacity:.6}
+.row{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}.row>.grow{flex:1;min-width:200px}
+.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:0 8px;font-size:12px;color:var(--muted);background:var(--bg)}
+.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.bad{color:var(--bad);border-color:var(--bad)}.pill.warn{color:var(--warn);border-color:var(--warn)}
+textarea,input[type=text],select{width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+textarea{min-height:44px;resize:vertical}
+button{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.ac{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;padding:8px 0;border-top:1px solid var(--line)}
+.marks{display:flex;gap:10px;align-items:center;font-size:13px}.marks label{display:flex;gap:4px;align-items:center;cursor:pointer}
+.stale{background:var(--badbg);border:1px solid var(--bad);border-radius:8px;padding:8px 12px;margin:10px 0}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;z-index:5}
+.bar .grow{flex:1;min-width:160px}
+#out{display:none;margin:12px 0}#out textarea{min-height:140px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+#toast{font-size:13px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;font-size:13px}
+.proto{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg)}
+.proto .nav{display:flex;gap:6px;flex-wrap:wrap;padding:8px;border-bottom:1px solid var(--line);background:var(--card)}
+.proto .nav button.on{background:var(--p-primary,var(--accent));color:#fff;border-color:transparent}
+.proto .screen{padding:14px;font-family:var(--p-font,inherit)}
+.proto .btn{background:var(--p-primary,var(--accent));color:#fff;border:0;border-radius:var(--p-radius,6px);padding:6px 14px}
+.proto .btn.sec{background:transparent;color:var(--p-primary,var(--accent));border:1px solid var(--p-primary,var(--accent))}
+.proto table{border-collapse:collapse;width:100%;font-size:14px}.proto th,.proto td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left}
+.el{position:relative;margin:10px 0;padding:4px;border:1px dashed transparent;border-radius:6px}
+.el:hover{border-color:var(--line)}.el .tag{font-size:11px;color:var(--muted);margin-left:6px}
+.denied{background:var(--badbg);color:var(--bad);padding:8px;border-radius:6px}
+.state-msg{padding:16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:8px}
+pre{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px;overflow:auto;font-size:12px;margin:4px 0}
+</style></head>
+<body><main>
+<h1>Requirements review</h1>
+<p class="meta">Work item WI-ORDER-LIST-FOR-MANAGERS-001 · Order list for managers · phase request · generated 2026-10-26T12:00:00.000Z. This page records decisions; the workflow state in Praxis is the source of truth.</p>
+
+<div class="card"><div class="row"><div class="grow kv"><span class="muted">In scope</span><span>2 requirement(s), 6 criteria</span><span class="muted">Accepted</span><span>0</span><span class="muted">Rejected</span><span>0</span><span class="muted">Undecided</span><span>6</span><span class="muted">Deferred / out</span><span>1 / 0</span></div>
+<div><button id="btn-accept-all" type="button">Accept every criterion</button></div></div></div>
+<section class="card" data-req="REQ-ORD-001" data-rev="1">
+<div class="row"><h2 class="grow">REQ-ORD-001 <span class="pill ">r1</span> <span class="pill ">proposed</span></h2></div>
+<textarea data-f="statement" data-initial="Managers can view, search and edit orders; other roles can only view" aria-label="Statement of REQ-ORD-001">Managers can view, search and edit orders; other roles can only view</textarea>
+<div class="row" style="margin-top:6px"><div><label class="meta">Scope<br><select data-f="scope" data-initial="in"><option value="in" selected>In scope</option><option value="deferred">Deferred</option><option value="excluded">Out of scope</option></select></label></div>
+<div class="grow"><label class="meta">Scope note<br><input type="text" data-f="scopeNote" data-initial="" value=""></label></div></div>
+<h3>Acceptance criteria <button type="button" data-accept-card>Accept all in this requirement</button></h3>
+<div class="ac" data-ac="REQ-ORD-001-AC-01" data-rev="1" data-initial-status="pending">
+<div><strong>REQ-ORD-001-AC-01</strong></div>
+<div><textarea data-f="ac-statement" data-initial="The list shows all orders with number, customer and status" aria-label="Text of REQ-ORD-001-AC-01">The list shows all orders with number, customer and status</textarea>
+<div class="row" style="margin-top:4px"><div class="marks" role="radiogroup"><label><input type="radio" name="m-REQ-ORD-001-AC-01" value="accepted"> Accept</label><label><input type="radio" name="m-REQ-ORD-001-AC-01" value="rejected"> Reject</label><label><input type="radio" name="m-REQ-ORD-001-AC-01" value="pending" checked> Undecided</label></div><input type="text" data-f="ac-comment" data-initial="" placeholder="Comment" value="" aria-label="Comment on REQ-ORD-001-AC-01" style="flex:1;min-width:160px">
+<label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div><div class="ac" data-ac="REQ-ORD-001-AC-02" data-rev="1" data-initial-status="pending">
+<div><strong>REQ-ORD-001-AC-02</strong></div>
+<div><textarea data-f="ac-statement" data-initial="A manager can search orders by number or customer" aria-label="Text of REQ-ORD-001-AC-02">A manager can search orders by number or customer</textarea>
+<div class="row" style="margin-top:4px"><div class="marks" role="radiogroup"><label><input type="radio" name="m-REQ-ORD-001-AC-02" value="accepted"> Accept</label><label><input type="radio" name="m-REQ-ORD-001-AC-02" value="rejected"> Reject</label><label><input type="radio" name="m-REQ-ORD-001-AC-02" value="pending" checked> Undecided</label></div><input type="text" data-f="ac-comment" data-initial="" placeholder="Comment" value="" aria-label="Comment on REQ-ORD-001-AC-02" style="flex:1;min-width:160px">
+<label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div><div class="ac" data-ac="REQ-ORD-001-AC-03" data-rev="1" data-initial-status="pending">
+<div><strong>REQ-ORD-001-AC-03</strong></div>
+<div><textarea data-f="ac-statement" data-initial="A manager can change an order&#39;s status" aria-label="Text of REQ-ORD-001-AC-03">A manager can change an order&#39;s status</textarea>
+<div class="row" style="margin-top:4px"><div class="marks" role="radiogroup"><label><input type="radio" name="m-REQ-ORD-001-AC-03" value="accepted"> Accept</label><label><input type="radio" name="m-REQ-ORD-001-AC-03" value="rejected"> Reject</label><label><input type="radio" name="m-REQ-ORD-001-AC-03" value="pending" checked> Undecided</label></div><input type="text" data-f="ac-comment" data-initial="" placeholder="Comment" value="" aria-label="Comment on REQ-ORD-001-AC-03" style="flex:1;min-width:160px">
+<label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div><div class="ac" data-ac="REQ-ORD-001-AC-04" data-rev="1" data-initial-status="pending">
+<div><strong>REQ-ORD-001-AC-04</strong></div>
+<div><textarea data-f="ac-statement" data-initial="A viewer sees orders but cannot change them" aria-label="Text of REQ-ORD-001-AC-04">A viewer sees orders but cannot change them</textarea>
+<div class="row" style="margin-top:4px"><div class="marks" role="radiogroup"><label><input type="radio" name="m-REQ-ORD-001-AC-04" value="accepted"> Accept</label><label><input type="radio" name="m-REQ-ORD-001-AC-04" value="rejected"> Reject</label><label><input type="radio" name="m-REQ-ORD-001-AC-04" value="pending" checked> Undecided</label></div><input type="text" data-f="ac-comment" data-initial="" placeholder="Comment" value="" aria-label="Comment on REQ-ORD-001-AC-04" style="flex:1;min-width:160px">
+<label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>
+<label class="meta">Add criteria (one per line)<textarea data-f="add-ac"></textarea></label>
+<label class="meta">Comment on the requirement<input type="text" data-f="comment"></label>
+</section><section class="card" data-req="REQ-ORD-002" data-rev="1">
+<div class="row"><h2 class="grow">REQ-ORD-002 <span class="pill ">r1</span> <span class="pill ">proposed</span></h2></div>
+<textarea data-f="statement" data-initial="Managers can export the filtered orders to CSV" aria-label="Statement of REQ-ORD-002">Managers can export the filtered orders to CSV</textarea>
+<div class="row" style="margin-top:6px"><div><label class="meta">Scope<br><select data-f="scope" data-initial="in"><option value="in" selected>In scope</option><option value="deferred">Deferred</option><option value="excluded">Out of scope</option></select></label></div>
+<div class="grow"><label class="meta">Scope note<br><input type="text" data-f="scopeNote" data-initial="" value=""></label></div></div>
+<h3>Acceptance criteria <button type="button" data-accept-card>Accept all in this requirement</button></h3>
+<div class="ac" data-ac="REQ-ORD-002-AC-01" data-rev="1" data-initial-status="pending">
+<div><strong>REQ-ORD-002-AC-01</strong></div>
+<div><textarea data-f="ac-statement" data-initial="The export contains exactly the filtered rows" aria-label="Text of REQ-ORD-002-AC-01">The export contains exactly the filtered rows</textarea>
+<div class="row" style="margin-top:4px"><div class="marks" role="radiogroup"><label><input type="radio" name="m-REQ-ORD-002-AC-01" value="accepted"> Accept</label><label><input type="radio" name="m-REQ-ORD-002-AC-01" value="rejected"> Reject</label><label><input type="radio" name="m-REQ-ORD-002-AC-01" value="pending" checked> Undecided</label></div><input type="text" data-f="ac-comment" data-initial="" placeholder="Comment" value="" aria-label="Comment on REQ-ORD-002-AC-01" style="flex:1;min-width:160px">
+<label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div><div class="ac" data-ac="REQ-ORD-002-AC-02" data-rev="1" data-initial-status="pending">
+<div><strong>REQ-ORD-002-AC-02</strong></div>
+<div><textarea data-f="ac-statement" data-initial="The export has a header row" aria-label="Text of REQ-ORD-002-AC-02">The export has a header row</textarea>
+<div class="row" style="margin-top:4px"><div class="marks" role="radiogroup"><label><input type="radio" name="m-REQ-ORD-002-AC-02" value="accepted"> Accept</label><label><input type="radio" name="m-REQ-ORD-002-AC-02" value="rejected"> Reject</label><label><input type="radio" name="m-REQ-ORD-002-AC-02" value="pending" checked> Undecided</label></div><input type="text" data-f="ac-comment" data-initial="" placeholder="Comment" value="" aria-label="Comment on REQ-ORD-002-AC-02" style="flex:1;min-width:160px">
+<label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>
+<label class="meta">Add criteria (one per line)<textarea data-f="add-ac"></textarea></label>
+<label class="meta">Comment on the requirement<input type="text" data-f="comment"></label>
+</section><section class="card out" data-req="REQ-ORD-003" data-rev="2">
+<div class="row"><h2 class="grow">REQ-ORD-003 <span class="pill ">r2</span> <span class="pill ">proposed</span> <span class="pill warn">deferred</span></h2></div>
+<textarea data-f="statement" data-initial="Order history is kept for audit (&lt;b&gt;next release&lt;/b&gt;)" aria-label="Statement of REQ-ORD-003">Order history is kept for audit (&lt;b&gt;next release&lt;/b&gt;)</textarea>
+<div class="row" style="margin-top:6px"><div><label class="meta">Scope<br><select data-f="scope" data-initial="deferred"><option value="in">In scope</option><option value="deferred" selected>Deferred</option><option value="excluded">Out of scope</option></select></label></div>
+<div class="grow"><label class="meta">Scope note<br><input type="text" data-f="scopeNote" data-initial="audit trail is planned for the next release" value="audit trail is planned for the next release"></label></div></div>
+<h3>Acceptance criteria <button type="button" data-accept-card>Accept all in this requirement</button></h3>
+<div class="ac" data-ac="REQ-ORD-003-AC-01" data-rev="1" data-initial-status="pending">
+<div><strong>REQ-ORD-003-AC-01</strong></div>
+<div><textarea data-f="ac-statement" data-initial="Every status change is stored with who and when" aria-label="Text of REQ-ORD-003-AC-01">Every status change is stored with who and when</textarea>
+<div class="row" style="margin-top:4px"><div class="marks" role="radiogroup"><label><input type="radio" name="m-REQ-ORD-003-AC-01" value="accepted"> Accept</label><label><input type="radio" name="m-REQ-ORD-003-AC-01" value="rejected"> Reject</label><label><input type="radio" name="m-REQ-ORD-003-AC-01" value="pending" checked> Undecided</label></div><input type="text" data-f="ac-comment" data-initial="" placeholder="Comment" value="" aria-label="Comment on REQ-ORD-003-AC-01" style="flex:1;min-width:160px">
+<label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>
+<label class="meta">Add criteria (one per line)<textarea data-f="add-ac"></textarea></label>
+<label class="meta">Comment on the requirement<input type="text" data-f="comment"></label>
+</section>
+<div id="out"><p class="meta">Decisions (give this to Claude if the page could not save them):</p><textarea readonly aria-label="Decisions"></textarea></div>
+</main>
+<div class="bar" role="region" aria-label="Actions"><label class="marks"><input type="checkbox" id="accept-all"> Mark the review complete (accept everything still undecided)</label><span class="grow" id="toast" role="status" aria-live="polite"></span>
+<button id="btn-copy" type="button">Copy decisions</button><button id="btn-download" type="button">Download</button><button id="btn-save" class="primary" type="button">Save decisions</button></div>
+<script type="application/json" id="praxis-data">{"reviewId":"requirements-WI-ORDER-LIST-FOR-MANAGERS-001","view":"requirements","workItemId":"WI-ORDER-LIST-FOR-MANAGERS-001","baseFingerprint":"73c7edfd0b63ebd0"}</script>
+<script>
+(function(){
+var D=JSON.parse(document.getElementById('praxis-data').textContent);
+var $=function(s,r){return (r||document).querySelector(s)};
+var $$=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
+function toast(t,bad){var e=$('#toast');e.textContent=t;e.style.color=bad?'var(--bad)':'var(--ok)'}
+function val(el){return el?el.value.trim():''}
+function num(el){return parseInt(el.getAttribute('data-rev'),10)}
+function markOf(root,name){var c=$('input[name="'+name+'"]:checked',root);return c?c.value:null}
+function collect(){
+  var s={contract:'praxis.review.submission',version:1,reviewId:D.reviewId,view:D.view,workItemId:D.workItemId,baseFingerprint:D.baseFingerprint,submittedAt:new Date().toISOString()};
+  if(D.view==='requirements'){
+    var reqs=[];
+    $$('[data-req]').forEach(function(card){
+      var id=card.getAttribute('data-req');var item={id:id,revision:num(card),criteria:[],addCriteria:[],removeCriteria:[]};var touched=false;
+      var st=$('[data-f=statement]',card);if(st&&val(st)!==st.getAttribute('data-initial')){item.statement=val(st);touched=true}
+      var sc=$('[data-f=scope]',card);if(sc&&sc.value!==sc.getAttribute('data-initial')){item.scope=sc.value;touched=true}
+      var sn=$('[data-f=scopeNote]',card);if(sn&&val(sn)!==sn.getAttribute('data-initial')){item.scopeNote=val(sn);touched=true}
+      var rc=$('[data-f=comment]',card);if(rc&&val(rc)!==''){item.comment=val(rc);touched=true}
+      $$('[data-ac]',card).forEach(function(row){
+        var aid=row.getAttribute('data-ac');
+        if($('[data-f=remove]',row)&&$('[data-f=remove]',row).checked){item.removeCriteria.push(aid);touched=true;return}
+        var c={id:aid,revision:num(row)};var ch=false;
+        var m=markOf(row,'m-'+aid);if(m&&m!==row.getAttribute('data-initial-status')){c.status=m;c.from=row.getAttribute('data-initial-status');ch=true}
+        var cm=$('[data-f=ac-comment]',row);if(cm&&val(cm)!==cm.getAttribute('data-initial')){c.comment=val(cm);ch=true}
+        var ts=$('[data-f=ac-statement]',row);if(ts&&val(ts)!==ts.getAttribute('data-initial')){c.statement=val(ts);ch=true}
+        if(ch){item.criteria.push(c);touched=true}
+      });
+      var add=$('[data-f=add-ac]',card);if(add&&val(add)){val(add).split(/\n+/).forEach(function(l){l=l.trim();if(l)item.addCriteria.push({statement:l})});touched=true}
+      if(touched)reqs.push(item)
+    });
+    s.requirements={requirements:reqs,acceptAll:!!($('#accept-all')&&$('#accept-all').checked)};
+  }
+  if(D.view==='prototype'){
+    var fb=[];$$('[data-fb]').forEach(function(t){if(val(t))fb.push({target:t.getAttribute('data-fb'),comment:val(t)})});
+    var rs=[];$$('[data-resolve]:checked').forEach(function(c){rs.push(c.getAttribute('data-resolve'))});
+    s.prototype={feedback:fb,resolve:rs,accept:!!($('#accept-proto')&&$('#accept-proto').checked)};
+  }
+  if(D.view==='story-plan'){
+    var es=[];
+    $$('[data-entry]').forEach(function(card){
+      var id=card.getAttribute('data-entry');var e={id:id};var ch=false;
+      var m=markOf(card,'m-'+id);if(m&&m!==card.getAttribute('data-initial-status')){e.status=m;ch=true}
+      var cm=$('[data-f=comment]',card);if(cm&&val(cm)){e.comment=val(cm);ch=true}
+      ['title','implementation','userGets'].forEach(function(f){var t=$('[data-f='+f+']',card);if(t&&val(t)!==t.getAttribute('data-initial')){e[f]=val(t);ch=true}});
+      var ex=$('[data-f=exclude]',card);if(ex&&val(ex)){e.exclude=val(ex);ch=true}
+      var rt=$('[data-f=restore]',card);if(rt&&rt.checked){e.restore=true;ch=true}
+      if(ch)es.push(e)
+    });
+    s.plan={entries:es,agree:!!($('#agree-plan')&&$('#agree-plan').checked)};
+  }
+  if(D.view==='stories'){
+    var items=[],sts=[];
+    $$('[data-story]').forEach(function(card){
+      var id=card.getAttribute('data-story');var rev=num(card);var st={storyId:id,revision:rev};var ch=false;
+      $$('[data-key]',card).forEach(function(row){
+        var key=row.getAttribute('data-key');var m=markOf(row,'m-'+id+'-'+key);
+        var cm=$('[data-f=comment]',row);
+        if(m&&(m!==row.getAttribute('data-initial-status')||(cm&&val(cm)))){var it={storyId:id,revision:rev,key:key,from:row.getAttribute('data-initial-status'),status:m};if(cm&&val(cm))it.comment=val(cm);items.push(it)}
+      });
+      var n=$('[data-f=narrative]',card);if(n&&val(n)!==n.getAttribute('data-initial')){st.narrative=val(n);ch=true}
+      var o=$('[data-f=objective]',card);if(o&&val(o)!==o.getAttribute('data-initial')){st.objective=val(o);ch=true}
+      var ex=$('[data-f=exclude]',card);if(ex&&val(ex)){st.exclude=val(ex);ch=true}
+      var rt=$('[data-f=restore]',card);if(rt&&rt.checked){st.restore=true;ch=true}
+      var all=$('[data-f=accept-story]',card);if(all&&all.checked){st.acceptAll=true;ch=true}
+      if(ch)sts.push(st)
+    });
+    s.stories={items:items,stories:sts,accept:!!($('#accept-stories')&&$('#accept-stories').checked)};
+  }
+  return s
+}
+function showOut(text){var o=$('#out');o.style.display='block';$('textarea',o).value=text}
+function summary(s){return JSON.stringify(s,null,2)}
+$('#btn-save').addEventListener('click',function(){
+  var s=collect();var text=summary(s);
+  if(!D.saveUrl){showOut(text);toast('No live connection: copy or download the decisions and give them to Claude: it records them with praxis_review_apply after you approve them in the dialog.',false);return}
+  toast('Saving...',false);
+  fetch(D.saveUrl,{method:'POST',headers:{'content-type':'application/json','x-praxis-review-token':D.token||''},body:JSON.stringify(s)}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(x){
+    if(!x.ok){showOut(text);toast('Not saved ('+(x.j&&x.j.error||'error')+'). Decisions are below: copy them to Claude.',true);return}
+    var c=(x.j.conflicts||[]).length;
+    toast('Saved: '+(x.j.applied||0)+' change(s) applied'+(c?', '+c+' conflict(s): '+x.j.conflicts.map(function(k){return k.item+' ('+k.reason+')'}).join('; '):'')+'. Reload to see the new revision.',c>0);
+  }).catch(function(){showOut(text);toast('Cannot reach Praxis (the review session ended). Decisions are below: copy them to Claude.',true)})
+});
+$('#btn-copy').addEventListener('click',function(){var t=summary(collect());showOut(t);if(navigator.clipboard){navigator.clipboard.writeText(t).then(function(){toast('Copied.',false)},function(){toast('Select and copy the text below.',false)})}else toast('Select and copy the text below.',false)});
+$('#btn-download').addEventListener('click',function(){var t=summary(collect());var b=new Blob([t],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=D.view+'-review-'+D.workItemId+'.json';document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},0)});
+var acc=$('#btn-accept-all');if(acc)acc.addEventListener('click',function(){$$('input[type=radio][value=accepted]').forEach(function(r){if(!r.closest('.card.out'))r.checked=true})});
+$$('[data-accept-card]').forEach(function(b){b.addEventListener('click',function(){$$('input[type=radio][value=accepted]',b.closest('.card')).forEach(function(r){r.checked=true})})});
+// prototype viewer
+if(D.view==='prototype'&&D.proto&&D.proto.kind==='ui'){
+  var P=D.proto,mock=JSON.parse(JSON.stringify(P.mock)),cur=P.startScreen||(P.screens[0]&&P.screens[0].id),role=(P.roles&&P.roles[0])||'',stateName='default',modal=null;
+  var host=$('#proto-screen');
+  function h(t,a,c){var e=document.createElement(t);for(var k in (a||{})){if(k==='class')e.className=a[k];else e.setAttribute(k,a[k])}(c||[]).forEach(function(x){e.appendChild(typeof x==='string'?document.createTextNode(x):x)});return e}
+  function tag(el){var t=[].concat(el.requirementIds||[],el.acIds||[]);return t.length?h('span',{class:'tag'},[t.join(' ')]):document.createTextNode('')}
+  function coll(id){return mock.filter(function(c){return c.id===id})[0]}
+  function render(){
+    host.textContent='';
+    var scr=P.screens.filter(function(s){return s.id===cur})[0];if(!scr)return;
+    var sw=$('#proto-state');sw.textContent='';scr.states.forEach(function(s){var o=h('option',{value:s},[s]);if(s===stateName)o.selected=true;sw.appendChild(o)});
+    if(scr.states.indexOf(stateName)<0)stateName='default';
+    host.appendChild(h('h2',{},[scr.title]));if(scr.description)host.appendChild(h('p',{class:'muted'},[scr.description]));
+    if(stateName!=='default'){host.appendChild(h('div',{class:'state-msg'},[(scr.stateMessages&&scr.stateMessages[stateName])||({loading:'Loading...',empty:'Nothing here yet.',error:'Something went wrong.',success:'Done.',denied:'You do not have permission.'}[stateName]||stateName)]));return}
+    scr.elements.forEach(function(el){
+      var wrap=h('div',{class:'el','data-el':scr.id+'#'+el.id});
+      if(el.allowedRoles&&el.allowedRoles.length&&el.allowedRoles.indexOf(role)<0){wrap.appendChild(h('div',{class:'denied'},['Not available for role "'+role+'"']));host.appendChild(wrap);return}
+      var k=el.kind;
+      if(k==='heading')wrap.appendChild(h('h3',{},[el.label||el.text||'']));
+      else if(k==='text')wrap.appendChild(h('p',{},[el.text||el.label||'']));
+      else if(k==='table'||k==='list'){
+        var c=coll(el.collection);
+        if(!c){wrap.appendChild(h('div',{class:'state-msg'},['No data']))}
+        else{
+          var cols=el.columns&&el.columns.length?el.columns:c.fields.map(function(f){return f.key});
+          var q=$('[data-search="'+el.id+'"]');
+          var t=h('table',{},[]);var hr=h('tr',{},cols.map(function(key){var f=c.fields.filter(function(x){return x.key===key})[0];return h('th',{},[f?f.label:key])}));t.appendChild(hr);
+          var rows=c.rows.filter(function(r){return !(P._q&&P._q[el.id])||JSON.stringify(r).toLowerCase().indexOf(P._q[el.id].toLowerCase())>=0});
+          if(!rows.length)wrap.appendChild(h('div',{class:'state-msg'},['No rows']));
+          rows.forEach(function(r){t.appendChild(h('tr',{},cols.map(function(key){return h('td',{},[String(r[key]==null?'':r[key])])})))});
+          if(rows.length)wrap.appendChild(t)}
+      }
+      else if(k==='search'){var i=h('input',{type:'text',placeholder:el.label||'Search','data-search':el.id});i.value=(P._q&&P._q[el.id])||'';if(P._focus===el.id){setTimeout(function(){i.focus();try{i.setSelectionRange(i.value.length,i.value.length)}catch(e){}},0)}i.addEventListener('input',function(){P._focus=el.id;P._q=P._q||{};P._q[el.collection||'']=i.value;(P.screens.filter(function(s){return s.id===cur})[0].elements).forEach(function(e2){if(e2.collection===el.collection){P._q[e2.id]=i.value}});render()});wrap.appendChild(i)}
+      else if(k==='field'){wrap.appendChild(h('label',{},[el.label||el.field||'']));wrap.appendChild(h('input',{type:'text',placeholder:el.text||''}))}
+      else if(k==='button'||k==='link'){
+        var b=h('button',{class:'btn'+(k==='link'?' sec':''),type:'button'},[el.label||'Button']);
+        b.addEventListener('click',function(e){e.stopPropagation();
+          if(el.navigatesTo){cur=el.navigatesTo;stateName='default';render();syncNav()}
+          else if(el.action==='add-row'&&coll(el.collection)){var c=coll(el.collection),row={};c.fields.forEach(function(f){row[f.key]=f.type==='number'?c.rows.length+1:f.type==='boolean'?false:'New '+f.label});c.rows.push(row);render()}
+          else if(el.action==='delete-row'&&coll(el.collection)){coll(el.collection).rows.pop();render()}
+          else if(el.action==='submit'){stateName='success';render()}
+        });wrap.appendChild(b)}
+      else wrap.appendChild(h('div',{},[el.label||el.text||k]));
+      wrap.appendChild(tag(el));
+      var cb=h('button',{type:'button',style:'font-size:11px;margin-left:8px;padding:0 6px','aria-label':'Comment on '+el.id},['comment']);
+      cb.addEventListener('click',function(e){e.stopPropagation();var ta=$('[data-fb="'+scr.id+'#'+el.id+'"]');if(!ta)ta=addFb(scr.id+'#'+el.id);if(ta.scrollIntoView)ta.scrollIntoView({block:'center'});ta.focus()});
+      wrap.appendChild(cb);
+      host.appendChild(wrap)
+    })
+  }
+  function addFb(target){var box=$('#fb-list');var w=h('div',{class:'card'},[h('div',{class:'meta'},['Comment on '+target]),h('textarea',{'data-fb':target})]);box.appendChild(w);return $('textarea',w)}
+  function syncNav(){$$('#proto-nav button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-screen')===cur)})}
+  $$('#proto-nav button').forEach(function(b){b.addEventListener('click',function(){cur=b.getAttribute('data-screen');stateName='default';render();syncNav()})});
+  var sw=$('#proto-state');sw.addEventListener('change',function(){stateName=sw.value;render()});
+  var rl=$('#proto-role');if(rl){rl.addEventListener('change',function(){role=rl.value;render()})}
+  var rs=$('#proto-reset');if(rs)rs.addEventListener('click',function(){mock=JSON.parse(JSON.stringify(P.mock));P._q={};render()});
+  var add=$('#fb-add');if(add)add.addEventListener('click',function(){addFb('prototype')});
+  syncNav();render();
+}
+})();
+</script>
+</body></html>
