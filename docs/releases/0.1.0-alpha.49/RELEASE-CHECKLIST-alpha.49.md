@@ -6,7 +6,7 @@ Status 2026-10-29: **release candidate prepared locally, not published.** Everyt
 
 | Repo (branch `feature/ux-overhaul`) | Head | Version | Licence files |
 |---|---|---|---|
-| praxis-core | `cab84df` | 0.1.0-alpha.49 | LICENSE (Apache-2.0, official text, sha256 `cfc7749b…`), NOTICE |
+| praxis-core | `6b3df4c` (code `cab84df` + release documents) | 0.1.0-alpha.49 | LICENSE (Apache-2.0, official text, sha256 `cfc7749b…`), NOTICE |
 | praxis-runtime | `07529e5` | alpha.49 | LICENSE, NOTICE, THIRD-PARTY-NOTICES.md (18 packages) |
 | praxis-ba | `b48c027` | alpha.49 | LICENSE, NOTICE, THIRD-PARTY-NOTICES.md (9 packages) |
 | praxis-architect | `7fc5683` | alpha.49 | same |
