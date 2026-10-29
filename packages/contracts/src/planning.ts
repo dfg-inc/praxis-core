@@ -723,7 +723,7 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
     }
     for (const statement of decision.addAcceptance) {
       // a retired id is never handed out again: a result recorded for the removed criterion must not count for a new one
-      const used = [...requirement.acceptanceCriteria.map((c) => c.id), ...(requirement.retiredCriteria ?? [])].map((id) => Number(id.match(/-AC-(\d+)$/)?.[1] ?? 0));
+      const used = [...requirement.acceptanceCriteria.map((c) => c.id), ...(requirement.retiredCriteria ?? []), ...next.coverage.filter((e) => e.requirementId === requirement.id).map((e) => e.acceptanceCriterionId)].map((id) => Number(id.match(/-AC-(\d+)$/)?.[1] ?? 0));
       const nextNumber = Math.max(0, ...used) + 1;
       requirement.acceptanceCriteria.push({
         id: `${requirement.id}-AC-${String(nextNumber).padStart(2, "0")}`,

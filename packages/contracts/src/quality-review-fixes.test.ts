@@ -75,6 +75,16 @@ describe("round 7 review: Story criteria, scenario ids, retired criteria", () =>
   });
 });
 
+describe("round 7 re-review: criterion ids removed before the upgrade", () => {
+  it("an id that only survives in coverage (removed before retiredCriteria existed) is not handed out again", () => {
+    let s = record(base(), [entry(`${R}-AC-01`), entry(`${R}-AC-02`)]);
+    // the state as an older version saved it: AC-02 gone, no retired list, its result still in coverage
+    s = { ...s, requirements: s.requirements.map((r) => ({ ...r, retiredCriteria: [], acceptanceCriteria: r.acceptanceCriteria.filter((c) => c.id !== `${R}-AC-02`) })) };
+    s = applyWorkflowCommand(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: R, acceptance: [], addAcceptance: [{ statement: "new" }], removeAcceptance: [] }] }, { now: NOW, channel: { via: "html-review" } }).state;
+    expect(s.requirements[0]!.acceptanceCriteria.map((c) => c.id)).toEqual([`${R}-AC-01`, `${R}-AC-03`]);
+  });
+});
+
 describe("round 7 review: capability masking keeps real operations", () => {
   it("possessives and abbreviations do not hide operations; an option value is masked only in its own case", () => {
     expect(statedOperations("The customer can view the customer's list and delete the customer's order.").map((o) => o.capability).sort()).toEqual(["delete", "view"]);
