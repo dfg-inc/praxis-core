@@ -179,17 +179,20 @@ describe("interactive prototype: the orders filter and side card", () => {
     expect(p.$("[data-empty]")).not.toBeNull();
   });
 
-  it("Back and Forward follow the address", () => {
+  it("Back and Forward follow the address", async () => {
     const p = open(ordersState());
     p.choose("New");
     p.choose("Shipped");
-    p.w.history.back();
-    return new Promise<void>((resolve) =>
-      setTimeout(() => {
-        expect(p.rows()).toEqual(["A-1001"]);
-        resolve();
-      }, 30),
-    );
+    // jsdom traverses history asynchronously: wait for the page's own popstate instead of a fixed delay
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no popstate")), 3000);
+      p.w.addEventListener("popstate", () => {
+        clearTimeout(timer);
+        setTimeout(resolve, 0);
+      });
+      p.w.history.back();
+    });
+    expect(p.rows()).toEqual(["A-1001"]);
   });
 
   it("the address bar accepts a typed address, including a wrong one", () => {
