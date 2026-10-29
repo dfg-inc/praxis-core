@@ -1469,7 +1469,7 @@ export function applyWorkflowCommand(
     record = { at, action: command.action, subjects: subjectsOf(command, state, out.state), summary: `${command.action} from the review page`, channel: "html-review", assurance: "review-page", trust: "review-page", workItemRevision: out.state.workItem.revision };
   }
   if (!record) return out;
-  const approvals = [...(out.state.approvals ?? []), { ...record, id: `APR-${String((out.state.approvals?.length ?? 0) + 1).padStart(4, "0")}` }];
+  const approvals = [...(out.state.approvals ?? []), { id: `APR-${String((out.state.approvals?.length ?? 0) + 1).padStart(4, "0")}`, ...record }];
   return { ...out, state: { ...out.state, approvals } };
 }
 
