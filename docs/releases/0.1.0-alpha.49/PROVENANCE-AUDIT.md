@@ -19,7 +19,7 @@ Owner statement applied: Praxis is an internal company project; the `<corporate-
 
 - **The corporate dataset is already public.** Scale (read-only checks of the GitHub API on 2026-10-29): all seven repositories are public. `dfg-inc/praxis-core` master (`0f71e38`) contains the 8 files (6 rules, 1 company precedent, 1 product precedent; added by `823369b` and `893d4a4`, so present in the public history of 177 commits); the public GitHub Release `v0.1.0-alpha.47` of praxis-core carries `praxis-knowledge-0.1.0-alpha.47.tgz` (12,269 bytes, 9 dataset entries, 2 downloads); the public masters of praxis-runtime, -ba, -architect, -developer, -quality carry `vendor/praxis-knowledge-0.1.0-alpha.48.tgz` (3-4 historical versions each). The 20 role/Runtime release assets of alpha.45-48 (ZIP, MCPB) were downloaded and contain none. Marketplace: none. Forks: 0; stars: 52. Removing the files from the tree does not remove them from history, the old release asset or clones.
 - Options, none executed: (a) leave as is if the content is judged non-sensitive (it is generic process guidance); (b) delete the single release asset (`gh release delete-asset`); (c) rewrite history of the six repositories with a history-filter tool and force-push (disruptive: every clone and the alpha.45-48 tags change; GitHub keeps commit SHAs reachable until support purges them); (d) make the repositories private until decided. Each outward-facing option needs the owner's explicit go.
-- `sql-wasm.wasm` (SQLite, Emscripten): terms not restated in the sql.js licence file, NOT VERIFIED.
+- `sql-wasm.wasm`: origin established (unmodified `sql.js@1.14.2`), see the round 13 addendum; open: the unlicensed `extension-functions.c` inside it and the missing Emscripten/musl notice.
 - The checks above find no match in the sources I could reach; they are not a legal clearance. Private sources cannot be checked.
 - The Marketplace `owner.name` ("Praxis") and `author` of the generated BA ZIP manifest are consistent with `dfuture-co` only where the instruction applied.
 
@@ -29,6 +29,49 @@ Owner statement applied: Praxis is an internal company project; the `<corporate-
 2. The legal name behind `Copyright 2026 dfuture-co` (NOTICE was not changed).
 3. That the corporate Apache-2.0 grant covers all material created since 2026-08-25, including the Jira integration and prompts (the audit found no third-party origin; legal confirmation is the rights holder's).
 4. The MIT attribution wording for `grill-cr` (applied as above).
+
+---
+
+## Round 13 addendum (2026-10-29): dataset content assessment, `sql-wasm.wasm`, knowledge check
+
+No file of the release changed in this round; only documents.
+
+### A. What the eight `company/**` files actually contain (read in full from commit `7e5423f`)
+
+Factual reading, no legal conclusion.
+
+| File | Content | Company-specific facts |
+|---|---|---|
+| `rules/task-schema.md` | task fields (type, summary, acceptance criteria, fix version) | none |
+| `rules/review-checklist.md` | five merge-review checks (Developer-to-Quality handoff, intention, `FIXME-CRITICAL` markers, tests vs AC, deviation records); "combat CI remains the deployment gate" | a wording ("combat CI") |
+| `rules/root-cause.md` | root cause before workaround | none |
+| `rules/sprint-process.md` | work packages of at most 5 business days, definition of ready | none |
+| `rules/defect-standard.md` | BUG pages, duplicate reports, return events | none |
+| `rules/tracker-workflow.md` | four procedural gates; front matter says "Company retired Jira Server ... binding needs Linear review" | the statement that Jira Server was retired and that the current tracker is Linear |
+| `precedents/sync-within-dc.md` | prefer synchronous HTTP within one datacenter | "two company services" (no names) |
+| `product/demo/precedents/async-queue-gds.md` | queue between order and billing services | the label "Product GDS" and one sentence about billing incidents |
+
+Checked: no names of people or customers, no hosts or URLs, no credentials, no prices, no contracts, no code, no data; 5,295 bytes in all. The vocabulary is Praxis's own workflow (BA-to-Architect handoff, final-arbiter, Quality review, finding-lift, change-spec, Definition of Ready, BUG/CR pages), not a general corporate policy. **Assessment: general process rules; the only facts about the company are the retired Jira Server, Linear as the current tracker, a product label "GDS" with an order/billing service pair, and an unspecified billing incident; none is a credential or personal or customer data.** What cannot be read from the files, and was not assumed: whether the sentences were condensed from a document that carries its own confidentiality marking (the labels `<handbook-label-1>` and `<handbook-label-2>` say so but point at nothing available).
+
+### B. `sql-wasm.wasm`: origin, versions, licences
+
+| Question | Finding (verified) |
+|---|---|
+| What is shipped | `praxis-runtime/plugins/runtime/server/sql-wasm.wasm`, the Marketplace stage copy and the copy inside the `.mcpb`: three byte-identical files, 658,410 bytes, sha256 `38c14f6e379210bc942bdc4ebca44e7bfdb4318ecc1c72ca666a28fdce96670a` |
+| Exact upstream | `sql.js@1.14.2` (npm, `dist/sql-wasm.wasm`; registry integrity `sha512-3ZGPovObMF...YFcw==`, `gitHead 1d5db4546e5feb944a3415739eb2a54103b54882`) and the GitHub Release `sql-js/sql.js` `v1.14.2` (2026-08-14), asset `sqljs-wasm.zip`: the file in both has the same sha256 as ours. Provenance of the bytes: established, unmodified upstream binary. |
+| What is inside | SQLite 3.49.1 (check-in line "2025-02-18 13:38:58 873d4e27...", amalgamation `sqlite-amalgamation-3490100`, SHA3 pinned in the upstream Makefile); the SQLite contrib file `extension-functions.c` by Liam Healy (the SQL functions `padl`, `stdev`, `charindex` and others are present in the binary; the file's SHA-1 equals the one pinned in the upstream Makefile); compiled with Emscripten (the upstream devcontainer pins 5.0.0; the binary reports `COMPILER=clang-23.0.0` and has no producers section, so the exact toolchain of the release build is not provable). Built with `-Oz`, no load-extension, FTS3, single-threaded. |
+| Our use | The Quality service stores reviews in SQLite; no SQL in `apps/quality-service` or `packages/mcp` calls the extension functions. |
+| SQLite | Public domain (sqlite.org/copyright.html): no notice required. |
+| sql.js | MIT, "Copyright (c) 2017 sql.js authors", plus Makefile portions MIT "Copyright 2017 Ryusei Yamaguchi": already shipped in `THIRD-PARTY-NOTICES.md` (Runtime, MCPB). |
+| Emscripten | Dual MIT / University of Illinois-NCSA for the Emscripten runtime and libraries; the compiled output links Emscripten's libc, whose code is MIT "Copyright 2005-2020 Rich Felker, et al." (musl). The wasm has no embedded copyright text and `THIRD-PARTY-NOTICES.md` does **not** yet carry the Emscripten or musl notice. Exposure: low (permissive), but a MIT notice for statically linked code is customary; nothing in the files proves which Emscripten libraries were linked. |
+| Open point | `extension-functions.c` has no licence statement in the file; the SQLite contrib archive page calls these files unsupported, historical, "use at your own risk" and states no licence. sql.js has redistributed it under its own MIT licence for years; Praxis inherits that situation and cannot settle it. |
+| Reproducibility | Not rebuilt here (no Emscripten toolchain). The binary is verifiably the upstream release artefact; its internals are as documented by upstream. |
+
+Options: (1) accept as inherited from sql.js and add the Emscripten (MIT and UIUC) and musl MIT notices to the Runtime `THIRD-PARTY-NOTICES.md` (notice-only change; rebuilds the MCPB and restages Marketplace; not applied); (2) accept as is, document the risk (what this round does); (3) ask sql.js and the file's author for a licence statement; (4) build a Praxis-owned wasm without `extension-functions.c` from a pinned SQLite amalgamation and Emscripten (verified build, a release-content change); (5) later replace sql.js by the official SQLite WebAssembly build (dependency change). None is needed for the build to work.
+
+### C. Knowledge and templates after the removal
+
+`npm ci` installs `@praxis/knowledge` 0.1.0-alpha.49 from the vendored tarball: `dataset/` holds only `templates/precedent.md`. With that installed package: `praxis-knowledge slice` on a project corpus lists the rule for `ba/research`, lists the precedent created from the shipped template for `architect/plan`, and `precedent --path` parses it into the four sections. The Runtime and roles read a project's own `knowledge.path`; nothing reads a bundled corporate corpus. Earlier evidence on the same files (not rerun): Runtime MCP 253/253, knowledge/plugin-sdk/cli suites, `knowledge-external-acceptance` on neutral fixtures, all `verify` exit 0.
 
 ---
 

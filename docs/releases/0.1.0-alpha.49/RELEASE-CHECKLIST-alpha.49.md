@@ -33,7 +33,7 @@ Status 2026-10-29: **release candidate prepared locally, not published.** Everyt
 
 **Closed:** corporate dataset removed from every package (vendor tarballs rebuilt) and from the Core tree; `grill-cr` MIT attribution (comment, BA THIRD-PARTY-NOTICES in repo, plugin, stage and ZIP); personal e-mail removed, `author` dfuture-co everywhere; internal host, developer paths removed from sources, messages, tests and release documents; archive-content gate in `verify`.
 
-**Residual risks (not blockers for the artifacts):** the dataset is still in the public git history of the six repositories, in the public release asset `v0.1.0-alpha.47` of praxis-core (2 downloads) and in the alpha.48 vendor tarballs of the public masters; `sql-wasm.wasm` internals NOT VERIFIED; the audit is "no match found", not legal clearance.
+**Residual risks (not blockers for the artifacts):** the dataset is still in the public git history of the six repositories, in the public release asset `v0.1.0-alpha.47` of praxis-core (2 downloads) and in the alpha.48 vendor tarballs of the public masters (content assessed: general process rules); `sql-wasm.wasm` is the unmodified upstream `sql.js@1.14.2` but contains the unlicensed contrib `extension-functions.c` and lacks the Emscripten/musl notice; the audit is "no match found", not legal clearance. All open decisions: `OWNER-DECISIONS-alpha.49.md`.
 
 **Needs the rights holder (owner decision, blocks a "clean" public statement, not the build):**
 1. What to do about the already public dataset: leave, delete the alpha.47 release asset, rewrite history and force-push, or make the repositories private meanwhile. Nothing was done; each option needs a separate go.

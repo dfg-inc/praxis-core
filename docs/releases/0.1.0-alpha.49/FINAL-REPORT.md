@@ -406,3 +406,16 @@ All seven repositories are public on GitHub. The 8 files are in `dfg-inc/praxis-
 - **Closed:** items 1-6 above.
 - **Residual risks:** the dataset in public history/asset; `sql-wasm.wasm` internals NOT VERIFIED; "no match found" is not legal clearance; Marketplace `owner.name`.
 - **Needs the rights holder:** what to do about the public dataset; the legal name behind the NOTICE line; that the corporate Apache-2.0 grant covers all material since 2026-08-25.
+
+---
+
+# Round 13: dataset assessment, sql-wasm provenance, owner decisions (2026-10-29)
+
+Documents only; no release file, licence, version or archive changed; no full audit or E2E rerun. Nothing pushed, merged, tagged, released; no public asset deleted; no history rewritten.
+
+1. **The 8 `company/**` files:** read in full; general process rules, no credentials, personal or customer data, hosts or contracts; company facts limited to a retired Jira Server, Linear as the current tracker, the label "Product GDS" and one unspecified billing incident. Whether the sentences were condensed from a confidential document cannot be read from the files. No legal conclusion (PROVENANCE-AUDIT round 13 A).
+2. **`sql-wasm.wasm`:** byte-identical to the unmodified upstream `sql.js@1.14.2` (npm and the GitHub Release asset, sha256 `38c14f6e…`, three shipped copies identical); contains SQLite 3.49.1 (public domain) and the contrib file `extension-functions.c` (no licence text in the file; not used by Praxis); Emscripten toolchain not provable; notices present: sql.js MIT; missing: Emscripten (MIT/UIUC) and musl (MIT). Risk stated, options in OWNER-DECISIONS (round 13 B).
+3. **Knowledge and templates:** the installed alpha.49 `@praxis/knowledge` ships only `dataset/templates/precedent.md`; `slice` and `precedent` work on a project corpus built from the shipped template. Earlier suites on the same files are not rerun.
+4. **NOTICE:** `Copyright 2026 dfuture-co`, unchanged.
+5. **State:** seven repositories clean, branch `feature/ux-overhaul`, all manifests (69 files) at `0.1.0-alpha.49`, no `v0.1.0-alpha.49` tag anywhere, no uncommitted or untracked files. Files unchanged since the last verify, so no tests were rerun.
+6. **Owner decisions:** `OWNER-DECISIONS-alpha.49.md`; H3 with Reject remains OPEN.
