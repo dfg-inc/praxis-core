@@ -104,6 +104,7 @@ container-type:inline-size;container-name:proto;border:1px solid var(--line);bor
 .proto[data-mode=inspect] .screen [data-el],.proto[data-mode=review] .screen [data-el]{pointer-events:auto;cursor:crosshair}
 .proto[data-mode=inspect] .screen [data-el]:hover,.proto[data-mode=review] .screen [data-el]:hover{outline:2px dashed var(--pc-primary);outline-offset:2px}
 .proto .screen [data-el].sel{outline:2px solid var(--pc-primary);outline-offset:2px}
+.proto[data-mode=inspect] .screen .el,.proto[data-mode=review] .screen .el{margin-top:calc(var(--pc-s)*3.2)}
 .proto[data-mode=inspect] .screen [data-el]:hover::after,.proto[data-mode=inspect] .screen [data-el].sel::after,.proto[data-mode=review] .screen [data-el].sel::after{content:attr(data-tag);position:absolute;top:-10px;right:4px;font-size:11px;padding:0 6px;border-radius:4px;background:var(--pc-primary);color:var(--pc-on-primary);pointer-events:none;z-index:5}
 .proto .pv-cbtn{display:none}.proto[data-mode=review] .pv-cbtn{display:inline-block;pointer-events:auto;position:absolute;top:-10px;left:4px;font-size:11px;padding:0 6px;background:var(--pc-surface);color:var(--pc-text);border:1px solid var(--pc-border);border-radius:4px;cursor:pointer;z-index:5}
 .pv-side .sc{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;margin:4px 0;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
@@ -164,7 +165,7 @@ function renderTable(scr,el){
   if(!c){box.appendChild(emptyMsg('No data'));return box}
   var cols=el.columns&&el.columns.length?el.columns:c.fields.map(function(f){return f.key});
   var rows=rowsFor(el),id=idField(el),target=el.rowOpens&&scr.elements.filter(function(x){return x.id===el.rowOpens})[0],openId=target&&target.param?q[target.param]:undefined;
-  if(!rows.length){var em=emptyMsg((el.emptyText||'No rows').replace(/\{(\w[\w-]*)\}/g,function(m,p){return pv(p,scr)}));if(el.emptyAction){var ab=h('button',{type:'button',class:'btn sec',style:'margin-top:8px','data-fk':'empty-action:'+scr.id+'#'+el.id},[el.emptyAction.label]);ab.addEventListener('click',function(){if(mode!=='preview')return;var n=clone(q);(el.emptyAction.clear||[]).forEach(function(k){delete n[k]});q=n;pushUrl(false);render()});em.appendChild(h('div',{},[ab]))}box.appendChild(em);box.appendChild(h('div',{class:'count','data-count':'0'},['0 of '+(live[el.collection]||[]).length]));return box}
+  if(!rows.length){var noData=!(live[el.collection]||[]).length;var em=emptyMsg(noData?(el.noDataText||'There is no data yet.'):(el.emptyText||'No rows').replace(/\{(\w[\w-]*)\}/g,function(m,p){return pv(p,scr)}));if(el.emptyAction&&!noData){var ab=h('button',{type:'button',class:'btn sec',style:'margin-top:8px','data-fk':'empty-action:'+scr.id+'#'+el.id},[el.emptyAction.label]);ab.addEventListener('click',function(){if(mode!=='preview')return;var n=clone(q);(el.emptyAction.clear||[]).forEach(function(k){delete n[k]});q=n;pushUrl(false);render()});em.appendChild(h('div',{},[ab]))}box.appendChild(em);box.appendChild(h('div',{class:'count','data-count':'0'},['0 of '+(live[el.collection]||[]).length]));return box}
   var t=h('table',{},[]);t.appendChild(h('thead',{},[h('tr',{},cols.map(function(k){var f=fieldDef(el.collection,k);return h('th',{scope:'col'},[f?f.label:k])}))]));
   var tb=h('tbody',{});
   rows.forEach(function(r){
@@ -279,15 +280,21 @@ function render(){
   host.textContent='';
   var scr=screenById(cur);
   $$('#proto-nav button').forEach(function(b){var on=b.getAttribute('data-screen')===cur;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
-  if(document.activeElement!==urlIn)urlIn.value=buildUrl(cur,q);
   var sw=$('#proto-state');
-  if(!scr){sw.textContent='';sw.disabled=true;host.appendChild(h('h2',{},['Page not found']));host.appendChild(emptyMsg('There is no screen "'+cur+'" in this prototype.'));inspectorShow();return}
+  if(!scr){sw.textContent='';sw.disabled=true;host.appendChild(h('h2',{},['Page not found']));host.appendChild(emptyMsg('There is no screen "'+cur+'" in this prototype.'));if(document.activeElement!==urlIn)urlIn.value=buildUrl(cur,q);inspectorShow();return}
   sw.disabled=false;sw.textContent='';var states=scr.states&&scr.states.length?scr.states:['default'];states.forEach(function(s){var o=h('option',{value:s},[s]);if(s===stateName)o.selected=true;sw.appendChild(o)});
   if(states.indexOf(stateName)<0)stateName='default';
   host.appendChild(h('h2',{},[scr.title]));if(scr.description)host.appendChild(h('p',{class:'lead'},[scr.description]));
   var overlays=[];
   if(stateName==='default')normalize(scr);
-  if(stateName!=='default'){host.appendChild(h('div',{class:'state-msg '+stateName,'data-state':stateName},[stateText(scr,stateName)]))}
+  if(stateName==='empty'){
+    // an empty screen still has its controls (filter, tabs, search); only the data areas say there is nothing
+    scr.elements.forEach(function(el){
+      if(!shown(el,scr)||el.kind==='modal'||el.kind==='drawer')return;
+      if(el.kind==='table'||el.kind==='list'){host.appendChild(h('div',{class:'state-msg empty','data-state':'empty'},[stateText(scr,'empty')]));return}
+      var w=renderEl(scr,el);if(w)host.appendChild(w)});
+  }
+  else if(stateName!=='default'){host.appendChild(h('div',{class:'state-msg '+stateName,'data-state':stateName},[stateText(scr,stateName)]))}
   else{
     scr.elements.forEach(function(el){
       if(!shown(el,scr))return;
@@ -308,6 +315,8 @@ function render(){
   if(want){target=by('data-fk',want,host)||target;want=null}
   opened=openNow;
   if(target&&target.focus){try{target.focus({preventScroll:false});if(selStart&&target.setSelectionRange)target.setSelectionRange(selStart[0],selStart[1])}catch(e){}}
+  // the address shows what the page really has AFTER normalization (a dropped order must not linger in it)
+  if(document.activeElement!==urlIn)urlIn.value=buildUrl(cur,q);
   inspectorShow();
 }
 // ---- keyboard: Escape closes the top overlay; Tab stays inside a modal
@@ -445,14 +454,14 @@ ${proto.roles.length ? `<label>Role<select id="proto-role">${proto.roles.map((r)
 <label>Screen state<select id="proto-state"></select></label>
 <button id="proto-reset" type="button">Reset mock data</button></div>
 <div class="pv-grid"><section aria-label="Prototype">
-<div class="pv-device" id="pv-device"><form class="pv-addr" id="proto-addr" autocomplete="off"><span aria-hidden="true">prototype://</span><input id="proto-url" type="text" aria-label="Prototype address (screen and query parameters)" spellcheck="false"></form>
+<div class="pv-device" id="pv-device"><form class="pv-addr" id="proto-addr" autocomplete="off"><span title="A simulated address: the prototype keeps its screen and query parameters in this page's #hash. It is not a real URL of the application.">prototype:// <em>(simulated)</em></span><input id="proto-url" type="text" aria-label="Prototype address (screen and query parameters)" spellcheck="false"></form>
 <div class="proto" id="proto-frame" data-mode="preview" style="${esc(vars)}"><div class="nav" id="proto-nav" role="tablist" aria-label="Screens">${proto.screens.map((s) => `<button type="button" role="tab" data-screen="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>
 <div class="screen" id="proto-screen" tabindex="-1"></div></div></div>
 ${fidelity(proto)}</section>
 <aside class="pv-side" aria-label="Review panel"><div class="pv-tabs" role="tablist"><button type="button" role="tab" data-side="review" aria-selected="true">Review</button><button type="button" role="tab" data-side="inspect" aria-selected="false">Inspector</button><button type="button" role="tab" data-side="scenarios" aria-selected="false">Scenarios${scenarios ? ` (${scenarios})` : ""}</button></div>
 <div class="pv-panel" data-sidepanel="review"><p class="meta">Use the prototype in Preview. Switch to Review and click anything to leave a comment on it.</p><div id="fb-list"></div><button id="fb-add" type="button">Comment on the prototype as a whole</button>${feedback ? `<h3>Earlier comments</h3>${feedback}` : ""}</div>
 <div class="pv-panel" data-sidepanel="inspect" hidden><div id="pv-inspector"></div></div>
-<div class="pv-panel" data-sidepanel="scenarios" hidden><div class="row" style="justify-content:space-between;align-items:center"><span class="meta" id="sc-summary" role="status"></span>${scenarios ? `<button type="button" id="sc-run-all">Run all checks</button>` : ""}</div><div id="pv-scenarios"></div></div></aside></div>
+<div class="pv-panel" data-sidepanel="scenarios" hidden><p class="meta">Self-check: these checks were written together with the prototype and run in this page. They show the prototype does what its author says; they are not an independent test of the application (Quality verifies that against the real code).</p><div class="row" style="justify-content:space-between;align-items:center"><span class="meta" id="sc-summary" role="status"></span>${scenarios ? `<button type="button" id="sc-run-all">Run all checks</button>` : ""}</div><div id="pv-scenarios"></div></div></aside></div>
 ${coverage(state, proto)}`
       : `<p class="meta">Technical prototype of an API: request and response examples, no screens.</p>${proto.endpoints
           .map(

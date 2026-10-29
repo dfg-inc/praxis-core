@@ -244,6 +244,8 @@ export const PrototypeElementSchema = z.object({
   related: z.array(z.object({ collection: z.string(), matchField: z.string(), columns: z.array(z.string()).default([]), label: z.string().optional() })).default([]),
   /** Texts for the situations a reviewer must see: nothing matches / the record is missing / a value is missing. */
   emptyText: z.string().optional(),
+  /** table/list: shown when the collection itself has no rows (as opposed to a filter that matches none). */
+  noDataText: z.string().optional(),
   notFoundText: z.string().optional(),
   missingText: z.string().optional(),
   /** tabs: the tabs. The first is the default. */

@@ -472,3 +472,41 @@ describe("review findings: hostile ids and tokens, focus, history, dangling refe
     rejects((p) => (p.screens[0].elements[1].allowedRoles = ["ghost"]), /role "ghost"/);
   });
 });
+
+describe("E2E backlog: address, empty states, inspector, labels", () => {
+  it("B1: the address bar follows normalization (a dropped order is gone from it as well as from the hash)", () => {
+    const p = open(ordersState());
+    p.choose("Shipped");
+    p.clickRow("A-1003");
+    expect(p.$<HTMLInputElement>("#proto-url").value).toBe("/orders?status=Shipped&order=A-1003");
+    p.choose("New");
+    expect(p.$<HTMLInputElement>("#proto-url").value).toBe("/orders?status=New");
+    expect(p.hashNow()).toBe("#/orders?status=New");
+    const q = open(ordersState(), "#/orders?status=Shipped&order=NOPE");
+    expect(q.$<HTMLInputElement>("#proto-url").value).toBe("/orders?status=Shipped");
+  });
+
+  it("B2/RD5: no data at all and a filter that matches nothing say different things; the empty screen state keeps the controls", () => {
+    const p = open(ordersState());
+    p.choose("Cancelled");
+    expect(p.screen().textContent).toContain("Нет заказов со статусом Cancelled");
+    const ds = p.$<HTMLSelectElement>("#proto-data");
+    ds.value = "none";
+    ds.dispatchEvent(new p.w.Event("change"));
+    p.choose("");
+    expect(p.screen().textContent).toContain("There is no data yet.");
+    expect(p.screen().textContent).not.toContain("Сбросить фильтр");
+    const sw = p.$<HTMLSelectElement>("#proto-state");
+    sw.value = "empty";
+    sw.dispatchEvent(new p.w.Event("change"));
+    expect(p.$("select[data-filter]")).not.toBeNull();
+    expect(p.screen().textContent).toContain("Заказов пока нет.");
+  });
+
+  it("B3/P2/P5: inspect mode reserves room for its tag, the address says it is simulated, the scenarios say they are a self-check", () => {
+    const p = open(ordersState());
+    expect(p.html).toContain("(simulated)");
+    expect(p.html).toMatch(/\.proto\[data-mode=inspect\] \.screen \.el[^{]*\{margin-top/);
+    expect(p.$('[data-sidepanel="scenarios"]').textContent).toContain("not an independent test of the application");
+  });
+});
