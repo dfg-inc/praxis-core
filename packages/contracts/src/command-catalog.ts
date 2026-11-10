@@ -35,11 +35,15 @@ const EXAMPLES: Record<string, Record<string, unknown>> = {
   "waive-coverage": { action: "waive-coverage", kind: "prototype", reason: "pure refactor, nothing to show" },
 };
 
+/** What to do when the interface the user asked for is not a table or a form. Shown with a refused element kind and in the set-prototype notes. */
+export const PATTERN_HINT =
+  "A chat, message feed, comment thread or journal shown as messages is kind conversation (conversation: authorField, timeField, textField, outgoingValues, voiceField, attachments, composer). Any other pattern no kind represents (a board, a calendar, a timeline, a map-like layout) is kind custom: HTML, CSS and script in a sandboxed frame, with reason and parts. Never show such a pattern as a table or encode its look as a data column (\"Side in chat\"); if neither fits, tell the user what cannot be shown and record it in limitations.";
+
 const USE: Record<string, string> = {
   "revise-acceptance": "Change the TEXT of one or more existing acceptance criteria, each by its stable id (REQ-...-AC-nn). Only those criteria change: their revision goes up, their review returns to pending, and the earlier decision and remark are kept as 'previous'. Other criteria are not touched. expectedRevision (optional) refuses the edit if the criterion changed since you read it.",
   "revise-requirement": "Change the statement of a whole requirement (its id is REQ-...). It does not take an acceptance criterion id; for one criterion use revise-acceptance.",
-  "set-prototype": "Build the prototype as something the reviewer can USE, not a set of static screens: a filter element (param, filters) narrows a table, a click on a row (rowOpens) opens a drawer or modal (param, idField, detailFields, related, withinTable, onMissing) and both live in the URL query; add tabs, showWhen, required fields, datasets (empty, legacy records) and scenarios with expect so the situations can be checked in the page. Link every element to its REQ and AC ids and list what it does not reproduce in limitations. Tokens come from praxis_frontend_discover. See docs/workflow-stages.md, Interactive prototype.",
-  "update-prototype": "Operations include set-dataset, set-scenario and set-meta (limitations) next to the screen, element and mock operations.",
+  "set-prototype": `Build the prototype as something the reviewer can USE, not a set of static screens: a filter element (param, filters) narrows a table, a click on a row (rowOpens) opens a drawer or modal (param, idField, detailFields, related, withinTable, onMissing) and both live in the URL query; add tabs, showWhen, required fields, datasets (empty, legacy records) and scenarios with expect so the situations can be checked in the page. Link every element to its REQ and AC ids and list what it does not reproduce in limitations. Tokens come from praxis_frontend_discover. Show the interface the user asked for, not the nearest table: ${PATTERN_HINT} See docs/workflow-stages.md, Interactive prototype.`,
+  "update-prototype": "Operations include set-dataset, set-scenario and set-meta (limitations) next to the screen, element and mock operations. To turn a table into a chat, update-element with kind conversation and conversation settings; keep the other elements as they are.",
   "review-requirements": "Record marks and remarks on criteria, change scope, add or remove criteria. To only reword existing criteria prefer revise-acceptance.",
 };
 
@@ -67,5 +71,8 @@ export function commandCatalog(): CommandInfo[] {
 export function explainCommandError(error: unknown): string | undefined {
   if (!(error instanceof z.ZodError)) return undefined;
   const lines = error.issues.slice(0, 8).map((issue) => `${issue.path.join(".") || "(command)"}: ${issue.message}`);
-  return `the command is invalid: ${lines.join("; ")}. praxis_workflow_commands lists every action with its fields and an example.`;
+  // an element kind the Viewer does not have: say what to do instead, so the agent does not fall back to a table
+  const elementKind = error.issues.some((issue) => issue.code === "invalid_enum_value" && issue.path.includes("elements") && issue.path[issue.path.length - 1] === "kind");
+  const hint = elementKind ? ` ${PATTERN_HINT}` : "";
+  return `the command is invalid: ${lines.join("; ")}.${hint} praxis_workflow_commands lists every action with its fields and an example.`;
 }

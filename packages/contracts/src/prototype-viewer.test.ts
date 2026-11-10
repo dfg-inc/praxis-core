@@ -468,7 +468,7 @@ describe("review findings: hostile ids and tokens, focus, history, dangling refe
     rejects((p) => (p.screens[0].elements[1].filters = [{ param: "ghost", field: "status" }]), /filters by "ghost"/);
     rejects((p) => (p.screens[0].elements[1].emptyAction.clear = ["ghost"]), /clears "ghost"/);
     rejects((p) => (p.scenarios[0].expect.query = { ghost: "1" }), /query parameter "ghost"/);
-    rejects((p) => (p.scenarios[0].expect.rows = [{ element: "status", count: 1 }]), /not a table or list/);
+    rejects((p) => (p.scenarios[0].expect.rows = [{ element: "status", count: 1 }]), /not a table, list or conversation/);
     rejects((p) => (p.scenarios[0].expect.overlay = [{ element: "tbl", state: "open" }]), /not a drawer or modal/);
     rejects((p) => delete p.screens[0].elements[2].param, /needs a param/);
     rejects((p) => (p.screens[0].elements[2].collection = undefined), /./);

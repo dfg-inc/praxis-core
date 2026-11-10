@@ -620,6 +620,7 @@ export { parseStrict, unknownParameters } from "./command-strict.js";
 export { canonicalText } from "./human-acts.js";
 export { renderReview, renderRequirementsReview, renderPrototypeReview, renderStoryPlanReview, renderStoriesReview } from "./review-html.js";
 export type { RenderReviewOptions } from "./review-html.js";
+export { customFrameDocument, CUSTOM_FRAME_CSP } from "./prototype-viewer.js";
 
 // Instruction precedence, deterministic skill plan, untrusted-content handling.
 export * from "./context-trust.js";

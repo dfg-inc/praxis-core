@@ -254,6 +254,7 @@ function elementCapability(element: PrototypeElement): StoryCapability | null {
   switch (element.kind) {
     case "table":
     case "list":
+    case "conversation":
     case "drawer":
     case "modal":
       return "view";
@@ -271,9 +272,20 @@ function elementCapability(element: PrototypeElement): StoryCapability | null {
     case "form":
     case "field":
       return "create";
+    case "custom":
+      return "view";
     default:
       return null;
   }
+}
+
+/** The requirements and criteria an element serves: its own links and, for a custom element, those of its parts. */
+export function elementLinks(element: PrototypeElement): { requirementIds: string[]; acIds: string[] } {
+  const parts = element.custom?.parts ?? [];
+  return {
+    requirementIds: [...new Set([...element.requirementIds, ...parts.flatMap((p) => p.requirementIds)])],
+    acIds: [...new Set([...element.acIds, ...parts.flatMap((p) => p.acIds)])],
+  };
 }
 
 export type CoverageGap = { requirementId: string; expected: StoryCapability[]; covered: StoryCapability[]; missing: StoryCapability[]; reason: string; /** Per missing capability: which phrase or prototype element asked for it. */ because: Record<string, string> };
@@ -299,16 +311,18 @@ function expectationsFor(state: WorkflowState, requirement: Requirement): Expect
   let uiLinked = false;
   for (const screen of state.prototype?.screens ?? []) {
     for (const element of screen.elements) {
-      if (!element.requirementIds.includes(requirement.id)) continue;
+      const links = elementLinks(element);
+      if (!links.requirementIds.includes(requirement.id)) continue;
       // An element that names the criteria it serves asks for its capability only from the requirements that own one of them: linking a
       // filter to a data-model requirement because one criterion mentions its values must not demand a filter story there.
-      if (element.acIds.length > 0 && !requirement.acceptanceCriteria.some((c) => element.acIds.includes(c.id))) continue;
+      if (links.acIds.length > 0 && !requirement.acceptanceCriteria.some((c) => links.acIds.includes(c.id))) continue;
       uiLinked = true;
       const capability = elementCapability(element);
       if (capability) need(capability, `prototype element ${screen.id}#${element.id} (${element.intent ? `intent ${element.intent}` : element.kind})`);
+      if (element.conversation?.composer) need("create", `prototype element ${screen.id}#${element.id} has a box that adds a message`);
       if (element.allowedRoles.length > 0) need("permissions", `prototype element ${screen.id}#${element.id} is limited to roles`);
     }
-    if (screen.states.some((s) => s !== "default") && screen.elements.some((e) => e.requirementIds.includes(requirement.id))) {
+    if (screen.states.some((s) => s !== "default") && screen.elements.some((e) => elementLinks(e).requirementIds.includes(requirement.id))) {
       need("states", `prototype screen ${screen.id} has states besides default`);
       if (screen.states.includes("denied")) need("permissions", `prototype screen ${screen.id} has a denied state`);
     }
@@ -482,7 +496,11 @@ function dropDanglingRefs(state: WorkflowState): WorkflowState {
   if (state.prototype) {
     const screens = state.prototype.screens.map((screen) => ({
       ...screen,
-      elements: screen.elements.map((e) => ({ ...e, acIds: e.acIds.filter((id) => acIds.has(id)) })),
+      elements: screen.elements.map((e) => ({
+        ...e,
+        acIds: e.acIds.filter((id) => acIds.has(id)),
+        ...(e.custom ? { custom: { ...e.custom, parts: e.custom.parts.map((p) => ({ ...p, acIds: p.acIds.filter((id) => acIds.has(id)) })) } } : {}),
+      })),
     }));
     const endpoints = state.prototype.endpoints.map((e) => ({ ...e, acIds: e.acIds.filter((id) => acIds.has(id)) }));
     next = { ...next, prototype: { ...state.prototype, screens, endpoints } };
@@ -873,9 +891,10 @@ function validatePrototypeBehaviour(prototype: Prototype, reqIds: Set<string>, a
       if (element.idField && element.collection) needField(element.idField, "id field");
       if (element.withinTable) {
         const t = screenElements.get(screen.id)?.get(element.withinTable);
-        if (!t || !(t.kind === "table" || t.kind === "list") || t.collection !== element.collection)
-          throw missing("PROTOTYPE_INVALID", `${where} withinTable ${element.withinTable} must be a table on the same screen over the same collection`);
+        if (!t || !(t.kind === "table" || t.kind === "list" || t.kind === "conversation") || t.collection !== element.collection)
+          throw missing("PROTOTYPE_INVALID", `${where} withinTable ${element.withinTable} must be a table, list or conversation on the same screen over the same collection`);
       }
+      validatePattern(prototype, element, where, fieldsOf, reqIds, acIds);
       for (const rel of element.related) {
         const rk = fieldsOf.get(rel.collection);
         if (!rk) throw missing("PROTOTYPE_INVALID", `${where} related collection ${rel.collection} does not exist`);
@@ -929,7 +948,8 @@ function validatePrototypeBehaviour(prototype: Prototype, reqIds: Set<string>, a
     for (const r of scenario.expect?.rows ?? []) {
       const e = elements?.get(r.element);
       if (!e) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects rows of unknown element ${r.element} on ${screen}`);
-      if (e.kind !== "table" && e.kind !== "list") throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects rows of ${r.element}, which is not a table or list`);
+      if (e.kind === "custom") throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects rows of ${r.element}, a custom element: the page cannot look inside its sandboxed frame, so a scenario cannot check it`);
+      if (e.kind !== "table" && e.kind !== "list" && e.kind !== "conversation") throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects rows of ${r.element}, which is not a table, list or conversation`);
     }
     for (const o of scenario.expect?.overlay ?? []) {
       const e = elements?.get(o.element);
@@ -940,6 +960,55 @@ function validatePrototypeBehaviour(prototype: Prototype, reqIds: Set<string>, a
       if (!known.has(k)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses query parameter "${k}", which nothing on ${screen} reads or sets`);
     for (const id of scenario.requirementIds) if (!reqIds.has(id)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} links unknown requirement ${id}`);
     for (const id of scenario.acIds) if (!acIds.has(id)) throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} links unknown acceptance criterion ${id}`);
+  }
+}
+
+const TIME_VALUE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?)?$/;
+
+/** conversation and custom: the settings must name fields and collections that exist, and the data must be what the Viewer can show. */
+function validatePattern(prototype: Prototype, element: PrototypeElement, where: string, fieldsOf: Map<string, Set<string>>, reqIds: Set<string>, acIds: Set<string>): void {
+  if (element.conversation && element.kind !== "conversation") throw missing("PROTOTYPE_INVALID", `${where} has conversation settings but is a ${element.kind}; use kind conversation`);
+  if (element.custom && element.kind !== "custom") throw missing("PROTOTYPE_INVALID", `${where} has custom settings but is a ${element.kind}; use kind custom`);
+  if (element.kind === "conversation") {
+    const c = element.conversation;
+    if (!element.collection) throw missing("PROTOTYPE_INVALID", `${where} is a conversation and needs a collection (one row per message)`);
+    if (!c) throw missing("PROTOTYPE_INVALID", `${where} is a conversation and needs conversation settings (authorField, timeField, textField, outgoingValues ...)`);
+    const keys = fieldsOf.get(element.collection)!;
+    const named: Array<[string, string | undefined]> = [["authorField", c.authorField], ["timeField", c.timeField], ["textField", c.textField], ["outgoingField", c.outgoingField], ["avatarField", c.avatarField], ["metaField", c.metaField], ["voiceField", c.voiceField]];
+    for (const [what, key] of named) if (key !== undefined && !keys.has(key)) throw missing("PROTOTYPE_INVALID", `${where} conversation ${what} "${key}" is not a field of mock collection ${element.collection}`);
+    if (c.attachments) {
+      const a = c.attachments;
+      const ak = fieldsOf.get(a.collection);
+      if (!ak) throw missing("PROTOTYPE_INVALID", `${where} conversation attachments use unknown mock collection ${a.collection}`);
+      for (const f of [a.matchField, a.nameField, a.typeField, a.sizeField]) if (f !== undefined && !ak.has(f)) throw missing("PROTOTYPE_INVALID", `${where} conversation attachment field "${f}" is not a field of ${a.collection}`);
+    }
+    if (c.composer) {
+      if (!c.textField) throw missing("PROTOTYPE_INVALID", `${where} conversation composer needs textField (where the typed text goes)`);
+      for (const k of Object.keys(c.composer.values)) if (!keys.has(k)) throw missing("PROTOTYPE_INVALID", `${where} conversation composer value "${k}" is not a field of ${element.collection}`);
+      const author = c.composer.values[c.authorField] ?? ((c.outgoingField ?? c.authorField) === c.authorField ? c.outgoingValues[0] : undefined);
+      if (author === undefined || author === null || author === "") throw missing("PROTOTYPE_INVALID", `${where} conversation composer cannot tell who writes a new message: give outgoingValues or composer.values.${c.authorField}`);
+    }
+    const rowSets = [prototype.mock.find((m) => m.id === element.collection)?.rows ?? [], ...prototype.datasets.map((d) => d.rows[element.collection!] ?? [])];
+    for (const rows of rowSets)
+      for (const row of rows) {
+        const t = row[c.timeField];
+        if (t !== null && t !== undefined && t !== "" && !(typeof t === "string" && TIME_VALUE.test(t))) throw missing("PROTOTYPE_INVALID", `${where} conversation time "${String(t)}" in ${element.collection} is not YYYY-MM-DD or YYYY-MM-DDTHH:MM`);
+        const v = c.voiceField ? row[c.voiceField] : null;
+        if (v !== null && v !== undefined && v !== "" && !(Number(v) >= 0)) throw missing("PROTOTYPE_INVALID", `${where} conversation voice "${String(v)}" in ${element.collection} is not a number of seconds`);
+      }
+  }
+  if (element.kind === "custom") {
+    const c = element.custom;
+    if (!c) throw missing("PROTOTYPE_INVALID", `${where} is custom and needs custom settings: reason (why no structured kind fits) and html`);
+    if (element.rowOpens) throw missing("PROTOTYPE_INVALID", `${where} is custom: its sandboxed frame cannot open a drawer or modal of the page, so rowOpens does not apply`);
+    for (const id of c.collections) if (!fieldsOf.has(id)) throw missing("PROTOTYPE_INVALID", `${where} custom collection ${id} does not exist`);
+    const partIds = new Set<string>();
+    for (const part of c.parts) {
+      if (partIds.has(part.id)) throw missing("PROTOTYPE_INVALID", `${where} has duplicate custom part ${part.id}`);
+      partIds.add(part.id);
+      for (const id of part.requirementIds) if (!reqIds.has(id)) throw missing("PROTOTYPE_INVALID", `${where} part ${part.id} links unknown requirement ${id}`);
+      for (const id of part.acIds) if (!acIds.has(id)) throw missing("PROTOTYPE_INVALID", `${where} part ${part.id} links unknown acceptance criterion ${id}`);
+    }
   }
 }
 

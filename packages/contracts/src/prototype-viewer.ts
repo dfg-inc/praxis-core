@@ -118,7 +118,73 @@ details.pv-cov>summary,details.pv-about>summary{cursor:pointer;padding:10px 14px
 details.pv-cov .covbody,details.pv-about .covbody{padding:0 14px 12px}
 .cov-req{border-top:1px solid var(--line);padding:8px 0}.cov-req>summary{cursor:pointer}.cov-req ul{margin:4px 0;padding-left:20px;font-size:13px}
 .cov-req .gt{border:0;background:none;color:var(--accent);padding:0;text-decoration:underline;font-size:13px}
+.proto .cv{border:1px solid var(--pc-border);border-radius:var(--pc-r);background:var(--pc-surface);overflow:hidden}
+.proto .cv-feed{height:clamp(320px,62vh,620px);overflow-y:auto;overscroll-behavior:contain;padding:calc(var(--pc-s)*.5) calc(var(--pc-s)*1.5) calc(var(--pc-s)*1.5)}
+.proto .cv-feed>.state-msg{margin-top:calc(var(--pc-s)*2)}
+.proto .cv-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.proto .cv-day{align-self:center;margin:calc(var(--pc-s)*1.5) 0 calc(var(--pc-s)*.5);padding:2px 12px;border-radius:999px;background:var(--pc-bg);border:1px solid var(--pc-border);font-size:12px;color:var(--pc-muted)}
+.proto .cv-msg{display:flex;gap:8px;align-items:flex-end;max-width:min(68%,580px)}
+.proto .cv-msg.in{align-self:flex-start}.proto .cv-msg.out{align-self:flex-end;flex-direction:row-reverse}
+.proto .cv-msg.first{margin-top:calc(var(--pc-s)*.75)}
+.proto .cv-av{flex:none;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;background:var(--av,#5b6475)}
+.proto .cv-msg:not(.first) .cv-av{visibility:hidden}.proto .cv-msg.out .cv-av{display:none}
+.proto .cv-b{min-width:0;padding:6px 11px 5px;border-radius:calc(var(--pc-r) + 4px);background:var(--pc-bg);border:1px solid var(--pc-border);box-shadow:0 1px 1px rgba(0,0,0,.05);overflow-wrap:anywhere}
+.proto .cv-msg.in .cv-b{border-bottom-left-radius:4px}
+.proto .cv-msg.out .cv-b{background:color-mix(in srgb,var(--pc-primary) 13%,var(--pc-bg));border-color:color-mix(in srgb,var(--pc-primary) 32%,var(--pc-bg));border-bottom-right-radius:4px}
+.proto .cv-who{font-size:12px;font-weight:700;margin:0 0 2px;color:var(--pc-primary)}.proto .cv-msg.out .cv-who{text-align:right;color:var(--pc-muted)}
+.proto .cv-text{white-space:pre-wrap}
+.proto .cv-foot{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px;align-items:center;font-size:11px;color:var(--pc-muted);margin-top:2px}
+.proto .cv-tag{border:1px solid var(--pc-border);border-radius:999px;padding:0 6px}
+.proto .cv-msg[tabindex]{cursor:pointer}.proto .cv-msg[tabindex]:hover .cv-b{border-color:var(--pc-primary)}.proto .cv-msg[aria-current=true] .cv-b{outline:2px solid var(--pc-primary);outline-offset:1px}
+.proto .cv-voice{display:flex;align-items:center;gap:8px;min-width:200px;margin:2px 0}
+.proto .cv-play{flex:none;width:32px;height:32px;border-radius:50%;border:0;padding:0;background:var(--pc-primary);color:var(--pc-on-primary);font-size:12px;cursor:pointer}
+.proto .cv-wave{position:relative;flex:0 1 150px;min-width:60px;height:24px;display:flex;align-items:center;justify-content:space-between;overflow:hidden}
+.proto .cv-wave i{flex:none;width:3px;border-radius:2px;background:color-mix(in srgb,var(--pc-text) 28%,transparent)}
+.proto .cv-wave::after{content:"";position:absolute;left:0;top:0;bottom:0;width:0;border-radius:3px;background:color-mix(in srgb,var(--pc-primary) 34%,transparent)}
+.proto .cv-voice[data-playing] .cv-wave::after{animation:pvvoice var(--dur,10s) linear forwards}
+@keyframes pvvoice{to{width:100%}}
+.proto .cv-dur{flex:none;white-space:nowrap;font-size:12px;color:var(--pc-muted);font-variant-numeric:tabular-nums}.proto .cv-mock{font-size:11px;color:var(--pc-muted);font-style:italic}
+.proto .cv-att{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 2px}
+.proto .cv-photo{margin:0;width:136px;border:1px solid var(--pc-border);border-radius:8px;overflow:hidden;background:var(--pc-bg);font-size:11px}
+.proto .cv-photo .ph{height:84px;display:grid;place-items:center;color:var(--pc-muted);background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--pc-primary) 10%,var(--pc-bg)) 0 10px,color-mix(in srgb,var(--pc-primary) 18%,var(--pc-bg)) 10px 20px)}
+.proto .cv-photo figcaption{padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.proto .cv-doc{display:flex;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--pc-border);border-radius:8px;background:var(--pc-bg);max-width:270px;font-size:12px}
+.proto .cv-doc .nm{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.proto .cv-doc .sz{display:block;font-size:11px;color:var(--pc-muted)}
+.proto .cv-ext{flex:none;font-size:10px;font-weight:800;padding:6px 5px;border-radius:4px;background:var(--pc-danger);color:#fff}
+.proto .cv-compose{display:flex;gap:var(--pc-s);padding:var(--pc-s);border-top:1px solid var(--pc-border);background:var(--pc-bg)}.proto .cv-compose input{flex:1;min-width:0}
+@container proto (max-width:620px){.proto .cv-msg{max-width:94%}.proto .cv-feed{height:clamp(300px,60vh,560px);padding:4px 8px 10px}.proto .cv-photo{width:112px}.proto .cv-compose input{width:auto}}
+.proto iframe.pv-custom{display:block;width:100%;border:1px solid var(--pc-border);border-radius:0 0 var(--pc-r) var(--pc-r);background:var(--pc-bg)}
+.proto .pv-custom-cap{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:3px 10px;border:1px solid var(--pc-border);border-bottom:0;border-radius:var(--pc-r) var(--pc-r) 0 0;background:var(--pc-surface);font-size:11px;color:var(--pc-muted)}
+.proto .pv-custom-cap strong{color:var(--pc-text)}.proto .pv-custom-cap .stolen{color:var(--pc-danger)}
+.proto[data-mode=inspect] .screen iframe.pv-custom,.proto[data-mode=review] .screen iframe.pv-custom{pointer-events:auto}
 `;
+
+/**
+ * The sandboxed frame of a custom element. Its own policy comes first, so whatever the markup does, the frame has no network
+ * (also in the offline copy, which has no server policy); the sandbox attribute gives it an opaque origin with no access to the page.
+ */
+export const CUSTOM_FRAME_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'";
+const CUSTOM_FRAME_CSS = `:root{--pc-bg:var(--p-background,#fff);--pc-text:var(--p-text,#1d2330);--pc-primary:var(--p-primary,#2457d6);--pc-on-primary:var(--p-on-primary,#fff);--pc-danger:var(--p-danger,#b42318);--pc-surface:var(--p-surface,color-mix(in srgb,var(--pc-text) 4%,var(--pc-bg)));--pc-border:var(--p-border,color-mix(in srgb,var(--pc-text) 16%,var(--pc-bg)));--pc-muted:color-mix(in srgb,var(--pc-text) 62%,var(--pc-bg));--pc-r:var(--p-radius,8px);--pc-s:var(--p-space,8px)}
+*{box-sizing:border-box}html,body{margin:0;background:var(--pc-bg);color:var(--pc-text);font:14px/1.45 var(--p-font,system-ui,-apple-system,"Segoe UI",sans-serif)}
+html[data-praxis-mode=inspect] [data-praxis-part],html[data-praxis-mode=review] [data-praxis-part]{cursor:crosshair}
+html[data-praxis-mode=inspect] [data-praxis-part]:hover,html[data-praxis-mode=review] [data-praxis-part]:hover{outline:2px dashed var(--pc-primary);outline-offset:2px}
+[data-praxis-part].praxis-sel{outline:2px solid var(--pc-primary);outline-offset:2px}`;
+/** Runs inside the frame before the part's own script: receives data and the mode, and in Inspect/Review reports which part was clicked. */
+const CUSTOM_FRAME_BRIDGE = `(function(){var mode='preview',sel='';var P=window.praxis={data:null,mode:mode,onData:null};
+function paint(){document.documentElement.setAttribute('data-praxis-mode',mode);Array.prototype.forEach.call(document.querySelectorAll('[data-praxis-part]'),function(n){n.classList.toggle('praxis-sel',n.getAttribute('data-praxis-part')===sel)})}
+addEventListener('message',function(e){if(e.source!==parent)return;var m=e.data;if(!m||typeof m!=='object')return;
+if(m.type==='praxis:data'||m.type==='praxis:mode'){mode=P.mode=String(m.mode||'preview');sel=String(m.selected||'');paint()}
+if(m.type==='praxis:data'){P.data=m.data;try{if(typeof P.onData==='function')P.onData(m.data)}catch(err){console.error(err)}try{dispatchEvent(new CustomEvent('praxis:data',{detail:m.data}))}catch(err){}}});
+document.addEventListener('click',function(e){if(mode==='preview')return;e.preventDefault();e.stopPropagation();var t=e.target&&e.target.closest?e.target.closest('[data-praxis-part]'):null;parent.postMessage({type:'praxis:pick',part:t?t.getAttribute('data-praxis-part'):''},'*')},true);
+parent.postMessage({type:'praxis:ready'},'*')})();`;
+/** Script text cannot close its own tag, so a part's "</script>" stays inside the frame's script. */
+const scriptText = (s: string) => s.replace(/<\/(script)/gi, "<\\/$1");
+const styleText = (s: string) => s.replace(/<\/(style)/gi, "<\\/$1");
+
+/** The whole document of a custom element's frame, built on the page from data (never inserted into the page itself). */
+export function customFrameDocument(custom: { html: string; css: string; script: string }, vars: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CUSTOM_FRAME_CSP}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{${vars}}${CUSTOM_FRAME_CSS}</style><style>${styleText(custom.css)}</style></head><body>${custom.html}<script>${CUSTOM_FRAME_BRIDGE}</script><script>${scriptText(custom.script)}</script></body></html>`;
+}
 
 export const PROTOTYPE_SCRIPT = String.raw`
 // prototype viewer
@@ -127,6 +193,7 @@ var P=D.proto;P.datasets=P.datasets||[];P.scenarios=P.scenarios||[];P.screens=P.
 var host=$('#proto-screen'),frame=$('#proto-frame'),urlIn=$('#proto-url'),device=$('#pv-device');
 var startId=P.startScreen||(P.screens[0]&&P.screens[0].id);
 var live={},search={},form={},formErr={},dsId='',role0=(P.roles&&P.roles[0])||'',role=role0,stateName='default',mode='preview',sel=null,cur=startId,q={},opened={},opener=null,results={},curScenario=null;
+var drafts={},liveFrames={},pendingScroll=[],newSeq=0,FRAMES=D.frames||{};
 function by(attr,val,root){return $$('['+attr+']',root||document).filter(function(e){return e.getAttribute(attr)===val})[0]||null}
 function clone(x){return JSON.parse(JSON.stringify(x))}
 function h(t,a,c){var e=document.createElement(t);for(var k in (a||{})){if(a[k]===null||a[k]===undefined)continue;if(k==='class')e.className=a[k];else e.setAttribute(k,a[k])}(c||[]).forEach(function(x){if(x===null||x===undefined)return;e.appendChild(typeof x==='string'?document.createTextNode(x):x)});return e}
@@ -160,12 +227,15 @@ function badge(v,f){var i=f&&f.options?f.options.indexOf(String(v)):-1;return h(
 function valueNode(f,v,el,table){if(v===null||v===undefined||v===''){return h('span',{class:'miss'},[el.missingText||(table?'—':'Not provided')])}if(f&&f.type==='enum')return badge(v,f);return T(fmt(v,f))}
 function emptyMsg(text){return h('div',{class:'state-msg','data-empty':'1'},[text])}
 // ---- element renderers
+// nothing matches (with the button that clears the filters) or there is no data at all
+function emptyBlock(scr,el){var noData=!(live[el.collection]||[]).length;var em=emptyMsg(noData?(el.noDataText||'There is no data yet.'):(el.emptyText||'No rows').replace(/\{(\w[\w-]*)\}/g,function(m,p){return pv(p,scr)}));if(el.emptyAction&&!noData){var ab=h('button',{type:'button',class:'btn sec',style:'margin-top:8px','data-fk':'empty-action:'+scr.id+'#'+el.id},[el.emptyAction.label]);ab.addEventListener('click',function(){if(mode!=='preview')return;var n=clone(q);(el.emptyAction.clear||[]).forEach(function(k){delete n[k]});q=n;pushUrl(false);render()});em.appendChild(h('div',{},[ab]))}return em}
+function rowTarget(scr,el){return el.rowOpens&&scr.elements.filter(function(x){return x.id===el.rowOpens})[0]}
 function renderTable(scr,el){
   var box=h('div',{});var c=collDef(el.collection);
   if(!c){box.appendChild(emptyMsg('No data'));return box}
   var cols=el.columns&&el.columns.length?el.columns:c.fields.map(function(f){return f.key});
-  var rows=rowsFor(el),id=idField(el),target=el.rowOpens&&scr.elements.filter(function(x){return x.id===el.rowOpens})[0],openId=target&&target.param?q[target.param]:undefined;
-  if(!rows.length){var noData=!(live[el.collection]||[]).length;var em=emptyMsg(noData?(el.noDataText||'There is no data yet.'):(el.emptyText||'No rows').replace(/\{(\w[\w-]*)\}/g,function(m,p){return pv(p,scr)}));if(el.emptyAction&&!noData){var ab=h('button',{type:'button',class:'btn sec',style:'margin-top:8px','data-fk':'empty-action:'+scr.id+'#'+el.id},[el.emptyAction.label]);ab.addEventListener('click',function(){if(mode!=='preview')return;var n=clone(q);(el.emptyAction.clear||[]).forEach(function(k){delete n[k]});q=n;pushUrl(false);render()});em.appendChild(h('div',{},[ab]))}box.appendChild(em);box.appendChild(h('div',{class:'count','data-count':'0'},['0 of '+(live[el.collection]||[]).length]));return box}
+  var rows=rowsFor(el),id=idField(el),target=rowTarget(scr,el),openId=target&&target.param?q[target.param]:undefined;
+  if(!rows.length){box.appendChild(emptyBlock(scr,el));box.appendChild(h('div',{class:'count','data-count':'0'},['0 of '+(live[el.collection]||[]).length]));return box}
   var t=h('table',{},[]);t.appendChild(h('thead',{},[h('tr',{},cols.map(function(k){var f=fieldDef(el.collection,k);return h('th',{scope:'col'},[f?f.label:k])}))]));
   var tb=h('tbody',{});
   rows.forEach(function(r){
@@ -183,6 +253,128 @@ function renderTable(scr,el){
   box.appendChild(h('div',{class:'count','data-count':String(rows.length)},['Showing '+rows.length+' of '+(live[el.collection]||[]).length]));
   return box
 }
+// ---- conversation: rows as messages
+var AV=['#2f6f9f','#7a4fa0','#9a5b2e','#2e7d6b','#86691c','#b03a5b','#4f6b2a'];
+function blank(v){return v===null||v===undefined||v===''}
+function initials(s){var p=String(s||'').trim().split(/\s+/).filter(Boolean);return (((p[0]||'?')[0]||'?')+((p[1]||'')[0]||'')).toUpperCase()}
+function avColor(s){var x=0;s=String(s||'');for(var i=0;i<s.length;i++)x=(x*31+s.charCodeAt(i))|0;return AV[Math.abs(x)%AV.length]}
+// wall-clock time as written: "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM", never shifted by a time zone
+function tparse(v){var m=/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(String(v===null||v===undefined?'':v));return m?{day:m[1]+'-'+m[2]+'-'+m[3],y:+m[1],mo:+m[2],d:+m[3],hm:m[4]?m[4]+':'+m[5]:'',min:Date.UTC(+m[1],+m[2]-1,+m[3],+(m[4]||0),+(m[5]||0))/60000}:null}
+function dayLabel(t,loc){try{return new Intl.DateTimeFormat(loc||undefined,{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(Date.UTC(t.y,t.mo-1,t.d)))}catch(e){return t.day}}
+function dur(s){s=Math.max(0,Math.round(Number(s)||0));return Math.floor(s/60)+':'+('0'+s%60).slice(-2)}
+function nowStamp(){var d=new Date(),p=function(n){return ('0'+n).slice(-2)};return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes())}
+function isOut(c,r){var f=c.outgoingField||c.authorField;return !blank(r[f])&&(c.outgoingValues||[]).indexOf(String(r[f]))>=0}
+function voiceNode(sec){
+  var w=h('div',{class:'cv-voice','data-voice':String(sec)});
+  var b=h('button',{type:'button',class:'cv-play','aria-pressed':'false','aria-label':'Play voice message ('+dur(sec)+', mock: no audio)'},['\u25B6']);
+  var wave=h('span',{class:'cv-wave','aria-hidden':'true',style:'--dur:'+Math.max(1,Math.round(sec))+'s'});
+  for(var i=0;i<28;i++)wave.appendChild(h('i',{style:'height:'+(25+((i*37+11)%13)*5)+'%'}));
+  var stop=function(){b.setAttribute('aria-pressed','false');b.textContent='\u25B6';w.removeAttribute('data-playing')};
+  // the player is local to the message: no re-render, so the feed keeps its scroll position
+  b.addEventListener('click',function(e){e.stopPropagation();if(mode!=='preview')return;if(b.getAttribute('aria-pressed')==='true'){stop();return}b.setAttribute('aria-pressed','true');b.textContent='\u275A\u275A';w.setAttribute('data-playing','')});
+  b.addEventListener('keydown',function(e){e.stopPropagation()});
+  wave.addEventListener('animationend',stop);
+  w.appendChild(b);w.appendChild(wave);w.appendChild(h('span',{class:'cv-dur'},[dur(sec)]));
+  return h('div',{},[w,h('div',{class:'cv-mock'},['Mock playback: no audio'])])
+}
+function attNode(a,x){
+  var name=blank(x[a.nameField])?'':String(x[a.nameField]),type=a.typeField&&!blank(x[a.typeField])?String(x[a.typeField]):'',size=a.sizeField&&!blank(x[a.sizeField])?String(x[a.sizeField]):'';
+  var photo=/photo|image|picture|img|\u0444\u043e\u0442\u043e|\u0438\u0437\u043e\u0431\u0440|\u043a\u0430\u0440\u0442\u0438\u043d/i.test(type)||(!type&&/\.(jpe?g|png|gif|webp|heic)$/i.test(name));
+  if(photo)return h('figure',{class:'cv-photo','data-att':name,'data-att-kind':'photo'},[h('div',{class:'ph','aria-hidden':'true'},[type||'Photo']),h('figcaption',{},[name+(size?' \u00b7 '+size:'')])]);
+  var ext=(/\.([A-Za-z0-9]{1,5})$/.exec(name)||[])[1];
+  return h('div',{class:'cv-doc','data-att':name,'data-att-kind':'document'},[h('span',{class:'cv-ext','aria-hidden':'true'},[(ext||'file').toUpperCase()]),h('span',{style:'min-width:0'},[h('span',{class:'nm'},[name]),size||type?h('span',{class:'sz'},[[type,size].filter(Boolean).join(' \u00b7 ')]):null])])
+}
+function renderConversation(scr,el){
+  var c=el.conversation||{},box=h('div',{class:'cv'}),key=scr.id+'#'+el.id;
+  if(!collDef(el.collection)||!c.authorField)return emptyMsg('No data');
+  var total=(live[el.collection]||[]).length,rows=rowsFor(el).map(function(r,i){return {r:r,i:i,t:tparse(r[c.timeField])}});
+  // chronological; a message without a time keeps its place at the start; equal times keep the data order
+  rows.sort(function(a,b){var x=a.t?a.t.min:-Infinity,y=b.t?b.t.min:-Infinity;return x===y?a.i-b.i:x-y});
+  var id=idField(el),target=rowTarget(scr,el),openId=target&&target.param?q[target.param]:undefined,gap=c.groupMinutes===undefined?5:c.groupMinutes;
+  var feed=h('div',{class:'cv-feed',tabindex:'0',role:'region','aria-label':(el.label||'Messages')+' ('+rows.length+')','data-feed':key});
+  if(!rows.length)feed.appendChild(emptyBlock(scr,el));
+  else{
+    var list=h('ol',{class:'cv-list'}),prev=null,prevDay=null;
+    rows.forEach(function(m){
+      var r=m.r,t=m.t,day=t?t.day:'';
+      if(day!==prevDay||prevDay===null){list.appendChild(h('li',{class:'cv-day','data-day':day},[t?dayLabel(t,c.locale):(el.missingText||'Date not provided')]));prevDay=day;prev=null}
+      var author=blank(r[c.authorField])?'':String(r[c.authorField]),side=isOut(c,r)?'out':'in';
+      var first=!prev||prev.author!==author||prev.side!==side||!t||!prev.t||t.min-prev.t.min>gap;
+      var rid=String(blank(r[id])?'':r[id]);
+      var li=h('li',{class:'cv-msg '+side+(first?' first':''),'data-row':rid,'data-side':side,'data-author':author});
+      li.appendChild(h('span',{class:'cv-av','aria-hidden':'true',style:'--av:'+avColor(author)},[c.avatarField&&!blank(r[c.avatarField])?String(r[c.avatarField]).slice(0,3):initials(author)]));
+      var b=h('div',{class:'cv-b'});
+      if(first)b.appendChild(h('div',{class:'cv-who'},[author||el.missingText||'Unknown author']));
+      var voice=c.voiceField&&!blank(r[c.voiceField])?Number(r[c.voiceField]):null;
+      if(voice!==null)b.appendChild(voiceNode(voice));
+      var text=c.textField&&!blank(r[c.textField])?String(r[c.textField]):'';
+      if(text)b.appendChild(h('div',{class:'cv-text'},[text]));
+      var att=c.attachments?(live[c.attachments.collection]||[]).filter(function(x){return String(x[c.attachments.matchField])===rid}):[];
+      if(att.length){var g=h('div',{class:'cv-att'});att.forEach(function(x){g.appendChild(attNode(c.attachments,x))});b.appendChild(g)}
+      if(!text&&voice===null&&!att.length)b.appendChild(h('div',{class:'miss'},[el.missingText||'Not provided']));
+      b.appendChild(h('div',{class:'cv-foot'},[c.metaField&&!blank(r[c.metaField])?h('span',{class:'cv-tag'},[String(r[c.metaField])]):null,h('time',{datetime:blank(r[c.timeField])?null:String(r[c.timeField])},[t&&t.hm?t.hm:'\u2014'])]));
+      li.appendChild(b);
+      if(target&&target.param){
+        li.setAttribute('tabindex','0');li.setAttribute('aria-current',String(openId===rid));li.setAttribute('data-fk','row:'+key+':'+rid);
+        var open=function(){if(mode!=='preview')return;opener={fk:li.getAttribute('data-fk')};setParam(target.param,rid)};
+        li.addEventListener('click',open);
+        li.addEventListener('keydown',function(e){if(e.target===li&&(e.key==='Enter'||e.key===' ')){e.preventDefault();open()}});
+      }
+      list.appendChild(li);prev={author:author,side:side,t:t};
+    });
+    feed.appendChild(list);
+  }
+  box.appendChild(feed);pendingScroll.push(feed);
+  if(c.composer&&c.textField){
+    var cp=c.composer,inp=h('input',{type:'text',placeholder:cp.placeholder||'Write a message','aria-label':cp.placeholder||'New message','data-fk':'compose:'+key});
+    if(drafts[key])inp.value=drafts[key];
+    inp.addEventListener('input',function(){drafts[key]=inp.value});
+    var send=h('button',{type:'button',class:'btn','data-fk':'send:'+key},[cp.sendLabel||'Send']);
+    var doSend=function(){if(mode!=='preview')return;var text=inp.value.trim();if(!text)return;
+      var row={};Object.keys(cp.values||{}).forEach(function(k){row[k]=cp.values[k]});
+      // the values of the active filters go into the new message, so it stays in the feed the person is looking at
+      (el.filters||[]).forEach(function(f){var v=pv(f.param);if(v!==''&&!ignored(f,el.collection,v))row[f.field]=v});
+      if(blank(row[c.authorField]))row[c.authorField]=(c.outgoingValues||[])[0];
+      var of=c.outgoingField||c.authorField;if(blank(row[of])&&(c.outgoingValues||[]).length)row[of]=c.outgoingValues[0];
+      row[c.timeField]=nowStamp();row[c.textField]=text;if(blank(row[id]))row[id]='NEW-'+(++newSeq);
+      (live[el.collection]=live[el.collection]||[]).push(row);drafts[key]='';want='compose:'+key;render()};
+    send.addEventListener('click',function(e){e.stopPropagation();doSend()});
+    inp.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();doSend()}});
+    box.appendChild(h('div',{class:'cv-compose'},[inp,send]));
+  }
+  return h('div',{},[box,h('div',{class:'count','data-count':String(rows.length)},['Showing '+rows.length+' of '+total])])
+}
+function flushScroll(){pendingScroll.forEach(function(f){f.scrollTop=f.scrollHeight});pendingScroll=[]}
+// ---- custom: a sandboxed frame. It gets data by postMessage; the page never reads from it beyond a declared part id.
+function frameData(f){var el=f.el,rows={};if(el.collection)rows[el.collection]=clone(rowsFor(el));((el.custom&&el.custom.collections)||[]).forEach(function(id){if(!(id in rows))rows[id]=clone(live[id]||[])});var query=clone(defaults(f.scr));Object.keys(q).forEach(function(k){query[k]=q[k]});return {screen:f.scr.id,query:query,role:role,dataset:dsId,rows:rows}}
+function partOf(key){var i=String(sel||'').indexOf('@');return i>=0&&sel.slice(0,i)===key?sel.slice(i+1):''}
+function postFrame(f,type){try{f.frame.contentWindow.postMessage(type==='praxis:mode'?{type:type,mode:mode,selected:partOf(f.key)}:{type:'praxis:data',mode:mode,selected:partOf(f.key),data:frameData(f)},'*')}catch(e){}}
+function renderCustom(scr,el){
+  var key=scr.id+'#'+el.id,doc=FRAMES[key];
+  if(!el.custom||typeof doc!=='string')return emptyMsg('This custom part could not be loaded.');
+  var fr=h('iframe',{class:'pv-custom',sandbox:'allow-scripts',referrerpolicy:'no-referrer',title:(el.label||'Custom part')+' (sandboxed)','data-frame':key,style:'height:'+Math.max(80,Math.min(2000,Number(el.custom.height)||480))+'px'});
+  // drawn by the page, outside the frame: whatever the part draws inside its box (a button that looks like Accept), it is not this page's
+  var cap=h('div',{class:'pv-custom-cap','data-custom-cap':key},[h('strong',{},['Custom part, sandboxed.']),T(' Controls inside this box only simulate the interface: they cannot save, comment or accept. Use this page\'s own controls.')]);
+  var f={key:key,el:el,scr:scr,frame:fr,cap:cap,tokens:4,at:0};liveFrames[key]=f;
+  fr.addEventListener('load',function(){postFrame(f,'praxis:data')});
+  fr.setAttribute('srcdoc',doc);
+  return h('div',{},[cap,fr])
+}
+// A frame can take the keyboard focus by itself. While the person is typing in this page, or with no user activation at all (a script
+// cannot make one; a click in the frame gives one to this page too), the page takes the focus back, so a part cannot catch what the
+// person types in a comment, and says so above the part. A frame that takes the focus when the person is not typing keeps it until
+// they click elsewhere; it has nowhere to send what it receives.
+var lastFocus=null,lastTab=0,lastType=0;
+function activated(){var ua=navigator.userActivation;return !ua||ua.isActive}
+document.addEventListener('focusin',function(e){if(e.target&&e.target.tagName!=='IFRAME')lastFocus=e.target});
+document.addEventListener('keydown',function(e){if(e.key==='Tab')lastTab=Date.now();else lastType=Date.now()},true);
+// text can arrive without key events (an input method, dictation, a phone keyboard): input in this page counts as typing too
+document.addEventListener('input',function(){lastType=Date.now()},true);
+window.addEventListener('blur',function(){setTimeout(function(){
+  var a=document.activeElement,f=null,now=Date.now();Object.keys(liveFrames).forEach(function(k){if(liveFrames[k].frame===a)f=liveFrames[k]});
+  if(!f||now-lastTab<1000||(activated()&&now-lastType>1500))return;
+  try{if(lastFocus&&lastFocus.isConnected)lastFocus.focus();else a.blur()}catch(e){}
+  if(!f.cap.querySelector('.stolen'))f.cap.appendChild(h('span',{class:'stolen',role:'status'},['This part tried to take the keyboard focus; the page took it back.']))},0)});
 function renderFilter(scr,el){
   var c=collDef(el.collection),f=c&&el.filters&&el.filters[0]?fieldDef(el.collection,el.filters[0].field):null;
   var opts=(el.options&&el.options.length?el.options:((f&&f.options)||[]).map(function(o){return {value:o}}));
@@ -255,6 +447,8 @@ function renderEl(scr,el){
   if(k==='heading')node=h('h3',{},[el.label||el.text||'']);
   else if(k==='text')node=h('p',{style:'margin:0'},[el.text||el.label||'']);
   else if(k==='table'||k==='list')node=renderTable(scr,el);
+  else if(k==='conversation')node=renderConversation(scr,el);
+  else if(k==='custom')node=renderCustom(scr,el);
   else if(k==='filter'&&el.param)node=renderFilter(scr,el);
   else if(k==='tabs'&&el.tabs&&el.tabs.length)node=renderTabs(scr,el);
   else if(k==='search'){var i=h('input',{type:'text',placeholder:el.label||'Search','data-search':el.id,'data-fk':'search:'+el.id,'aria-label':el.label||'Search'});var key=el.collection||'';i.value=el.param?(q[el.param]||''):(search[key]||'');i.addEventListener('input',function(){if(mode!=='preview')return;if(el.param){setParam(el.param,i.value,true)}else{search[key]=i.value;refreshTables()}});node=i}
@@ -265,19 +459,20 @@ function renderEl(scr,el){
   else if(k==='form')node=h('h3',{},[el.label||'']);
   else if((k==='modal'||k==='drawer')&&el.param)return null;
   else node=h('div',{},[el.label||el.text||k]);
-  var wrap=h('div',{class:'el'+(k==='filter'||k==='field'?' row-el':''),'data-el':scr.id+'#'+el.id,'data-kind':k,'data-tag':(el.requirementIds||[]).concat(el.acIds||[]).join(' ')||el.id},[node]);
-  if(sel===scr.id+'#'+el.id)wrap.classList.add('sel');
+  var tag=(el.requirementIds||[]).concat(el.acIds||[]).join(' ')||el.id;
+  var wrap=h('div',{class:'el'+(k==='filter'||k==='field'?' row-el':''),'data-el':scr.id+'#'+el.id,'data-kind':k,'data-tag':k==='custom'?'custom (sandboxed) · '+tag:tag},[node]);
+  if(sel===scr.id+'#'+el.id||String(sel||'').indexOf(scr.id+'#'+el.id+'@')===0)wrap.classList.add('sel');
   var cb=h('button',{type:'button',class:'pv-cbtn','aria-label':'Comment on '+el.id},['comment']);cb.addEventListener('click',function(e){e.stopPropagation();commentFor(scr.id+'#'+el.id)});wrap.appendChild(cb);
   return wrap
 }
 // a search box only narrows the tables: the box itself is never rebuilt, so focus and caret stay where they are
-function refreshTables(){var scr=screenById(cur);if(!scr)return;$$('.el[data-kind=table],.el[data-kind=list]',host).forEach(function(w){var p=w.getAttribute('data-el').split('#');var el=scr.elements.filter(function(e){return e.id===p[1]})[0];if(el)w.replaceChild(renderTable(scr,el),w.firstChild)})}
+function refreshTables(){var scr=screenById(cur);if(!scr)return;$$('.el[data-kind=table],.el[data-kind=list],.el[data-kind=conversation]',host).forEach(function(w){var p=w.getAttribute('data-el').split('#');var el=scr.elements.filter(function(e){return e.id===p[1]})[0];if(el)w.replaceChild(el.kind==='conversation'?renderConversation(scr,el):renderTable(scr,el),w.firstChild)});flushScroll();Object.keys(liveFrames).forEach(function(k){postFrame(liveFrames[k],'praxis:data')})}
 // ---- main render
 var want=null;
 function render(){
   var a=document.activeElement,fk=a&&a.getAttribute&&a.getAttribute('data-fk'),selStart=null;
   if(fk&&a.setSelectionRange&&a.type==='text'){try{selStart=[a.selectionStart,a.selectionEnd]}catch(e){}}
-  host.textContent='';
+  host.textContent='';liveFrames={};pendingScroll=[];
   var scr=screenById(cur);
   $$('#proto-nav button').forEach(function(b){var on=b.getAttribute('data-screen')===cur;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
   var sw=$('#proto-state');
@@ -291,7 +486,7 @@ function render(){
     // an empty screen still has its controls (filter, tabs, search); only the data areas say there is nothing
     scr.elements.forEach(function(el){
       if(!shown(el,scr)||el.kind==='modal'||el.kind==='drawer')return;
-      if(el.kind==='table'||el.kind==='list'){host.appendChild(h('div',{class:'state-msg empty','data-state':'empty'},[stateText(scr,'empty')]));return}
+      if(el.kind==='table'||el.kind==='list'||el.kind==='conversation'){host.appendChild(h('div',{class:'state-msg empty','data-state':'empty'},[stateText(scr,'empty')]));return}
       var w=renderEl(scr,el);if(w)host.appendChild(w)});
   }
   else if(stateName!=='default'){host.appendChild(h('div',{class:'state-msg '+stateName,'data-state':stateName},[stateText(scr,stateName)]))}
@@ -317,6 +512,7 @@ function render(){
   if(target&&target.focus){try{target.focus({preventScroll:false});if(selStart&&target.setSelectionRange)target.setSelectionRange(selStart[0],selStart[1])}catch(e){}}
   // the address shows what the page really has AFTER normalization (a dropped order must not linger in it)
   if(document.activeElement!==urlIn)urlIn.value=buildUrl(cur,q);
+  flushScroll();
   inspectorShow();
 }
 // ---- keyboard: Escape closes the top overlay; Tab stays inside a modal
@@ -328,21 +524,39 @@ document.addEventListener('keydown',function(e){
   else if(e.key==='Tab'&&top.classList.contains('modal')){var f=$$('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])',top).filter(function(x){return !x.disabled});if(!f.length)return;var first=f[0],last=f[f.length-1];if(e.shiftKey&&(document.activeElement===first||document.activeElement===top)){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}
 });
 // ---- modes: Preview (use it), Inspect (what does it cover), Review (comment on it)
-function setMode(m){mode=m;frame.setAttribute('data-mode',m);$$('#pv-mode button').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-mode')===m))});if(m==='inspect')showSide('inspect');if(m==='review')showSide('review')}
+function setMode(m){mode=m;frame.setAttribute('data-mode',m);$$('#pv-mode button').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-mode')===m))});if(m==='inspect')showSide('inspect');if(m==='review')showSide('review');Object.keys(liveFrames).forEach(function(k){postFrame(liveFrames[k],'praxis:mode')})}
 $$('#pv-mode button').forEach(function(b){b.addEventListener('click',function(){setMode(b.getAttribute('data-mode'))})});
 function showSide(name){$$('[data-side]').forEach(function(b){b.setAttribute('aria-selected',String(b.getAttribute('data-side')===name))});$$('[data-sidepanel]').forEach(function(p){p.hidden=p.getAttribute('data-sidepanel')!==name})}
 $$('[data-side]').forEach(function(b){b.addEventListener('click',function(){showSide(b.getAttribute('data-side'))})});
+// A custom frame may only say which declared part was clicked: only in Inspect or Review, only while it has the focus and the page has
+// a user activation (the person clicked into it; where the browser does not expose it, the focus alone), at most four a second. Anything else it sends is ignored; what the page then shows
+// comes from the prototype data, never from the message.
+window.addEventListener('message',function(e){
+  var f=null;Object.keys(liveFrames).forEach(function(k){if(liveFrames[k].frame.contentWindow===e.source)f=liveFrames[k]});
+  if(!f)return;var m=e.data;if(!m||typeof m!=='object'||typeof m.type!=='string')return;
+  if(m.type==='praxis:ready'){postFrame(f,'praxis:data');return}
+  if(m.type!=='praxis:pick'||mode==='preview'||document.activeElement!==f.frame||!activated())return;
+  // a bucket of four picks that refills four a second: clicking is never dropped, a loop of messages is capped
+  var now=Date.now();f.tokens=Math.min(4,f.tokens+(now-f.at)/250);f.at=now;if(f.tokens<1)return;f.tokens-=1;
+  var part=typeof m.part==='string'&&m.part.length<=80?m.part:'';
+  if(!((f.el.custom&&f.el.custom.parts)||[]).some(function(p){return p.id===part}))part='';
+  var key=f.key+(part?'@'+part:'');if(key===sel&&mode==='inspect')return;select(key);if(mode==='review')commentFor(key)});
 host.addEventListener('click',function(e){if(mode==='preview')return;var w=e.target.closest&&e.target.closest('[data-el]');if(!w||(e.target.closest&&e.target.closest('.pv-cbtn')))return;e.preventDefault();e.stopPropagation();select(w.getAttribute('data-el'));if(mode==='review')commentFor(w.getAttribute('data-el'))},true);
-function select(key){sel=key;$$('[data-el]',host).forEach(function(n){n.classList.toggle('sel',n.getAttribute('data-el')===key)});inspectorShow()}
-function elOf(key){var p=String(key||'').split('#');var s=screenById(p[0]);return s?{scr:s,el:s.elements.filter(function(e){return e.id===p[1]})[0]}:null}
-function label(key){var o=elOf(key);return o&&o.el?(o.scr.title+' > '+(o.el.label||o.el.text||o.el.kind)):key}
-function behaviour(el){var out=[];if(el.param&&(el.kind==='filter'||el.kind==='tabs'||el.kind==='drawer'||el.kind==='modal'))out.push('Reads and writes the URL parameter "'+el.param+'"');(el.filters||[]).forEach(function(f){out.push('Rows are narrowed by "'+f.param+'" on field "'+f.field+'"')});if(el.rowOpens)out.push('A click on a row opens '+el.rowOpens);if(el.showWhen)out.push('Shown only while '+el.showWhen.param+(el.showWhen.equals!==undefined?' = '+el.showWhen.equals:el.showWhen.notEquals!==undefined?' is not '+el.showWhen.notEquals:el.showWhen.present?' is set':' is not set'));if(el.allowedRoles&&el.allowedRoles.length)out.push('Roles: '+el.allowedRoles.join(', '));return out}
+function select(key){sel=key;$$('[data-el]',host).forEach(function(n){var k=n.getAttribute('data-el');n.classList.toggle('sel',k===key||String(key||'').indexOf(k+'@')===0)});Object.keys(liveFrames).forEach(function(k){postFrame(liveFrames[k],'praxis:mode')});inspectorShow()}
+// a key is "screen#element", or "screen#element@part" for a declared part of a custom element
+function elOf(key){var p=String(key||'').split('#');var s=screenById(p[0]);if(!s)return null;var ep=String(p[1]||'').split('@');var el=s.elements.filter(function(e){return e.id===ep[0]})[0];var part=el&&ep[1]&&el.custom?(el.custom.parts||[]).filter(function(x){return x.id===ep[1]})[0]:null;return {scr:s,el:el,part:part||null}}
+function label(key){var o=elOf(key);return o&&o.el?(o.scr.title+' > '+(o.el.label||o.el.text||o.el.kind)+(o.part?' > '+o.part.label:'')):key}
+function behaviour(el){var out=[];
+  if(el.kind==='conversation'&&el.conversation){var c=el.conversation;out.push('One message per row of "'+el.collection+'", in time order ("'+c.timeField+'"), a separator for each day');out.push((c.outgoingValues||[]).length?'Outgoing (right) when "'+(c.outgoingField||c.authorField)+'" is '+c.outgoingValues.join(' or ')+'; the others are incoming (left)':'Every message is incoming (left): no outgoing values');out.push('Messages by the same author within '+(c.groupMinutes===undefined?5:c.groupMinutes)+' min are grouped');if(c.voiceField)out.push('Voice messages ("'+c.voiceField+'" seconds): a mock player, no audio');if(c.attachments)out.push('Attachments from "'+c.attachments.collection+'"');if(c.composer)out.push('The box at the bottom adds a message to this page only; nothing is saved')}
+  if(el.kind==='custom'&&el.custom){out.push('Custom part: HTML, CSS and script written for this prototype, run in a sandboxed frame (no network, no access to this page; nothing it does is saved or counts as a decision)');out.push('Why no structured element: '+el.custom.reason);out.push('Praxis does not check its behaviour or look; the scenarios cannot see inside it')}if(el.param&&(el.kind==='filter'||el.kind==='tabs'||el.kind==='drawer'||el.kind==='modal'))out.push('Reads and writes the URL parameter "'+el.param+'"');(el.filters||[]).forEach(function(f){out.push('Rows are narrowed by "'+f.param+'" on field "'+f.field+'"')});if(el.rowOpens)out.push('A click on a row opens '+el.rowOpens);if(el.showWhen)out.push('Shown only while '+el.showWhen.param+(el.showWhen.equals!==undefined?' = '+el.showWhen.equals:el.showWhen.notEquals!==undefined?' is not '+el.showWhen.notEquals:el.showWhen.present?' is set':' is not set'));if(el.allowedRoles&&el.allowedRoles.length)out.push('Roles: '+el.allowedRoles.join(', '));return out}
 function inspectorShow(){
   var box=$('#pv-inspector');if(!box)return;box.textContent='';
   var o=elOf(sel);
   if(!o||!o.el){box.appendChild(h('p',{class:'muted'},['Switch to Inspect and click anything in the prototype to see which requirement and criteria it covers.']));return}
-  var el=o.el;box.appendChild(h('h3',{},[el.label||el.text||el.kind]));box.appendChild(h('p',{class:'meta'},[el.kind+' on "'+o.scr.title+'"'+(el.intent?' - '+el.intent:'')+' - '+o.scr.id+'#'+el.id]));
-  var reqs=el.requirementIds||[],acs=el.acIds||[];
+  var el=o.el,pt=o.part;
+  if(pt){box.appendChild(h('h3',{},[pt.label]));box.appendChild(h('p',{class:'meta'},['part of the custom element "'+(el.label||el.id)+'" on "'+o.scr.title+'" - '+o.scr.id+'#'+el.id+'@'+pt.id]))}
+  else{box.appendChild(h('h3',{},[el.label||el.text||el.kind]));box.appendChild(h('p',{class:'meta'},[el.kind+' on "'+o.scr.title+'"'+(el.intent?' - '+el.intent:'')+' - '+o.scr.id+'#'+el.id]))}
+  var reqs=pt?pt.requirementIds||[]:el.requirementIds||[],acs=pt?pt.acIds||[]:el.acIds||[];
   if(!reqs.length&&!acs.length)box.appendChild(h('p',{class:'meta'},['Not linked to a requirement.']));
   reqs.forEach(function(id){var r=D.trace&&D.trace[id];box.appendChild(h('h3',{},[id]));if(r)box.appendChild(h('p',{style:'margin:2px 0'},[r.statement]))});
   if(acs.length){box.appendChild(h('h3',{},['Acceptance criteria']));var ul=h('ul',{});acs.forEach(function(id){var t=D.acText&&D.acText[id];ul.appendChild(h('li',{},[id+(t?': '+t:'')]))});box.appendChild(ul)}
@@ -358,7 +572,7 @@ $$('#proto-nav button').forEach(function(b){b.addEventListener('click',function(
 var swEl=$('#proto-state');swEl.addEventListener('change',function(){stateName=swEl.value;render()});
 var rl=$('#proto-role');if(rl){rl.addEventListener('change',function(){role=rl.value;render()})}
 var dsSel=$('#proto-data');if(dsSel){dsSel.addEventListener('change',function(){dsId=dsSel.value;loadData();search={};render()})}
-var rs=$('#proto-reset');if(rs)rs.addEventListener('click',function(){loadData();search={};form={};formErr={};render()});
+var rs=$('#proto-reset');if(rs)rs.addEventListener('click',function(){loadData();search={};form={};formErr={};drafts={};render()});
 $$('#pv-vp button').forEach(function(b){b.addEventListener('click',function(){var m=b.getAttribute('data-vp')==='mobile';device.classList.toggle('mobile',m);$$('#pv-vp button').forEach(function(x){x.setAttribute('aria-pressed',String(x===b))})})});
 $('#proto-addr').addEventListener('submit',function(e){e.preventDefault();var u=parseUrl(urlIn.value);stateName='default';cur=u.screen||startId;q=u.query;pushUrl(false);render()});
 function syncFromHash(){var u=parseUrl(location.hash);cur=u.screen||startId;q=u.query;stateName='default';render()}
@@ -368,7 +582,7 @@ function applyScenario(sc){
   dsId=sc.dataset||'';if(dsSel)dsSel.value=dsId;role=sc.role||role0;if(rl)rl.value=role;stateName='default';search={};form={};formErr={};loadData();cur=sc.screen||startId;q=clone(sc.query||{});curScenario=sc.id;pushUrl(false);render()}
 function checkScenario(sc){
   var fails=[],ex=sc.expect;if(!ex)return null;
-  (ex.rows||[]).forEach(function(r){var w=by('data-el',cur+'#'+r.element,host);var n=w?$$('tr[data-row]',w).length:0;if(n!==r.count)fails.push(r.element+': '+n+' row(s), expected '+r.count)});
+  (ex.rows||[]).forEach(function(r){var w=by('data-el',cur+'#'+r.element,host);var n=w?$$('[data-row]',w).length:0;if(n!==r.count)fails.push(r.element+': '+n+' row(s), expected '+r.count)});
   (ex.overlay||[]).forEach(function(o){var n=by('data-overlay',cur+'#'+o.element,host);var st=n?n.getAttribute('data-state'):'closed';if(st!==o.state)fails.push(o.element+' is '+st+', expected '+o.state)});
   var txt=host.textContent;(ex.contains||[]).forEach(function(t){if(txt.indexOf(t)<0)fails.push('missing text "'+t+'"')});(ex.absent||[]).forEach(function(t){if(txt.indexOf(t)>=0)fails.push('unexpected text "'+t+'"')});
   (ex.noQuery||[]).forEach(function(k){if(q[k]!==undefined&&q[k]!=='')fails.push('?'+k+' is still set')});Object.keys(ex.query||{}).forEach(function(k){if(q[k]!==ex.query[k])fails.push('?'+k+' is "'+(q[k]||'')+'", expected "'+ex.query[k]+'"')});
@@ -388,7 +602,7 @@ var runAll=$('#sc-run-all');if(runAll)runAll.addEventListener('click',function()
   dsId=keep.ds;if(dsSel)dsSel.value=dsId;role=keep.role;if(rl)rl.value=role;loadData();cur=keep.cur;q=keep.q;curScenario=keep.sc;pushUrl(true);render();drawScenarios();
   var bad=Object.keys(results).filter(function(k){return results[k]&&results[k].length}).length,done=Object.keys(results).filter(function(k){return results[k]!==null}).length;
   var s=$('#sc-summary');if(s)s.textContent=bad?bad+' of '+done+' checked scenarios failed':done+' of '+done+' checked scenarios passed'});
-$$('[data-goto]').forEach(function(b){b.addEventListener('click',function(){var key=b.getAttribute('data-goto');var parts=key.split('#');stateName='default';setMode('inspect');go(parts[0],{});select(key);var w=by('data-el',key,host);if(w&&w.scrollIntoView)w.scrollIntoView({block:'center'})})});
+$$('[data-goto]').forEach(function(b){b.addEventListener('click',function(){var key=b.getAttribute('data-goto');var parts=key.split('#');stateName='default';setMode('inspect');go(parts[0],{});select(key);var w=by('data-el',key.split('@')[0],host);if(w&&w.scrollIntoView)w.scrollIntoView({block:'center'})})});
 // ---- start
 if(location.hash&&location.hash.length>1){var u0=parseUrl(location.hash);cur=u0.screen||startId;q=u0.query}
 setMode('preview');drawScenarios();render();
@@ -402,16 +616,23 @@ function coverage(state: WorkflowState, proto: Prototype): string {
   const reqs = state.requirements.filter((r) => r.status !== "superseded" && r.scope === "in");
   const groups = new Map<string, Group>(reqs.map((r) => [r.id, { id: r.id, label: r.statement, items: [] }]));
   const unlinked: string[] = [];
-  const elementLine = (screen: PrototypeScreen, e: PrototypeElement) => `<li><button type="button" class="gt" data-goto="${esc(screen.id)}#${esc(e.id)}">${esc(screen.title)} &rsaquo; ${esc(e.label || e.text || e.kind)}</button> <span class="meta">${esc(e.kind)}${e.acIds.length ? ` · ${esc(e.acIds.join(", "))}` : ""}</span></li>`;
+  const elementLine = (screen: PrototypeScreen, e: PrototypeElement) => `<li><button type="button" class="gt" data-goto="${esc(screen.id)}#${esc(e.id)}">${esc(screen.title)} &rsaquo; ${esc(e.label || e.text || e.kind)}</button> <span class="meta">${esc(e.kind === "custom" ? "custom (sandboxed)" : e.kind)}${e.acIds.length ? ` · ${esc(e.acIds.join(", "))}` : ""}</span></li>`;
+  const partLine = (screen: PrototypeScreen, e: PrototypeElement, part: { id: string; label: string; acIds: string[] }) =>
+    `<li><button type="button" class="gt" data-goto="${esc(screen.id)}#${esc(e.id)}@${esc(part.id)}">${esc(screen.title)} &rsaquo; ${esc(e.label || e.kind)} &rsaquo; ${esc(part.label)}</button> <span class="meta">custom part${part.acIds.length ? ` · ${esc(part.acIds.join(", "))}` : ""}</span></li>`;
+  const owners = (requirementIds: string[], acIds: string[]) => {
+    const ids = new Set(requirementIds);
+    for (const ac of acIds) for (const r of reqs) if (r.acceptanceCriteria.some((c) => c.id === ac)) ids.add(r.id);
+    return ids;
+  };
   for (const screen of proto.screens)
     for (const e of screen.elements) {
+      const parts = e.custom?.parts ?? [];
+      for (const part of parts) for (const id of owners(part.requirementIds, part.acIds)) groups.get(id)?.items.push(partLine(screen, e, part));
       if (!e.requirementIds.length && !e.acIds.length) {
-        if (e.kind !== "heading" && e.kind !== "text") unlinked.push(elementLine(screen, e));
+        if (e.kind !== "heading" && e.kind !== "text" && !parts.some((p) => p.requirementIds.length || p.acIds.length)) unlinked.push(elementLine(screen, e));
         continue;
       }
-      const ids = new Set(e.requirementIds);
-      for (const ac of e.acIds) for (const r of reqs) if (r.acceptanceCriteria.some((c) => c.id === ac)) ids.add(r.id);
-      for (const id of ids) groups.get(id)?.items.push(elementLine(screen, e));
+      for (const id of owners(e.requirementIds, e.acIds)) groups.get(id)?.items.push(elementLine(screen, e));
     }
   for (const sc of proto.scenarios) {
     const ids = new Set(sc.requirementIds);
@@ -433,6 +654,11 @@ function fidelity(proto: Prototype): string {
     src.length
       ? `Look: colours, font, corner radius and spacing were read from ${src.map((s) => esc(s.file)).join(", ")}. The application's own component library, icons and exact page layout are not reproduced, so this is faithful in tone, not pixel-identical.`
       : "Neutral look: no application styles were found, so colours, fonts and spacing are generic.",
+    ...proto.screens.flatMap((s) =>
+      s.elements
+        .filter((e) => e.kind === "custom" && e.custom)
+        .map((e) => `Custom part «${esc(e.label || e.id)}» on ${esc(s.title)}: HTML, CSS and script written for this prototype, run in a sandboxed frame with no network and no access to this page. Why: ${esc(e.custom!.reason)}. Praxis checks neither its behaviour nor its look, and the scenarios cannot see inside it.`),
+    ),
     ...proto.limitations.map((l) => esc(l)),
   ];
   return `<details class="pv-about"><summary>What this prototype is, and is not</summary><div class="covbody"><ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul></div></details>`;
@@ -480,8 +706,12 @@ ${viewer}`;
     trace[r.id] = { statement: r.statement };
     for (const c of r.acceptanceCriteria) acText[c.id] = c.statement;
   }
+  // the documents of the custom frames: data for the page's script, which puts them in sandboxed frames and nowhere else
+  const frames: Record<string, string> = {};
+  for (const s of proto.screens) for (const e of s.elements) if (e.kind === "custom" && e.custom) frames[`${s.id}#${e.id}`] = customFrameDocument(e.custom, vars);
+  const screens = proto.screens.map((s) => ({ ...s, elements: s.elements.map((e) => (e.custom ? { ...e, custom: { ...e.custom, html: "", css: "", script: "" } } : e)) }));
   return {
     body,
-    clientData: { proto: { kind: proto.kind, startScreen: proto.startScreen, roles: proto.roles, screens: proto.screens, mock: proto.mock, datasets: proto.datasets, scenarios: proto.scenarios }, trace, acText },
+    clientData: { proto: { kind: proto.kind, startScreen: proto.startScreen, roles: proto.roles, screens, mock: proto.mock, datasets: proto.datasets, scenarios: proto.scenarios }, trace, acText, ...(Object.keys(frames).length ? { frames } : {}) },
   };
 }
