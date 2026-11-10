@@ -22,19 +22,26 @@ function base(): WorkflowState {
   for (const r of F.requirements) s = apply(s, { action: "add-requirement", ...r });
   return apply(apply(s, F.impact), { action: "accept-requirements", via: "html-review" });
 }
-const screen = (feed: El, extra: El[] = []) => ({ ...F.screen, elements: [...F.header, feed, ...F.footer, ...extra] });
+/** The journal screen: the existing elements in their order, with the note feed (id "feed") replaced by the given element. */
+const screen = (feed: El | null, extra: El[] = []) => ({ ...F.screen, elements: [...F.existing.map((e: El) => (e.id === "feed" && feed ? feed : e)), ...extra] });
+const ACTIVE = F.mock.notes.rows.filter((n: El) => n.status === "active");
+const common = (mock: El[]) => ({ kind: "ui", title: "Журнал агронома", startScreen: "journal", styles: F.styles, mock, datasets: F.datasets });
 function chat(patch: (p: Proto) => void = () => {}): Proto {
-  const p: Proto = JSON.parse(JSON.stringify({ kind: "ui", title: "Журнал агронома", startScreen: "journal", styles: F.styles, mock: [F.mock.notes, F.mock.attachments, F.mock.fields], datasets: F.datasets, screens: [screen(F.chat.feed)], scenarios: F.chat.scenarios, limitations: ["Голосовые заметки — имитация без звука."] }));
+  const p: Proto = JSON.parse(JSON.stringify({ ...common([F.mock.notes, F.mock.attachments]), screens: [screen(F.chat.feed)], scenarios: F.chat.scenarios, limitations: ["Голосовые заметки — имитация без звука."] }));
   patch(p);
   return p;
 }
+/** The journal as it is today: the same screen with its own note feed. */
+const existing = (): Proto => JSON.parse(JSON.stringify({ ...common([F.mock.notes, F.mock.attachments]), screens: [screen(null)] }));
 /** The prototype from the report, rebuilt: the same notes as table rows, with the side of the chat as a column. */
 function reported(): Proto {
-  const rows = F.mock.notes.rows.map((n: El) => ({ id: n.id, author: n.author, side: n.author === ME ? "Исходящее" : "Входящее", created: n.createdAt.slice(11), voice: n.voice ? `Да (${n.voice} с)` : "Нет", text: n.text, attachments: F.mock.attachments.rows.filter((a: El) => a.noteId === n.id).map((a: El) => a.name).join(", ") || null, date: n.createdAt.slice(0, 10), field: n.field, kind: n.kind }));
+  const rows = F.mock.notes.rows.map((n: El) => ({ id: n.id, author: n.author, side: n.author === ME ? "Исходящее" : "Входящее", created: n.createdAt.slice(11), voice: n.voice ? `Да (${n.voice} с)` : "Нет", text: n.text, attachments: F.mock.attachments.rows.filter((a: El) => a.noteId === n.id).map((a: El) => a.name).join(", ") || null, date: n.createdAt.slice(0, 10), field: n.field, kind: n.kind, status: n.status }));
   const s = screen(F.reported.feed);
   s.elements = s.elements.map((e: El) => (e.id === "card" ? { ...e, detailFields: [{ field: "date" }, { field: "created" }, { field: "author" }, { field: "text" }] } : e));
-  return { kind: "ui", title: "Журнал агронома", startScreen: "journal", styles: F.styles, notes: F.reported.notes, mock: [{ ...F.reported.mock, rows }, F.mock.attachments, F.mock.fields], screens: [s] };
+  return { ...common([{ ...F.reported.mock, rows }, F.mock.attachments]), notes: F.reported.notes, screens: [s] };
 }
+/** The composer of the conversation element, which this fixture does not use (the journal keeps its own form): tested on its own. */
+const withComposer = (p: Proto) => (p.screens[0].elements.find((e: El) => e.id === "feed").conversation.composer = { placeholder: "Новая запись…", sendLabel: "Отправить", values: { role: "агроном", kind: "Наблюдение", status: "active" } });
 const withProto = (p: Proto) => apply(base(), { action: "set-prototype", prototype: p, summary: "test" });
 
 function open(state: WorkflowState, hash = "") {
@@ -65,14 +72,15 @@ function chatAcceptance(p: ReturnType<typeof open>): string[] {
   const fail: string[] = [];
   const feed = p.feed();
   if (!feed) return ["the note feed is missing"];
-  if (!p.$('[data-el="journal#tabs"]') || !p.$('select[data-filter="field"]') || !p.$('select[data-filter="type"]') || !p.$("[data-search]")) fail.push("the existing header and controls remain");
+  const kept = ["status", "byField", "byKind", "find", "newNote", "newText", "newField", "newKind", "attach", "record", "addNote"].every((id) => p.$(`[data-el="journal#${id}"]`));
+  if (!kept || p.$$('[data-el="journal#status"] button[role=tab]').map((b) => b.textContent).join() !== "Актуальные,Архивные") fail.push("the existing header and controls remain");
   if (feed.querySelector("table, tr, th")) fail.push("the feed is NOT a table");
   const m = p.msgs();
-  if (m.length !== F.mock.notes.rows.length || !m.every((x) => x.querySelector(".cv-b"))) fail.push("notes render as message bubbles");
+  if (m.length !== ACTIVE.length || !m.every((x) => x.querySelector(".cv-b"))) fail.push("notes render as message bubbles");
   const times = m.map((x) => (x.querySelector("time")?.getAttribute("datetime") ?? ""));
   if (times.join() !== [...times].sort().join()) fail.push("the bubbles are chronological");
   const sideOf = (id: string) => m.find((x) => x.getAttribute("data-row") === id)?.getAttribute("data-side");
-  if (F.mock.notes.rows.some((n: El) => sideOf(n.id) !== (n.author === ME ? "out" : "in"))) fail.push("incoming align left, outgoing align right");
+  if (ACTIVE.some((n: El) => sideOf(n.id) !== (n.author === ME ? "out" : "in"))) fail.push("incoming align left, outgoing align right");
   const firsts = m.filter((x) => x.classList.contains("first"));
   if (!firsts.length || !firsts.every((x) => x.querySelector(".cv-who")?.textContent === x.getAttribute("data-author")) || !m.every((x) => /^\d{2}:\d{2}$/.test(x.querySelector("time")?.textContent ?? ""))) fail.push("author and timestamp are readable");
   const voice = m.find((x) => x.getAttribute("data-row") === "N-105");
@@ -112,7 +120,7 @@ describe("conversation: rows of a mock collection as a chat", () => {
   it("orders messages by time whatever the data order, with a separator per day in the prototype's language", () => {
     const shuffled = chat((p) => (p.mock[0].rows = [...p.mock[0].rows].reverse()));
     const p = open(withProto(shuffled));
-    expect(p.ids()).toEqual(F.mock.notes.rows.map((n: El) => n.id));
+    expect(p.ids()).toEqual(ACTIVE.map((n: El) => n.id));
     expect(p.$$(".cv-day", p.feed()).map((d) => d.textContent)).toEqual(["12 мая 2026 г.", "13 мая 2026 г.", "14 мая 2026 г."]);
     // the separator comes right before the first message of its day
     expect(p.$('li[data-row="N-105"]').previousElementSibling?.textContent).toBe("13 мая 2026 г.");
@@ -184,11 +192,14 @@ describe("conversation: rows of a mock collection as a chat", () => {
     box.dispatchEvent(new p.w.Event("input", { bubbles: true }));
     expect(p.ids()).toEqual(["N-110"]);
     expect(p.doc.activeElement).toBe(box); // the search box is never rebuilt
-    p.$<HTMLButtonElement>('button[data-tab="fields"]').click();
-    expect(p.feed()).toBeNull();
-    expect(p.$$('[data-el="journal#fieldsTable"] tr[data-row]').length).toBe(3);
-    p.$<HTMLButtonElement>('button[data-tab="journal"]').click();
-    expect(p.feed()).not.toBeNull();
+    box.value = "";
+    box.dispatchEvent(new p.w.Event("input", { bubbles: true }));
+    p.$<HTMLButtonElement>('button[data-tab="archived"]').click();
+    expect(p.ids()).toEqual(["N-090", "N-091", "N-092"]);
+    expect(p.hashNow()).toBe("#/journal?status=archived");
+    expect(p.$$(".cv-day", p.feed()).map((d) => d.textContent)).toEqual(["20 апреля 2026 г.", "22 апреля 2026 г."]);
+    p.$<HTMLButtonElement>('button[data-tab="active"]').click();
+    expect(p.ids().length).toBe(12);
   });
 
   it("opens the note card from a message, by click and from the keyboard, and restores it from a deep link", () => {
@@ -207,8 +218,8 @@ describe("conversation: rows of a mock collection as a chat", () => {
     expect(deep.$('[data-overlay="journal#card"]').textContent).toContain("skhema-ochagov.png");
   });
 
-  it("the composer adds an outgoing message at the end, in the filtered feed, without touching the saved prototype", () => {
-    const state = withProto(chat());
+  it("its own composer (not used by this journal) adds an outgoing message at the end, in the filtered feed, without touching the saved prototype", () => {
+    const state = withProto(chat(withComposer));
     const before = JSON.stringify(state.prototype);
     const p = open(state);
     p.choose("field", "Поле 7");
@@ -232,7 +243,7 @@ describe("conversation: rows of a mock collection as a chat", () => {
     const p = open(withProto(chat()));
     p.$<HTMLButtonElement>('[data-side="scenarios"]').click();
     p.$<HTMLButtonElement>("#sc-run-all").click();
-    expect(p.$("#sc-summary").textContent).toBe("6 of 6 checked scenarios passed");
+    expect(p.$("#sc-summary").textContent).toBe("7 of 7 checked scenarios passed");
     const ds = p.$<HTMLSelectElement>("#proto-data");
     ds.value = "empty";
     ds.dispatchEvent(new p.w.Event("change"));
@@ -270,8 +281,10 @@ describe("conversation: rows of a mock collection as a chat", () => {
   });
 
   it("asks for a create story when the composer adds messages", () => {
-    const state = withProto(chat());
-    expect(expectedCapabilities(state, state.requirements.find((r) => r.id === "REQ-JRN-004")!)).toEqual(expect.arrayContaining(["view", "create"]));
+    // the journal's own form already asks for one for REQ-JRN-003; the composer asks for one for the feed's requirements too
+    expect(expectedCapabilities(withProto(chat()), withProto(chat()).requirements.find((r) => r.id === "REQ-JRN-001")!)).not.toContain("create");
+    const state = withProto(chat(withComposer));
+    expect(expectedCapabilities(state, state.requirements.find((r) => r.id === "REQ-JRN-001")!)).toEqual(expect.arrayContaining(["view", "create"]));
   });
 
   it("refuses settings that would render a broken feed", () => {
@@ -279,10 +292,86 @@ describe("conversation: rows of a mock collection as a chat", () => {
     expect(() => withProto(feed((e) => (e.conversation.authorField = "writer")))).toThrow(/authorField "writer" is not a field of mock collection notes/);
     expect(() => withProto(feed((e) => delete e.conversation))).toThrow(/needs conversation settings/);
     expect(() => withProto(feed((e) => (e.conversation.attachments.nameField = "file")))).toThrow(/attachment field "file"/);
-    expect(() => withProto(feed((e) => ((e.conversation.outgoingValues = []), (e.conversation.composer.values = {}))))).toThrow(/cannot tell who writes a new message/);
+    expect(() => withProto(feed((e) => ((e.conversation.outgoingValues = []), (e.conversation.composer = { values: {} }))))).toThrow(/cannot tell who writes a new message/);
     expect(() => withProto(chat((p) => (p.mock[0].rows[0].createdAt = "12.05.2026 07:40")))).toThrow(/time "12.05.2026 07:40" .* is not YYYY-MM-DD/);
     expect(() => withProto(chat((p) => (p.mock[0].rows[0].voice = "долго")))).toThrow(/voice "долго"/);
-    expect(() => withProto(chat((p) => (p.screens[0].elements.find((e: El) => e.id === "fieldsTable").conversation = F.chat.feed.conversation)))).toThrow(/has conversation settings but is a table/);
+    expect(() => withProto(chat((p) => (p.screens[0].elements.find((e: El) => e.id === "card").conversation = F.chat.feed.conversation)))).toThrow(/has conversation settings but is a drawer/);
+  });
+});
+
+describe("only the note feed changes: the journal around it is kept as it is", () => {
+  const rowIds = (p: ReturnType<typeof open>) => p.$$('[data-el="journal#feed"] [data-row]').map((r) => r.getAttribute("data-row")).sort();
+  /** Everything on the screen except the feed: the header and every element wrapper, as HTML. */
+  const around = (p: ReturnType<typeof open>) => [...p.$$("#proto-screen > h2, #proto-screen > p.lead"), ...p.$$("#proto-screen > [data-el]").filter((n) => n.getAttribute("data-el") !== "journal#feed")].map((n) => n.outerHTML);
+
+  it("the chat prototype has the existing elements in their order, and only the feed is different; the feed keeps its data, filters, card and empty states", () => {
+    const before = withProto(existing()).prototype!.screens[0].elements;
+    const after = withProto(chat()).prototype!.screens[0].elements;
+    expect(after.map((e) => e.id)).toEqual(before.map((e) => e.id));
+    expect(after.filter((e, i) => JSON.stringify(e) !== JSON.stringify(before[i])).map((e) => e.id)).toEqual(["feed"]);
+    const [was, now] = [before, after].map((list) => list.find((e) => e.id === "feed")!);
+    for (const key of ["collection", "idField", "rowOpens", "filters", "emptyText", "noDataText", "emptyAction", "showWhen", "allowedRoles"] as const) expect(now[key], key).toEqual(was[key]);
+    expect([was.kind, now.kind]).toEqual(["list", "conversation"]);
+    // the journal keeps its own note form, so the conversation has no second one
+    expect(now.conversation?.composer).toBeUndefined();
+    expect(after.map((e) => e.kind)).toEqual(["tabs", "filter", "filter", "search", "form", "field", "field", "field", "button", "button", "button", "conversation", "drawer"]);
+  });
+
+  it("renders the header, the Актуальные / Архивные tabs, the filters, the search, the note form and its buttons exactly as before; the feed becomes bubbles", () => {
+    const a = open(withProto(existing()));
+    const b = open(withProto(chat()));
+    expect(around(b)).toEqual(around(a));
+    expect(around(a).length).toBe(13); // the title and the farm line, and 11 controls (the card is closed)
+    expect(a.$$('[data-el="journal#status"] button[role=tab]').map((t) => t.textContent)).toEqual(["Актуальные", "Архивные"]);
+    expect(a.$$('[data-el="journal#feed"] tr[data-row]').length).toBe(12);
+    expect(a.$$('[data-el="journal#feed"] li.cv-msg').length).toBe(0);
+    expect(b.$$('[data-el="journal#feed"] li.cv-msg').length).toBe(12);
+    expect(b.$('[data-el="journal#feed"] table')).toBeNull();
+  });
+
+  it("the tabs, filters, search, note form and card behave the same around the old and the new feed", () => {
+    const observe = (p: ReturnType<typeof open>) => {
+      const seen: unknown[] = [];
+      const note = (what: string) => seen.push([what, rowIds(p), around(p)]);
+      p.$<HTMLButtonElement>('button[data-tab="archived"]').click();
+      note("archived");
+      p.$<HTMLButtonElement>('button[data-tab="active"]').click();
+      p.choose("field", "Поле 7");
+      note("field");
+      p.choose("type", "Задача");
+      note("field and type");
+      p.choose("field", "");
+      p.choose("type", "");
+      const box = p.$<HTMLInputElement>("[data-search]");
+      box.value = "известкование";
+      box.dispatchEvent(new p.w.Event("input", { bubbles: true }));
+      seen.push(["search", rowIds(p)]);
+      box.value = "";
+      box.dispatchEvent(new p.w.Event("input", { bubbles: true }));
+      // the note form: a missing text is refused, a filled one is confirmed, as before
+      p.$<HTMLButtonElement>('[data-fk="btn:journal#addNote"]').click();
+      seen.push(["empty form", p.$('[data-el="journal#newText"]').textContent, p.$$('[role="alert"]').length]);
+      const text = p.$<HTMLInputElement>('[data-fk="field:journal#newText"]');
+      text.value = "Осмотр поля 12";
+      text.dispatchEvent(new p.w.Event("input", { bubbles: true }));
+      const fieldSel = p.$<HTMLSelectElement>('[data-fk="field:journal#newField"]');
+      fieldSel.value = "Поле 12";
+      fieldSel.dispatchEvent(new p.w.Event("change", { bubbles: true }));
+      p.$<HTMLButtonElement>('[data-fk="btn:journal#addNote"]').click();
+      seen.push(["filled form", p.$("#proto-screen").textContent?.includes("Saved (mock data only)."), p.$$('[role="alert"]').length]);
+      // the card
+      p.w.location.hash = "#/journal?note=N-104";
+      p.w.dispatchEvent(new p.w.HashChangeEvent("hashchange"));
+      seen.push(["card", p.$('[data-overlay="journal#card"]').outerHTML]);
+      return seen;
+    };
+    const was = observe(open(withProto(existing())));
+    const now = observe(open(withProto(chat())));
+    expect(now).toEqual(was);
+    expect(was[0]).toEqual(["archived", ["N-090", "N-091", "N-092"], expect.any(Array)]);
+    expect((was[3] as unknown[])[1]).toEqual(["N-110"]);
+    expect((was[4] as unknown[])[2]).toBe(1);
+    expect(was[5]).toEqual(["filled form", true, 0]);
   });
 });
 
