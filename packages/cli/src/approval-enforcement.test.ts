@@ -48,16 +48,17 @@ describe("a protected action runs only after the user approves it", () => {
       const root = repo();
       await expect(
         withApprovalChannel(channel({ answer }), () => projectInitApplyOp({ repo: root, confirmation: "YES" })),
-      ).rejects.toMatchObject({ code: "APPROVAL_REJECTED" });
+      ).rejects.toMatchObject({ code: answer === "reject" ? "APPROVAL_REJECTED" : "APPROVAL_DISMISSED" });
       expect(existsSync(join(root, ".project"))).toBe(false);
-      expect(log(root).at(-1)).toMatchObject({ decision: answer === "reject" ? "rejected" : "dismissed" });
+      expect(log(root).at(-1)).toMatchObject({ decision: answer === "reject" ? "rejected" : "dismissed", decidedBy: "user" });
     }
   });
 
-  it("confirmation=NO is a rejection: recorded, nothing runs", async () => {
+  it("confirmation=NO is the agent's withdrawal: recorded as that, never as the user's rejection, nothing runs", async () => {
     const root = repo();
-    await expect(projectInitApplyOp({ repo: root, confirmation: "NO" })).rejects.toMatchObject({ code: "APPROVAL_REJECTED" });
+    await expect(projectInitApplyOp({ repo: root, confirmation: "NO" })).rejects.toMatchObject({ code: "APPROVAL_WITHDRAWN" });
     expect(existsSync(join(root, ".project"))).toBe(false);
+    expect(log(root).at(-1)).toMatchObject({ decision: "withdrawn", decidedBy: "agent" });
   });
 
   it("a client without a dialog: refused with the preview, nothing written, whatever the agent says", async () => {
@@ -68,6 +69,7 @@ describe("a protected action runs only after the user approves it", () => {
     expect(error.details).toMatchObject({ executed: false, preview: { action: "praxis_project_init_apply" } });
     expect(existsSync(join(root, ".project"))).toBe(false);
     expect(existsSync(join(root, ".praxis"))).toBe(false); // the journal is not in the repository
-    expect(log(root).at(-1)).toMatchObject({ decision: "refused", channel: "none" });
+    // nobody could be asked, so nobody decided
+    expect(log(root).at(-1)).toMatchObject({ decision: "unavailable", decidedBy: "nobody", channel: "none" });
   });
 });
