@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyWorkflowCommand, buildResumeBriefing } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
 const ok = (s: any, c: Record<string, unknown>) => applyWorkflowCommand(s, c, { now: NOW }).state;
@@ -24,7 +25,7 @@ import { buildRepositoryBrief, implementationOrder, repositoryProgress } from ".
 
 describe("multi-repository coordination", () => {
   function threeRepos() {
-    const c = (s: any, cmd: Record<string, unknown>) => applyWorkflowCommand(s, cmd, { now: NOW, channel: { via: "html-review" } }).state;
+    const c = (s: any, cmd: Record<string, unknown>) => applyAsUser(s, cmd, { now: NOW }).state;
     let s = c(null, { action: "open", projectId: "p", title: "Orders everywhere", request: "web, ios and api", mode: "classic" });
     s = c(s, { action: "add-requirement", id: "REQ-ORD-001", statement: "View orders", acceptanceCriteria: ["List shows orders"] });
     for (const [id, role] of [["api", "backend"], ["web", "web frontend"], ["ios", "mobile"]]) s = c(s, { action: "register-repository", repository: { id, name: id, role, localPath: `/tmp/${id}` } });

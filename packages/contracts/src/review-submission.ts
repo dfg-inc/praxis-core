@@ -224,7 +224,8 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
   if (submission.workItemId !== state.workItem.id) {
     return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state.workItem.id}` }], stale: true, summary: [], details: [], affectsStories: false };
   }
-  const via = "html-review" as const;
+  // the decisions are recorded only once the client's dialog approved this exact batch (praxis_review_apply)
+  const via = "approved" as const;
   /** True when a command in the plan changes, stales, excludes or restores a story (shown in the details, and gates a handed-over file). */
   let affectsStories = false;
   const editedPlan = new Map<string, Record<string, unknown>>();

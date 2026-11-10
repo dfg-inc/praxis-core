@@ -1476,8 +1476,6 @@ export function applyWorkflowCommand(
     record = { at: a.decidedAt, action: command.action === "open" ? "open-classic-work-item" : "review-decisions", subjects: (batchSubjects.length ? batchSubjects : subjectsOf(command, state, out.state)).slice(0, 200), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
     // one approval covers a batch: the first applied command records it once
     if ((out.state.approvals ?? []).some((r) => r.subjectDigest === a.subjectDigest && r.at === a.decidedAt)) record = null;
-  } else if (options?.channel?.via === "html-review" && userDecision) {
-    record = { at, action: command.action, subjects: subjectsOf(command, state, out.state), summary: `${command.action} from the review page`, channel: "html-review", assurance: "review-page", trust: "review-page", workItemRevision: out.state.workItem.revision };
   }
   if (!record) return out;
   const approvals = [...(out.state.approvals ?? []), { id: `APR-${String((out.state.approvals?.length ?? 0) + 1).padStart(4, "0")}`, ...record }];

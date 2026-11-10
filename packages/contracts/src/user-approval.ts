@@ -176,7 +176,8 @@ export function createUserApproval(input: {
   reason?: string;
   now?: Date;
 }): UserApproval {
-  if (input.channel === "test" && process.env.PRAXIS_TEST_APPROVALS !== "1") {
+  // never in a shipped Runtime: PRAXIS_BUNDLE_KIND is a constant there, so no environment (a repository's settings) enables it
+  if (input.channel === "test" && (process.env.PRAXIS_TEST_APPROVALS !== "1" || process.env.PRAXIS_BUNDLE_KIND === "production")) {
     throw new ApprovalError("APPROVAL_REQUIRED", "a test approval is only accepted under the test harness");
   }
   const approval: UserApproval = Object.freeze({
@@ -216,16 +217,10 @@ export function approvalsGivenInThisCall(): readonly UserApproval[] {
 }
 
 /** What a diagnostic can say about how approvals will be obtained right now. */
-export function approvalModeReport(): { mode: "client-ui" | "approval-page" | "no-dialog" | "trusted-client"; note: string } {
+export function approvalModeReport(): { mode: "client-ui" | "no-dialog"; note: string } {
   const channel = currentApprovalChannel();
-  if (channel?.kind === "trusted-client") {
-    return { mode: "trusted-client", note: "TRUSTED CLIENT (enabled by you in the extension settings): protected actions run on the agent's confirmation=YES for a current preview, without a separate confirmation of each action. This is your standing permission for this client, not proof that you confirmed each action. Every action is still checked against its preview and journaled." };
-  }
-  if (channel?.kind === "approval-page") {
-    return { mode: "approval-page", note: "This client cannot show Praxis's approval dialog, so Praxis opens its own approval page in your browser: you approve or reject the exact action there. The agent never gets that page's link. A browser-automation tool in that browser, or a program running as you, could still operate the page; Praxis cannot detect that." };
-  }
-  if (channel && channel.kind !== "host-permission") {
-    return { mode: "client-ui", note: "Protected actions are approved or rejected by the user in the client's own dialog; the agent cannot write that answer." };
+  if (channel && channel.kind !== "host-permission" && channel.kind !== "trusted-client" && channel.kind !== "approval-page") {
+    return { mode: "client-ui", note: "Protected actions are approved or rejected in the client's own dialog: a client response, which the agent cannot write through Praxis. It is not independently authenticated: Praxis cannot prove that a person, rather than automation, answered." };
   }
   return {
     mode: "no-dialog",

@@ -2,10 +2,11 @@
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 import { applyWorkflowCommand, fingerprintFor, needsApprovalWhenHandedOver, planEntryBase, renderReview, reviewStamp, submissionToCommands, workStateStamp, type ReviewView, type WorkflowState } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
 const LATER = new Date("2026-10-26T11:00:00.000Z");
-const ok = (state: WorkflowState | null, command: Record<string, unknown>, now = NOW) => applyWorkflowCommand(state, command, { now, channel: { via: "html-review" } }).state;
+const ok = (state: WorkflowState | null, command: Record<string, unknown>, now = NOW) => applyAsUser(state, command, { now }).state;
 
 function base(): WorkflowState {
   let s = ok(null, { action: "open", projectId: "orders", title: "Order list", request: "r", mode: "guided" });
@@ -14,11 +15,11 @@ function base(): WorkflowState {
   return s;
 }
 function planned(): WorkflowState {
-  let s = ok(base(), { action: "accept-requirements", via: "html-review" });
+  let s = ok(base(), { action: "accept-requirements", via: "approved" });
   return ok(s, { action: "set-story-plan", entries: [{ id: "US-ORD-001", title: "View orders", implementation: "List page", userGets: "all orders", requirementIds: ["REQ-ORD-001"], capabilities: ["view", "search"] }, { id: "US-ORD-002", title: "Export", implementation: "CSV", userGets: "a file", requirementIds: ["REQ-ORD-002"], capabilities: ["filter"] }] });
 }
 function withStories(): WorkflowState {
-  let s = ok(planned(), { action: "agree-story-plan", via: "html-review" });
+  let s = ok(planned(), { action: "agree-story-plan", via: "approved" });
   return ok(s, { action: "add-story", id: "US-ORD-001", requirementIds: ["REQ-ORD-001"], actor: "manager", narrative: "As a manager, I want orders, so that I see them.", objective: "o", userValue: "v", happyPath: ["open list", "search"], acceptanceCriteria: [{ id: "US-ORD-001-AC-01", given: "orders exist", when: "I open the list", then: "I see them" }], expectedResults: ["list shown"], confirmedBehavior: false });
 }
 
@@ -56,7 +57,7 @@ describe("Requirements Review: every editable field is protected against an out-
     expect(plan(s, submission).conflicts).toEqual([]);
     // another tab set a scope note, a remark and moved the scope first
     let other = ok(s, { action: "set-requirement-scope", requirementIds: ["REQ-ORD-001"], scope: "excluded", note: "tab A note" }, LATER);
-    other = ok(other, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-001", comment: "tab A remark", acceptance: [] }] }, LATER);
+    other = ok(other, { action: "review-requirements", via: "approved", decisions: [{ requirementId: "REQ-ORD-001", comment: "tab A remark", acceptance: [] }] }, LATER);
     const stale = plan(other, submission);
     expect(stale.commands).toHaveLength(0);
     expect(reasons(stale)).toMatch(/reload the page/);
@@ -89,7 +90,7 @@ describe("Requirements Review: every editable field is protected against an out-
     p.q<HTMLInputElement>('[data-ac="REQ-ORD-001-AC-02"] input[value=accepted]').click();
     p.q<HTMLInputElement>('[data-ac="REQ-ORD-001-AC-02"] [data-f=ac-comment]').value = "tab B";
     const submission = p.decisions();
-    const other = ok(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-02", status: "rejected", comment: "tab A" }] }] }, LATER);
+    const other = ok(s, { action: "review-requirements", via: "approved", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-02", status: "rejected", comment: "tab A" }] }] }, LATER);
     const result = plan(other, submission);
     expect(result.commands).toHaveLength(0);
     expect(reasons(result)).toMatch(/reload the page/);
@@ -106,12 +107,12 @@ describe("Story Plan: a line edited elsewhere is not overwritten, and the base c
     expect(submission.baseStamp).toMatch(/^[0-9a-f]{24}$/);
     expect(submission.plan.entries[0].base).toMatch(/^[0-9a-f]{24}$/);
     expect(plan(s, submission).conflicts).toEqual([]);
-    const other = ok(s, { action: "update-story-plan", via: "html-review", operations: [{ op: "update", id: "US-ORD-001", patch: { implementation: "tab A's text" } }] }, LATER);
+    const other = ok(s, { action: "update-story-plan", via: "approved", operations: [{ op: "update", id: "US-ORD-001", patch: { implementation: "tab A's text" } }] }, LATER);
     const stale = plan(other, submission);
     expect(stale.commands).toHaveLength(0);
     expect(reasons(stale)).toMatch(/plan line changed since you opened this page.*reload/);
     // the other tab only changed the remark/status: that is a change of the line too
-    const other2 = ok(s, { action: "update-story-plan", via: "html-review", operations: [{ op: "review", id: "US-ORD-001", status: "rejected", comment: "no" }] }, LATER);
+    const other2 = ok(s, { action: "update-story-plan", via: "approved", operations: [{ op: "review", id: "US-ORD-001", status: "rejected", comment: "no" }] }, LATER);
     expect(plan(other2, submission).commands).toHaveLength(0);
   });
 
@@ -122,7 +123,7 @@ describe("Story Plan: a line edited elsewhere is not overwritten, and the base c
     const submission = p.decisions();
     const stripped = strip(submission, ["base"]);
     expect(plan(s, stripped).conflicts).toEqual([]);
-    const moved = ok(s, { action: "update-story-plan", via: "html-review", operations: [{ op: "update", id: "US-ORD-001", patch: { title: "Renamed elsewhere" } }] }, LATER);
+    const moved = ok(s, { action: "update-story-plan", via: "approved", operations: [{ op: "update", id: "US-ORD-001", patch: { title: "Renamed elsewhere" } }] }, LATER);
     const refused = plan(moved, stripped);
     expect(refused.commands).toHaveLength(0);
     expect(reasons(refused)).toMatch(/does not say what it showed/);
@@ -140,7 +141,7 @@ describe("Story Review: items, remarks and accept-all from an old page", () => {
     expect(plan(s, submission).conflicts).toEqual([]);
     const stripped = strip(submission, ["from", "fromComment"]);
     expect(plan(s, stripped).conflicts).toEqual([]);
-    const moved = ok(s, { action: "review-stories", via: "html-review", items: [{ storyId: "US-ORD-001", revision: 1, key: "step:1", status: "accepted" }], acceptStories: [] }, LATER);
+    const moved = ok(s, { action: "review-stories", via: "approved", items: [{ storyId: "US-ORD-001", revision: 1, key: "step:1", status: "accepted" }], acceptStories: [] }, LATER);
     expect(plan(moved, stripped).commands).toHaveLength(0);
     expect(reasons(plan(moved, stripped))).toMatch(/does not say what it showed/);
     // accept-all on a page that is out of date
@@ -159,7 +160,7 @@ describe("Story Review: items, remarks and accept-all from an old page", () => {
     p.q<HTMLInputElement>('[data-key="step:0"] input[value=accepted]').click();
     p.q<HTMLInputElement>('[data-key="step:0"] [data-f=comment]').value = "tab B";
     const submission = p.decisions();
-    const other = ok(s, { action: "review-stories", via: "html-review", items: [{ storyId: "US-ORD-001", revision: 1, key: "step:0", status: "accepted", comment: "tab A" }], acceptStories: [] }, LATER);
+    const other = ok(s, { action: "review-stories", via: "approved", items: [{ storyId: "US-ORD-001", revision: 1, key: "step:0", status: "accepted", comment: "tab A" }], acceptStories: [] }, LATER);
     const result = plan(other, submission);
     expect(result.commands).toHaveLength(0);
     expect(reasons(result)).toMatch(/remark changed since you opened this page/);
@@ -181,12 +182,12 @@ describe("a saved or handed-over decisions file is held to the same rules", () =
 describe("the accept / agree controls need a page that is still current", () => {
   it("requirements accept-all, plan agree and prototype accept are refused when a mark, remark or feedback changed after the page was opened", () => {
     // requirements: another tab reset a mark after the page was opened
-    let s = ok(base(), { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "accepted" }] }] });
+    let s = ok(base(), { action: "review-requirements", via: "approved", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "accepted" }] }] });
     const p = page(s, "requirements");
     p.q<HTMLInputElement>("#accept-all").click();
     const accept = p.decisions();
     expect(plan(s, accept).commands.some((c) => c.action === "accept-requirements")).toBe(true);
-    const reset = ok(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "pending", comment: "wait" }] }] }, LATER);
+    const reset = ok(s, { action: "review-requirements", via: "approved", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "pending", comment: "wait" }] }] }, LATER);
     const refused = plan(reset, accept);
     expect(refused.commands.some((c) => c.action === "accept-requirements")).toBe(false);
     expect(reasons(refused)).toMatch(/out of date.*reload the page/);
@@ -196,7 +197,7 @@ describe("the accept / agree controls need a page that is still current", () => 
     pp.q<HTMLInputElement>("#agree-plan").click();
     const agree = pp.decisions();
     expect(plan(s, agree).commands.some((c) => c.action === "agree-story-plan")).toBe(true);
-    const marked = ok(s, { action: "update-story-plan", via: "html-review", operations: [{ op: "review", id: "US-ORD-001", status: "pending", comment: "unclear" }] }, LATER);
+    const marked = ok(s, { action: "update-story-plan", via: "approved", operations: [{ op: "review", id: "US-ORD-001", status: "pending", comment: "unclear" }] }, LATER);
     expect(plan(marked, agree).commands.some((c) => c.action === "agree-story-plan")).toBe(false);
   });
 });
@@ -309,7 +310,7 @@ describe("the dialog shows what will be applied: full text, the plan as agreed, 
   it("the work-item stamp moves with marks, remarks and acceptances, so an old baseState cannot carry a waiver", () => {
     const s = base();
     const stamp = workStateStamp(s);
-    const marked = ok(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "rejected", comment: "no" }] }] }, LATER);
+    const marked = ok(s, { action: "review-requirements", via: "approved", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "rejected", comment: "no" }] }] }, LATER);
     expect(workStateStamp(marked)).not.toBe(stamp);
     const stale = plan(marked, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: s.workItem.id, baseFingerprint: "x", baseStamp: reviewStamp(marked, "requirements"), baseState: stamp, waivers: [{ kind: "prototype", reason: "pure refactor, nothing to show" }] });
     expect(stale.commands).toHaveLength(0);
@@ -322,7 +323,7 @@ describe("the plan shown as agreed is the plan that is agreed", () => {
 
   it("exclusions and restores in the same file change the listing, and two entries for one line are merged", () => {
     let s = planned();
-    s = ok(s, { action: "update-story-plan", via: "html-review", operations: [{ op: "exclude", id: "US-ORD-002", reason: "later" }] }, LATER);
+    s = ok(s, { action: "update-story-plan", via: "approved", operations: [{ op: "exclude", id: "US-ORD-002", reason: "later" }] }, LATER);
     const [e1, e2] = s.storyPlan!.entries;
     const text = plan(s, planFile2(s, [{ id: "US-ORD-001", base: planEntryBase(e1), exclude: "not now" }, { id: "US-ORD-002", base: planEntryBase(e2), restore: true }])).details.join("\n");
     expect(text).toMatch(/US-ORD-001 'View orders'.*\(excluded\)/);

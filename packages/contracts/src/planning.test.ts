@@ -13,10 +13,11 @@ import {
   WorkflowStateSchema,
   type WorkflowState,
 } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 import { approvalFor } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
-const apply = (state: WorkflowState | null, command: Record<string, unknown>) => applyWorkflowCommand(state, command, { now: NOW, channel: { via: "html-review" } });
+const apply = (state: WorkflowState | null, command: Record<string, unknown>) => applyAsUser(state, command, { now: NOW });
 const ok = (state: WorkflowState, command: Record<string, unknown>) => apply(state, command).state;
 
 function open(mode: "guided" | "classic" = "guided", changeKind?: string): WorkflowState {
@@ -29,7 +30,7 @@ function withRequirements(state = open()): WorkflowState {
   return s;
 }
 
-const accepted = (state: WorkflowState) => ok(state, { action: "accept-requirements", via: "html-review" });
+const accepted = (state: WorkflowState) => ok(state, { action: "accept-requirements", via: "approved" });
 
 function story(id: string, requirementIds: string[], narrative: string, extra: Record<string, unknown> = {}) {
   return {
@@ -58,11 +59,11 @@ describe("requirements review: scope, per-criterion marks, point edits", () => {
 
   it("marks each criterion separately and keeps the rest pending", () => {
     let s = withRequirements();
-    s = ok(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "accepted" }, { id: "REQ-ORD-001-AC-02", status: "rejected", comment: "search by phone too" }] }] });
+    s = ok(s, { action: "review-requirements", via: "approved", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "accepted" }, { id: "REQ-ORD-001-AC-02", status: "rejected", comment: "search by phone too" }] }] });
     const [a1, a2, a3] = s.requirements[0].acceptanceCriteria;
     expect([a1.review.status, a2.review.status, a3.review.status]).toEqual(["accepted", "rejected", "pending"]);
     expect(a2.review.comment).toBe("search by phone too");
-    expect(a1.review.via).toBe("html-review");
+    expect(a1.review.via).toBe("approved");
     expect(reviewProgress(s)).toMatchObject({ accepted: 1, rejected: 1, pending: 2 });
   });
 
@@ -88,7 +89,7 @@ describe("requirements review: scope, per-criterion marks, point edits", () => {
     const s = accepted(withRequirements());
     expect(reviewProgress(s).complete).toBe(true);
     expect(acceptanceStatus(s, "requirements_review")).toBe("accepted");
-    expect(s.phaseAcceptance.requirements_review.via).toBe("html-review");
+    expect(s.phaseAcceptance.requirements_review.via).toBe("approved");
   });
 
   it("taking a requirement out of scope removes it from what must be covered and reopens nothing else", () => {
@@ -171,7 +172,7 @@ describe("prototype", () => {
 
   it("a content change makes the acceptance stale, feedback does not", () => {
     let s = ok(base(), { action: "set-prototype", prototype });
-    s = ok(s, { action: "accept-prototype", via: "html-review" });
+    s = ok(s, { action: "accept-prototype", via: "approved" });
     expect(acceptanceStatus(s, "prototype")).toBe("accepted");
     s = ok(s, { action: "prototype-feedback", items: [{ target: "list", comment: "looks fine" }] });
     expect(acceptanceStatus(s, "prototype")).toBe("accepted");
@@ -224,7 +225,7 @@ describe("story plan and guided story creation", () => {
   });
 
   it("an agreed plan lets stories in, one per planned line, and marks the line detailed", () => {
-    let s = ok(planned(), { action: "agree-story-plan", via: "html-review" });
+    let s = ok(planned(), { action: "agree-story-plan", via: "approved" });
     expect(acceptanceStatus(s, "story_plan")).toBe("accepted");
     s = ok(s, story("US-ORD-001", ["REQ-ORD-001"], "As a manager, I want to see orders, so that I can work."));
     expect(s.storyPlan!.entries[0].status).toBe("detailed");
@@ -302,7 +303,7 @@ describe("story editing, exclusion, split, merge, history and invalidation", () 
 
   it("changes individual acceptance criteria and keeps review marks of untouched items", () => {
     let s = withStories();
-    s = ok(s, { action: "review-stories", via: "html-review", items: [{ storyId: "US-ORD-001", revision: 1, key: "step:0", status: "accepted" }, { storyId: "US-ORD-001", revision: 1, key: "step:1", status: "accepted" }, { storyId: "US-ORD-001", revision: 1, key: "ac:US-ORD-001-AC-01", status: "accepted" }] });
+    s = ok(s, { action: "review-stories", via: "approved", items: [{ storyId: "US-ORD-001", revision: 1, key: "step:0", status: "accepted" }, { storyId: "US-ORD-001", revision: 1, key: "step:1", status: "accepted" }, { storyId: "US-ORD-001", revision: 1, key: "ac:US-ORD-001-AC-01", status: "accepted" }] });
     s = ok(s, { action: "update-story", id: "US-ORD-001", patch: { happyPath: ["open list", "scroll down"] }, criteria: [{ op: "add", given: "no orders", when: "the list opens", then: "an empty state is shown" }] });
     const e = s.stories[0];
     expect(e.review["step:0"].status).toBe("accepted");
@@ -518,7 +519,7 @@ describe("add-story keeps what it is given and what the plan said", () => {
     let s = ok(open(), { action: "add-requirement", id: "REQ-ORD-001", statement: "Managers can view and search orders", acceptanceCriteria: ["The list shows all orders", "A manager can search by number"] });
     s = accepted(s);
     s = ok(s, { action: "set-story-plan", entries: [{ id: "US-ORD-001", title: "View and search", implementation: "list page", userGets: "orders", requirementIds: ["REQ-ORD-001"], capabilities: ["view", "search", "states"], screenRefs: ["list"], repositoryIds: [] }] });
-    s = ok(s, { action: "agree-story-plan", via: "html-review" });
+    s = ok(s, { action: "agree-story-plan", via: "approved" });
     s = ok(s, story("US-ORD-001", ["REQ-ORD-001"], "As a manager, I want to see orders, so that I can work."));
     const detailed = s.stories[0];
     expect(detailed.title).toBe("View and search");

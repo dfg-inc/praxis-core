@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { applyWorkflowCommand, createUserApproval, reviewApprovalRequest, reviewProgress, acceptanceStatus, type WorkflowState } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
 beforeAll(() => {
@@ -33,10 +34,14 @@ describe("who may record that the user accepted something", () => {
     expect(s.requirements[0].acceptanceCriteria[0].review.status).toBe("pending");
   });
 
-  it("the review page channel records via html-review, ignoring what the command says", () => {
-    const s = applyWorkflowCommand(base(), { action: "accept-requirements", via: "system" }, { now: NOW, channel: { via: "html-review" } }).state;
-    expect(s.phaseAcceptance.requirements_review?.via).toBe("html-review");
-    expect(s.requirements[0].acceptanceCriteria[0].review.via).toBe("html-review");
+  it("a review page's Save is not a channel (released alpha.48 to alpha.49.1 took it as the user's decision)", () => {
+    expect(() => applyWorkflowCommand(base(), { action: "accept-requirements" }, { now: NOW, channel: { via: "html-review" } as never })).toThrow(/records that the user/);
+  });
+
+  it("the dialog channel records via approved, ignoring what the command says", () => {
+    const s = applyAsUser(base(), { action: "accept-requirements", via: "system" }, { now: NOW }).state;
+    expect(s.phaseAcceptance.requirements_review?.via).toBe("approved");
+    expect(s.requirements[0].acceptanceCriteria[0].review.via).toBe("approved");
     expect(acceptanceStatus(s, "requirements_review")).toBe("accepted");
   });
 

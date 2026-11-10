@@ -2,16 +2,18 @@
 import { JSDOM } from "jsdom";
 import { beforeAll, describe, expect, it } from "vitest";
 import { acceptanceStatus, applyWorkflowCommand, phaseGates, redactState, renderReview, submissionToCommands, WorkflowStateSchema, type WorkflowState } from "./index.js";
+import { userChannelFor } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
-const U = { via: "html-review" as const };
-const run = (s: WorkflowState | null, c: Record<string, unknown>, channel?: typeof U) => applyWorkflowCommand(s, c, { now: NOW, ...(channel ? { channel } : {}) }).state;
+/** The user decided this in the client's dialog (the test harness stands in for the dialog). */
+const U = "user" as const;
+const run = (s: WorkflowState | null, c: Record<string, unknown>, channel?: typeof U) => applyWorkflowCommand(s, c, { now: NOW, ...(channel ? { channel: userChannelFor(c) } : {}) }).state;
 beforeAll(() => {
   process.env.PRAXIS_TEST_APPROVALS = "1";
 });
 
 const base = (mode: "guided" | "classic" = "guided") => {
-  let s = run(null, { action: "open", projectId: "p", title: "Orders", request: "r", mode }, { via: "html-review" });
+  let s = run(null, { action: "open", projectId: "p", title: "Orders", request: "r", mode }, U);
   s = run(s, { action: "add-requirement", id: "REQ-ORD-001", statement: "View orders", acceptanceCriteria: ["List shows orders", "Search works"] });
   return s;
 };

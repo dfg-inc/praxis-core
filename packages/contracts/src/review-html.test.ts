@@ -12,9 +12,10 @@ import {
   type ReviewView,
   type WorkflowState,
 } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
-const apply = (state: WorkflowState | null, command: Record<string, unknown>) => applyWorkflowCommand(state, command, { now: NOW, channel: { via: "html-review" } });
+const apply = (state: WorkflowState | null, command: Record<string, unknown>) => applyAsUser(state, command, { now: NOW });
 const ok = (state: WorkflowState, command: Record<string, unknown>) => apply(state, command).state;
 
 function base(): WorkflowState {
@@ -25,7 +26,7 @@ function base(): WorkflowState {
 }
 
 function withPrototype(s: WorkflowState): WorkflowState {
-  s = ok(s, { action: "accept-requirements", via: "html-review" });
+  s = ok(s, { action: "accept-requirements", via: "approved" });
   return ok(s, {
     action: "set-prototype",
     prototype: {
@@ -115,7 +116,7 @@ describe("HTML requirements review", () => {
     (p.doc.querySelector('[data-ac="REQ-ORD-001-AC-01"] input[value=accepted]') as HTMLInputElement).click();
     const { next } = applyPlan(s, p.decisions());
     expect(next.requirements[0].revision).toBe(1);
-    expect(next.requirements[0].acceptanceCriteria[0].review).toMatchObject({ status: "accepted", via: "html-review" });
+    expect(next.requirements[0].acceptanceCriteria[0].review).toMatchObject({ status: "accepted", via: "approved" });
     expect(reviewProgress(next).accepted).toBe(1);
   });
 
@@ -135,7 +136,7 @@ describe("HTML requirements review", () => {
     p.doc.querySelector<HTMLInputElement>("#accept-all")!.click();
     const { next } = applyPlan(s, p.decisions());
     expect(reviewProgress(next).complete).toBe(true);
-    expect(next.phaseAcceptance.requirements_review?.via).toBe("html-review");
+    expect(next.phaseAcceptance.requirements_review?.via).toBe("approved");
   });
 
   it("reports a conflict when the requirement was edited after the page was rendered, and still applies the other items", () => {
@@ -219,7 +220,7 @@ describe("HTML prototype review", () => {
   });
 
   it("an API prototype renders request and response examples without screens", () => {
-    let s = ok(base(), { action: "accept-requirements", via: "html-review" });
+    let s = ok(base(), { action: "accept-requirements", via: "approved" });
     s = ok(s, { action: "set-prototype", prototype: { kind: "api", title: "Orders API", notes: "", screens: [], mock: [], roles: [], endpoints: [{ id: "list", method: "GET", path: "/orders", summary: "List orders", requirementIds: ["REQ-ORD-001"], acIds: [], responses: [{ status: 200, description: "ok", example: { items: [] } }] }] } });
     const { html } = page(s, "prototype");
     expect(html).toContain("/orders");
@@ -238,7 +239,7 @@ describe("HTML prototype review", () => {
 
 describe("HTML story plan and stories review", () => {
   function planned(): WorkflowState {
-    let s = ok(base(), { action: "accept-requirements", via: "html-review" });
+    let s = ok(base(), { action: "accept-requirements", via: "approved" });
     s = ok(s, { action: "set-story-plan", entries: [{ id: "US-ORD-001", title: "View orders", implementation: "List page", userGets: "all orders", requirementIds: ["REQ-ORD-001"], capabilities: ["view", "search"] }, { id: "US-ORD-002", title: "Export", implementation: "CSV", userGets: "a file", requirementIds: ["REQ-ORD-002"], capabilities: ["filter"] }] });
     return s;
   }
@@ -272,7 +273,7 @@ describe("HTML story plan and stories review", () => {
 
   function withStories(): WorkflowState {
     let s = planned();
-    s = ok(s, { action: "agree-story-plan", via: "html-review" });
+    s = ok(s, { action: "agree-story-plan", via: "approved" });
     s = ok(s, { action: "add-story", id: "US-ORD-001", requirementIds: ["REQ-ORD-001"], actor: "manager", narrative: "As a manager, I want orders, so that I see them.", objective: "o", userValue: "v", happyPath: ["open list", "search"], acceptanceCriteria: [{ id: "US-ORD-001-AC-01", given: "orders exist", when: "I open the list", then: "I see them" }], expectedResults: ["list shown"], confirmedBehavior: false });
     return s;
   }
@@ -299,7 +300,7 @@ describe("HTML story plan and stories review", () => {
     p.doc.querySelector<HTMLInputElement>('[data-key="step:0"] input[value=accepted]')!.click();
     (p.doc.querySelector('[data-key="step:0"] [data-f=comment]') as HTMLInputElement).value = "tab B";
     const submission = p.decisions();
-    const other = applyWorkflowCommand(s, { action: "review-stories", via: "html-review", items: [{ storyId: "US-ORD-001", revision: 1, key: "step:0", status: "accepted", comment: "tab A" }], acceptStories: [] }, { now: NOW, channel: { via: "html-review" } }).state;
+    const other = applyAsUser(s, { action: "review-stories", via: "approved", items: [{ storyId: "US-ORD-001", revision: 1, key: "step:0", status: "accepted", comment: "tab A" }], acceptStories: [] }, { now: NOW }).state;
     const plan = submissionToCommands(other, submission);
     expect(plan.commands).toHaveLength(0);
     expect(plan.conflicts[0].reason).toMatch(/remark changed since you opened this page.*reload/i);

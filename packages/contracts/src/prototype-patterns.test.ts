@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 import { applyWorkflowCommand, customFrameDocument, CUSTOM_FRAME_CSP, explainCommandError, expectedCapabilities, prototypeFingerprint, renderReview, submissionToCommands, ReviewSubmissionSchema, type WorkflowState } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 /**
  * Interface patterns that are not tables: the agronomist journal (an anonymized reproduction of an external report, where a requested
@@ -13,14 +14,14 @@ const F = JSON.parse(readFileSync(new URL("./__fixtures__/agronomist-journal.jso
 const ORDERS = JSON.parse(readFileSync(new URL("./__fixtures__/orders-interactive.command.json", import.meta.url), "utf8"));
 const NOW = new Date("2026-11-10T09:00:00.000Z");
 const ME = "Ирина Ковалёва";
-const apply = (s: WorkflowState | null, c: Record<string, unknown>) => applyWorkflowCommand(s, c, { now: NOW, channel: { via: "html-review" } }).state;
+const apply = (s: WorkflowState | null, c: Record<string, unknown>) => applyAsUser(s, c, { now: NOW }).state;
 type Proto = Record<string, any>;
 type El = Record<string, any>;
 
 function base(): WorkflowState {
   let s = apply(apply(null, F.open), F.repository);
   for (const r of F.requirements) s = apply(s, { action: "add-requirement", ...r });
-  return apply(apply(s, F.impact), { action: "accept-requirements", via: "html-review" });
+  return apply(apply(s, F.impact), { action: "accept-requirements", via: "approved" });
 }
 /** The journal screen: the existing elements in their order, with the note feed (id "feed") replaced by the given element. */
 const screen = (feed: El | null, extra: El[] = []) => ({ ...F.screen, elements: [...F.existing.map((e: El) => (e.id === "feed" && feed ? feed : e)), ...extra] });
@@ -516,7 +517,7 @@ describe("existing prototypes are unchanged", () => {
     let s = apply(null, { action: "open", projectId: "orders", title: "Orders filter", request: "Filter orders by status", mode: "guided" });
     for (const [id, n] of Object.entries({ "REQ-ORD-001": 7, "REQ-ORD-002": 9, "REQ-ORD-003": 2, "REQ-ORD-004": 6, "REQ-ORD-005": 7 }))
       s = apply(s, { action: "add-requirement", id, statement: `Requirement ${id} statement`, acceptanceCriteria: Array.from({ length: n }, (_, i) => `Criterion ${i + 1} of ${id}`) });
-    s = apply(apply(s, { action: "accept-requirements", via: "html-review" }), { action: "set-prototype", prototype: ORDERS.prototype, summary: "interactive" });
+    s = apply(apply(s, { action: "accept-requirements", via: "approved" }), { action: "set-prototype", prototype: ORDERS.prototype, summary: "interactive" });
     // value computed with the build before this change (contracts 0.1.0-alpha.49, commit 7e2739b)
     expect(prototypeFingerprint(s.prototype)).toBe("5117815d0b85b5ac");
     const page = open(s);

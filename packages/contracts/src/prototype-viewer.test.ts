@@ -4,18 +4,19 @@ import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 import { applyWorkflowCommand, acceptanceStatus, ReviewSubmissionSchema, renderReview, submissionToCommands, WorkflowStateSchema, type WorkflowState } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 /** The orders fixture (copy of praxis-runtime/tools/fixtures): filter, side card, status/order in the address, scenarios. */
 const FIXTURE = JSON.parse(readFileSync(new URL("./__fixtures__/orders-interactive.command.json", import.meta.url), "utf8"));
 const NOW = new Date("2026-10-28T10:00:00.000Z");
-const apply = (s: WorkflowState | null, c: Record<string, unknown>) => applyWorkflowCommand(s, c, { now: NOW, channel: { via: "html-review" } });
+const apply = (s: WorkflowState | null, c: Record<string, unknown>) => applyAsUser(s, c, { now: NOW });
 const ok = (s: WorkflowState, c: Record<string, unknown>) => apply(s, c).state;
 const COUNTS: Record<string, number> = { "REQ-ORD-001": 7, "REQ-ORD-002": 9, "REQ-ORD-003": 2, "REQ-ORD-004": 6, "REQ-ORD-005": 7 };
 
 function ordersState(prototype: Record<string, unknown> = FIXTURE.prototype): WorkflowState {
   let s = apply(null, { action: "open", projectId: "orders", title: "Orders filter", request: "Filter orders by status", mode: "guided" }).state;
   for (const [id, n] of Object.entries(COUNTS)) s = ok(s, { action: "add-requirement", id, statement: `Requirement ${id} statement`, acceptanceCriteria: Array.from({ length: n }, (_, i) => `Criterion ${i + 1} of ${id}`) });
-  s = ok(s, { action: "accept-requirements", via: "html-review" });
+  s = ok(s, { action: "accept-requirements", via: "approved" });
   return ok(s, { action: "set-prototype", prototype, summary: "interactive" });
 }
 
@@ -364,9 +365,9 @@ describe("compatibility: a prototype saved before the interaction fields existed
   it("still renders, and an acceptance recorded before is not reported as stale after the schema grew", () => {
     let s = apply(null, { action: "open", projectId: "orders", title: "t", request: "r", mode: "guided" }).state;
     s = ok(s, { action: "add-requirement", id: "REQ-ORD-001", statement: "s", acceptanceCriteria: ["a"] });
-    s = ok(s, { action: "accept-requirements", via: "html-review" });
+    s = ok(s, { action: "accept-requirements", via: "approved" });
     s = ok(s, { action: "set-prototype", prototype: LEGACY, summary: "old" });
-    s = ok(s, { action: "accept-prototype", via: "html-review" });
+    s = ok(s, { action: "accept-prototype", via: "approved" });
     expect(acceptanceStatus(s, "prototype")).toBe("accepted");
     // what a file written before the new fields looked like: none of the new keys are there
     const stored = JSON.parse(JSON.stringify(s));
