@@ -6,9 +6,11 @@ import type { UserApproval } from "./user-approval.js";
  * and how much that channel proves. The record is written by the contract at the moment the decision is verified, never from
  * anything in a command. It says what the CLIENT vouched for; no client identifies the person yet, so `actor` stays empty.
  *
- *   independent-human  the client's own approval dialog (the Runtime asked, the person answered in the client)
- *   review-page        the person's click in a page the Runtime served on loopback and opened itself: Save in a review page,
- *                      or Approve in the approval page (a browser, no client vouching)
+ *   independent-human  the client's own approval dialog answered (the Runtime asked, the client answered). The name is
+ *                      historical and kept for saved work items: it says which channel answered, not that a person was
+ *                      verified; no channel verifies one
+ *   review-page        a click in a page the Runtime served on loopback and opened itself: Save in a review page, or
+ *                      Approve in the approval page (a browser, no client vouching; who or what clicked is not known)
  *   host-attested      the host's own permission prompt or Trusted Client mode (the host, not a dialog, vouched)
  *   test-only          the test harness (PRAXIS_TEST_APPROVALS): never a person, never production
  * States written before this record existed carry decisions with no record: they are reported as "unverified provenance".
@@ -42,19 +44,19 @@ export type ApprovalSubject = z.infer<typeof ApprovalSubjectSchema>;
 export function trustOfApproval(approval: Pick<UserApproval, "channel" | "assurance">): ApprovalRecord["trust"] {
   if (approval.channel === "test") return "test-only";
   if (approval.assurance === "client-ui") return "independent-human";
-  // the same trust as a review-page Save: the person's click in a page the Runtime opened, the agent never had its link
+  // the same trust as a review-page Save: a click in a page the Runtime opened, whose link the agent's tools never had
   if (approval.assurance === "approval-page") return "review-page";
   return "host-attested";
 }
 
 /** What an approval is, in words that do not claim more than the channel proved. */
 export function describeApproval(approval: Pick<UserApproval, "channel" | "assurance"> | "review-page"): string {
-  if (approval === "review-page") return "saved from the review page (the person's click in the browser; the client did not vouch for it)";
+  if (approval === "review-page") return "saved from the review page (a click in the browser page Praxis opened; the client did not vouch for it, and who clicked is not verified)";
   switch (trustOfApproval(approval)) {
     case "independent-human":
-      return "approved in the client's approval dialog";
+      return "approved in the client's approval dialog (the dialog answered; a person is not verified)";
     case "review-page":
-      return "approved in the Praxis approval page (the person's click in the browser page Praxis opened; the client did not vouch for it)";
+      return "approved in the Praxis approval page (a click in the browser page Praxis opened; the client did not vouch for it, and who clicked is not verified)";
     case "host-attested":
       return approval.channel === "trusted-client" ? "approved in Trusted Client mode (the host's own permission, no dialog was shown)" : "approved through the host's permission prompt (no Praxis dialog)";
     default:

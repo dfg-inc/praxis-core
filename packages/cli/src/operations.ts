@@ -1330,6 +1330,12 @@ export async function developerCompleteRecoveryApplyOp(
     repository: repo,
     workItemId: wp,
     requireYes: true,
+    // the person is shown the recovery plan itself, not only its fingerprint
+    describe: async () => ({
+      summary: `Recover the completion of ${wp} in Jira`,
+      description: JSON.stringify(await developerCompleteRecoveryPreviewOp(ctx), null, 2),
+      targets: [wp],
+    }),
   }, () => withProvider({ ...ctx, repo }, (p) =>
     applyDeveloperCompleteRecovery({
       provider: p,
@@ -1928,6 +1934,13 @@ export async function developerGitLinkJiraApplyOp(ctx: OpContext) {
     repository: repo,
     workItemId: ctx.wp,
     requireYes: true,
+    // the person is shown the issue and the exact comment, not only a fingerprint
+    describe: () => ({
+      summary: `Add a comment to ${preview.jiraIssueKey} in Jira`,
+      description: `Issue: ${preview.jiraIssueKey}\n\nComment to add, exactly:\n${preview.proposedComment}`,
+      previewFingerprint: preview.previewFingerprint,
+      targets: [preview.jiraIssueKey!],
+    }),
   }, () => withProvider(ctx, async (p) => {
     await p.addComment(preview.jiraIssueKey!, preview.proposedComment!);
     return {

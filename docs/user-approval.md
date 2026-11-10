@@ -34,13 +34,13 @@ The result of every protected call says how the approval was obtained. `data.app
 
 ## Every outcome has its own code
 
-An action that did not run says why, and Praxis never attributes a decision to you without evidence. `data.outcome` and `data.decidedBy` carry the same information as the code.
+An action that did not run says why, and Praxis never attributes a decision to you without evidence. `data.outcome` and `data.decidedBy` carry the same information as the code. `decidedBy` names **what answered**, never a person: for your own channels it is `client-dialog`, `approval-page` or `terminal-prompt`, always with `personVerified: false`. Praxis knows which channel answered; it cannot know whether you or something operating that channel for you (a browser-automation tool, a script) did.
 
 | Code | What happened | `decidedBy` |
 | --- | --- | --- |
-| (success) | you approved | `user` |
-| `APPROVAL_REJECTED` | you rejected it, in the dialog or the page | `user` |
-| `APPROVAL_DISMISSED` | you closed the dialog without deciding: not a rejection | `user` |
+| (success) | approved in your channel | `client-dialog`, `approval-page`, `terminal-prompt` (or `trusted-client`, `host-prompt` in the opt-in modes) |
+| `APPROVAL_REJECTED` | rejected in your channel (the dialog or the page) | `client-dialog`, `approval-page`, `terminal-prompt` |
+| `APPROVAL_DISMISSED` | the dialog was closed without deciding: not a rejection | `client-dialog` |
 | `APPROVAL_PENDING` | the approval page is open and nobody has decided yet; the agent calls the same tool again after you decide | `nobody` |
 | `APPROVAL_TIMED_OUT` | a dialog was shown and nobody answered in time | `nobody` |
 | `APPROVAL_EXPIRED` | an answer or a page request is too old to use | `nobody` |
@@ -48,7 +48,7 @@ An action that did not run says why, and Praxis never attributes a decision to y
 | `APPROVAL_CLIENT_UI_REQUIRED` | Praxis could not ask you here: no dialog and no page (`outcome: unavailable`), or the client answered its dialog by itself (`outcome: auto-answered`) | `nobody` or `client` |
 | `APPROVAL_SCOPE_MISMATCH`, `APPROVAL_TOO_LARGE`, `APPROVAL_FINGERPRINT_MISMATCH` | Praxis refused before asking (a changed plan, too much to show in full) | `praxis` |
 
-**An answer faster than a person can read the request is not a person's answer.** The Claude Desktop Code tab declares the dialog and then answers `decline` by itself, 9 to 34 ms after it is asked, with nothing on screen ([anthropics/claude-code#89858](https://github.com/anthropics/claude-code/issues/89858)). Praxis treats any dialog answer that arrives sooner than `PRAXIS_APPROVAL_MIN_ANSWER_MS` (default 1000 ms) as the client's own. That covers `accept` as well as `decline`. It records `auto-answered` and asks in the approval page instead. A client version seen twice declining faster than any person (under 250 ms) goes to the page directly from then on, so Praxis does not retry a dialog that is known to fail. One fast answer never changes how a client is asked, and a new client version is tried once more, in case it was fixed.
+**An answer faster than a person can read the request is not a person's answer.** Response time is used only in this direction: it can show that an answer was automatic, and it never shows that a person answered (a script that waits a second looks the same as you). The Claude Desktop Code tab declares the dialog and then answers `decline` by itself, 9 to 34 ms after it is asked, with nothing on screen ([anthropics/claude-code#89858](https://github.com/anthropics/claude-code/issues/89858)). Praxis treats any dialog answer that arrives sooner than `PRAXIS_APPROVAL_MIN_ANSWER_MS` (default 1000 ms) as the client's own. That covers `accept` as well as `decline`. It records `auto-answered` and asks in the approval page instead. A client version seen twice declining faster than any person (under 250 ms) goes to the page directly from then on, so Praxis does not retry a dialog that is known to fail. One fast answer never changes how a client is asked, and a new client version is tried once more, in case it was fixed.
 
 Before this rule, Praxis recorded the Code tab's own decline as "rejected by the user", and recorded the agent's `confirmation=NO` as the user's rejection. The [decision journal](#the-decision-journal) section shows how those entries are corrected.
 
@@ -78,15 +78,24 @@ The approval page is switched off with `PRAXIS_APPROVAL_PAGE=off` (extension set
 
 `~/.praxis/diagnostics/mcp.jsonl` (path in `praxis_doctor` → `approval.diagnosticsLog`) records `tool_enter`, `tool_finished` (with `ms` and the result `code`) and `input_required` per call, with names, durations and the client's declared capability keys. It never records arguments or plan text. A call that is missing there never reached Praxis. If a Chat seems to hang on an apply, look for the host's own tool-permission prompt.
 
+### Where approval settings come from
+
+Claude Code applies the `env` block of a repository's `.claude/settings.json` to the MCP servers it starts, so for a Runtime that Claude Code starts (the Desktop Code tab, Cowork, the Claude Code CLI) the environment is partly the repository's. Settings that weaken approval (`mode`, `browser`, a lower `minAnswerMs` or `pageMinMs`) are therefore read:
+
+- for the Claude Desktop extension: from its extension settings;
+- for everything else: only from `~/.praxis/approval-settings.json` in your account's real home, a file you own that is not group- or world-writable, for example `{ "mode": "trusted-client", "browser": "Safari" }`. Environment variables of the same names are ignored there, and `praxis_doctor` → `approval.settings` lists any it ignored.
+
+Settings that make approval stricter (`PRAXIS_APPROVAL_PAGE=off`, a longer minimum time) are taken from anywhere. Released versions up to 0.1.0-alpha.49.1 took `PRAXIS_APPROVAL_MODE` from the environment, so a repository you trusted could switch on Trusted Client there.
+
 ### Opt-in: `PRAXIS_APPROVAL_MODE=host-permission`
 
-This mode is for a host that has no dialog but does ask before running an MCP tool. You switch it on with the extension setting *Approval mode*; a repository can never set it. The agent calls `praxis_approval_plan` (read-only), which returns the exact plan Praxis computed from the live state. The agent shows it to you, then calls the apply tool with that exact text as `planText`. Praxis recomputes the plan and refuses unless the text matches, so the host's permission prompt shows what will really run, and a changed plan needs a new text and a new prompt.
+This mode is for a host that has no dialog but does ask before running an MCP tool. You switch it on with the extension setting *Approval mode*, or `"mode": "host-permission"` in `~/.praxis/approval-settings.json`; a repository cannot set it. The agent calls `praxis_approval_plan` (read-only), which returns the exact plan Praxis computed from the live state. The agent shows it to you, then calls the apply tool with that exact text as `planText`. Praxis recomputes the plan and refuses unless the text matches, so the host's permission prompt shows what will really run, and a changed plan needs a new text and a new prompt.
 
 What it cannot do, stated plainly: Praxis cannot see whether the host's prompt was shown. If you chose "always allow" for the tool, there is no prompt and the agent has approved itself. The result is labelled `assurance: "host-prompt"`, never `client-ui`.
 
 ### Opt-in: `PRAXIS_APPROVAL_MODE=trusted-client` (Trusted Client)
 
-This mode is the owner's explicit decision to trust a client with protected actions without a separate confirmation of each one. You switch it on with the extension setting *Approval mode*, or with the environment variable for a client that starts the Runtime itself. It is never the default and a repository `.env` cannot set it. Praxis runs a previewed action on `confirmation=YES` with the matching `previewFingerprint`, and labels it `trusted-client`. That label is never your confirmation of that action.
+This mode is the owner's explicit decision to trust a client with protected actions without a separate confirmation of each one. You switch it on with the extension setting *Approval mode*, or `"mode": "trusted-client"` in `~/.praxis/approval-settings.json` for a client that starts the Runtime itself. It is never the default, and neither a repository `.env` nor a repository's Claude Code settings can set it. Praxis runs a previewed action on `confirmation=YES` with the matching `previewFingerprint`, and labels it `trusted-client`. That label is never your confirmation of that action.
 
 **Neither opt-in mode covers acts only a person may perform**: confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion (`revise-acceptance`), recording review decisions (`praxis_review_apply`), opening a classic work item, and correcting the decision journal. For those, Praxis asks you in the approval page or the client's dialog. If it can do neither, it refuses with `APPROVAL_CLIENT_UI_REQUIRED`, whatever `planText` says.
 

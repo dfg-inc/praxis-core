@@ -113,6 +113,21 @@ describe("amending without rewriting", () => {
     expect(effective.find((e) => e.line === 4)!.amendedBy).toBeUndefined();
   });
 
+  it("a rule corrects only its own kind of entry: a client-dialog rule never touches an approval-page rejection, and an invalid line hides nothing", () => {
+    const path = decisionLogPath(repo);
+    appendFileSync(path, `${JSON.stringify({ v: 2, at: "2026-11-10T12:00:00.000Z", action: "praxis_project_init_apply", summary: "s", subjectDigest: "sha256:p", decision: "rejected", decidedBy: "approval-page", personVerified: false, channel: "approval-page", evidence: { requestId: "r", latencyMs: 4000 }, repository: repo })}\n`);
+    const lines = readDecisionJournal(repo);
+    const page = lines.at(-1)!;
+    const forged = { v: 2, type: "amendment", at: "2026-11-10T12:01:00.000Z", amends: { line: page.line, sha256: page.sha256 }, previous: {}, corrected: { decision: "auto-answered", decidedBy: "client" }, rule: "client-answered-without-dialog", evidence: {}, by: "someone" };
+    // an invalid amendment for the desktop decline (line 2) must not stop the real correction of that line
+    const invalid = { ...forged, amends: { line: 2, sha256: lines.find((l) => l.line === 2)!.sha256 }, corrected: { decision: "approved", decidedBy: "client-dialog" } };
+    appendFileSync(path, `${JSON.stringify(forged)}\n${JSON.stringify(invalid)}\n`);
+    const effective = effectiveDecisions(readDecisionJournal(repo));
+    expect(effective.find((e) => e.line === page.line)).toMatchObject({ decision: "rejected", decidedBy: "approval-page" });
+    const findings = auditDecisionJournal(readDecisionJournal(repo), { roundTrips: TRIPS, minAnswerMs: 1000 });
+    expect(findings.find((f) => f.line === 2)).toMatchObject({ kind: "amend", rule: "client-answered-without-dialog" });
+  });
+
   it("pairs an entry with a round trip only when exactly one trip of the same tool fits", () => {
     const lines = readDecisionJournal(repo);
     // a fast trip of another tool at the same moment proves nothing about this entry

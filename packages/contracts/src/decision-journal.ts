@@ -71,14 +71,29 @@ export function readDecisionJournal(repo: string): JournalLine[] {
  * approval) is not applied: the journal is append-only text anyone with the user's account can write, so a reader accepts
  * an amendment only when its rule allows exactly that correction of exactly that kind of entry.
  */
-const ALLOWED: Record<AmendmentRule, { from: readonly string[]; to: { decision: DecisionOutcome; decidedBy: DecidedBy } }> = {
-  "agent-reported-decline": { from: ["rejected"], to: { decision: "withdrawn", decidedBy: "agent" } },
-  "client-answered-without-dialog": { from: ["rejected", "dismissed"], to: { decision: "auto-answered", decidedBy: "client" } },
+const ALLOWED: Record<AmendmentRule, { from: readonly string[]; applies: (entry: DecisionLogEntry) => boolean; to: { decision: DecisionOutcome; decidedBy: DecidedBy } }> = {
+  // only the agent's confirmation=NO as alpha.49.1 and earlier wrote it
+  "agent-reported-decline": { from: ["rejected"], applies: (e) => e.channel === "none" && /reported by the agent/i.test(e.reason ?? ""), to: { decision: "withdrawn", decidedBy: "agent" } },
+  // only a client-dialog answer written without timing (before journal v2); never a page, terminal or opt-in decision
+  "client-answered-without-dialog": { from: ["rejected", "dismissed"], applies: (e) => e.channel === "client-elicitation" && typeof e.evidence?.latencyMs !== "number", to: { decision: "auto-answered", decidedBy: "client" } },
 };
 
 function validAmendment(amendment: DecisionAmendment, entry: DecisionLogEntry): boolean {
   const rule = ALLOWED[amendment.rule];
-  return Boolean(rule) && rule.from.includes(entry.decision) && amendment.corrected?.decision === rule.to.decision && amendment.corrected?.decidedBy === rule.to.decidedBy;
+  return Boolean(rule) && rule.from.includes(entry.decision) && rule.applies(entry) && amendment.corrected?.decision === rule.to.decision && amendment.corrected?.decidedBy === rule.to.decidedBy;
+}
+
+/** The keys (line:sha256) of entries that carry a VALID amendment; an invalid amendment line hides nothing. */
+function validlyAmended(lines: JournalLine[]): Set<string> {
+  const entries = new Map(lines.filter((l) => l.entry).map((l) => [`${l.line}:${l.sha256}`, l.entry!]));
+  const keys = new Set<string>();
+  for (const line of lines) {
+    if (!line.amendment) continue;
+    const key = `${line.amendment.amends.line}:${line.amendment.amends.sha256}`;
+    const entry = entries.get(key);
+    if (entry && validAmendment(line.amendment, entry)) keys.add(key);
+  }
+  return keys;
 }
 
 /** Each decision with the amendment that applies to it (the last valid one), so a reader sees what is known now. */
@@ -135,7 +150,7 @@ export type JournalFinding = {
  * seconds before it was written.
  */
 export function auditDecisionJournal(lines: JournalLine[], options: { roundTrips?: ObservedRoundTrip[]; minAnswerMs: number }): JournalFinding[] {
-  const amended = new Set(lines.filter((l) => l.amendment).map((l) => `${l.amendment!.amends.line}:${l.amendment!.amends.sha256}`));
+  const amended = validlyAmended(lines);
   const findings: JournalFinding[] = [];
   for (const line of lines) {
     const entry = line.entry;
@@ -193,7 +208,7 @@ export function auditDecisionJournal(lines: JournalLine[], options: { roundTrips
 export function appendDecisionAmendments(repo: string, findings: JournalFinding[], by: string, now: Date = new Date()): { appended: number; skipped: number; path: string } {
   const path = decisionLogPath(repo);
   const lines = readDecisionJournal(repo);
-  const already = new Set(lines.filter((l) => l.amendment).map((l) => `${l.amendment!.amends.line}:${l.amendment!.amends.sha256}`));
+  const already = validlyAmended(lines);
   const current = new Map(lines.map((l) => [l.line, l.sha256]));
   let appended = 0;
   let skipped = 0;
