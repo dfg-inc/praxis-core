@@ -69,7 +69,7 @@ export type ApprovalRequest = {
 };
 
 /** What Praxis observed about an answer: how long it took, which page request carried it. Never the content. */
-export type AnswerEvidence = { latencyMs?: number; requestId?: string; via?: string; client?: string };
+export type AnswerEvidence = { latencyMs?: number; requestId?: string; via?: string; client?: string; /** When the person decided, if that was before the answer was used (the approval page). */ decidedAt?: string };
 
 /**
  * approve / reject / dismiss: the user's answer in the client's dialog or the approval page.
@@ -84,6 +84,11 @@ export type AskAnswer = {
   automatic?: "accept" | "decline" | "cancel";
   /** The channel wrote this decision to the journal when it was made (the approval page logs the click itself). */
   journaled?: true;
+  /**
+   * Which channel actually answered, when a channel hands some requests to another (Trusted Client and host-permission
+   * hand acts only a person may perform to the approval page). The approval is labelled with this, never with the wrapper's.
+   */
+  channel?: ApprovalChannelKind;
 };
 
 /** A way to put an ApprovalRequest in front of the person. Supplied by the MCP client integration. */
@@ -332,9 +337,10 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
       // a channel that refuses with its own explanation (a plan that does not match, an open page) is passed through unchanged
       if (error instanceof ApprovalError) {
         const known = OUTCOME_OF_CODE[error.code] ?? { decision: "refused" as const, decidedBy: "praxis" as const };
+        const raisedBy = (error.details.channel as ApprovalChannelKind | undefined) ?? channel.kind;
         if (error.details.journaled !== true) {
           const evidence = error.details.evidence as AnswerEvidence | undefined;
-          logDecision(options.repo, { ...base, ...known, channel: channel.kind, ...(evidence ? { evidence } : {}), reason: error.message.slice(0, 200) });
+          logDecision(options.repo, { ...base, ...known, channel: raisedBy, ...(evidence ? { evidence } : {}), reason: error.message.slice(0, 200) });
         }
         error.details.outcome ??= known.decision;
         error.details.decidedBy ??= known.decidedBy;
@@ -347,21 +353,25 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
     }
   }
   if (channel && answer && answer.answer !== "unavailable") {
-    const decidedBy = decidedByFor(channel.kind);
-    const said = { channel: channel.kind, decidedBy, ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}) };
+    // labelled with the channel that answered, not the one that was asked (a wrapper may hand a request on)
+    const answeredBy = answer.channel ?? channel.kind;
+    const decidedBy = decidedByFor(answeredBy);
+    const said = { channel: answeredBy, decidedBy, ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}) };
     if (answer.answer === "approve") {
-      const approval = createUserApproval({ request, channel: channel.kind });
+      // an approval given earlier (a click in the page) ages from that click, not from when it is used
+      const clicked = answer.evidence?.decidedAt ? new Date(answer.evidence.decidedAt) : undefined;
+      const approval = createUserApproval({ request, channel: answeredBy, ...(clicked && Number.isFinite(clicked.getTime()) && clicked.getTime() <= Date.now() ? { now: clicked } : {}) });
       channelStore.getStore()?.approvals.push(approval);
       if (!answer.journaled) logDecision(options.repo, { ...base, decision: "approved", ...said });
       return approval;
     }
     const dismissed = answer.answer === "dismiss";
     if (!answer.journaled) logDecision(options.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", ...said });
-    const details = { executed: false, outcome: dismissed ? "dismissed" : "rejected", decidedBy, channel: channel.kind, ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}), rejected: !dismissed, dismissed };
+    const details = { executed: false, outcome: dismissed ? "dismissed" : "rejected", decidedBy, channel: answeredBy, ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}), rejected: !dismissed, dismissed };
     if (dismissed) {
-      throw new ApprovalError("APPROVAL_DISMISSED", `${request.summary} was not run: the user closed ${whereAsked(channel.kind)} without deciding. Nothing was changed. This is not a rejection; ask the user whether to try again.`, details);
+      throw new ApprovalError("APPROVAL_DISMISSED", `${request.summary} was not run: the user closed ${whereAsked(answeredBy)} without deciding. Nothing was changed. This is not a rejection; ask the user whether to try again.`, details);
     }
-    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected by the user in ${whereAsked(channel.kind)}. Nothing was changed.`, details);
+    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected by the user in ${whereAsked(answeredBy)}. Nothing was changed.`, details);
   }
   const automatic = answer?.automatic;
   const why = automatic
@@ -371,7 +381,7 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
     ...base,
     decision: automatic ? "auto-answered" : "unavailable",
     decidedBy: automatic ? "client" : "nobody",
-    channel: channel?.kind ?? "none",
+    channel: answer?.channel ?? channel?.kind ?? "none",
     ...(answer?.evidence ? { evidence: answer.evidence } : {}),
     reason: why.slice(0, 300),
   });

@@ -101,6 +101,31 @@ describe("amending without rewriting", () => {
     }
   });
 
+  it("a reader applies an amendment only when its rule allows exactly that correction", () => {
+    const path = decisionLogPath(repo);
+    const lines = readDecisionJournal(repo);
+    const forged = (line: number, rule: string, corrected: object) => JSON.stringify({ v: 2, type: "amendment", at: "2026-11-10T00:00:00.000Z", amends: { line, sha256: lines.find((l) => l.line === line)!.sha256 }, previous: {}, corrected, rule, evidence: {}, by: "someone" });
+    appendFileSync(path, `${forged(4, "client-answered-without-dialog", { decision: "approved", decidedBy: "user" })}\n${forged(5, "agent-reported-decline", { decision: "withdrawn", decidedBy: "agent" })}\n`);
+    const effective = effectiveDecisions(readDecisionJournal(repo));
+    // a rejection is never turned into an approval, and an approval is not "withdrawn" by a rule meant for rejections
+    expect(effective.find((e) => e.line === 4)).toMatchObject({ decision: "rejected", decidedBy: "unknown" });
+    expect(effective.find((e) => e.line === 5)).toMatchObject({ decision: "approved" });
+    expect(effective.find((e) => e.line === 4)!.amendedBy).toBeUndefined();
+  });
+
+  it("pairs an entry with a round trip only when exactly one trip of the same tool fits", () => {
+    const lines = readDecisionJournal(repo);
+    // a fast trip of another tool at the same moment proves nothing about this entry
+    const otherTool = auditDecisionJournal(lines, { roundTrips: [{ ...TRIPS[0]!, tool: "praxis_developer_git_commit" }], minAnswerMs: 1000 });
+    expect(otherTool.find((f) => f.line === 2)).toMatchObject({ kind: "unverified" });
+    // two candidates: ambiguous, left as written
+    const two = auditDecisionJournal(lines, { roundTrips: [TRIPS[0]!, { ...TRIPS[0]!, askedAt: "2026-10-22T18:31:00.000Z", answeredAt: "2026-10-22T18:32:06.000Z" }], minAnswerMs: 1000 });
+    expect(two.find((f) => f.line === 2)).toMatchObject({ kind: "unverified" });
+    // a trip that finished with something else than a rejection is not this entry's
+    const approved = auditDecisionJournal(lines, { roundTrips: [{ ...TRIPS[0]!, finishedCode: "APPROVAL_CLIENT_UI_REQUIRED" }], minAnswerMs: 1000 });
+    expect(approved.find((f) => f.line === 2)).toMatchObject({ kind: "unverified" });
+  });
+
   it("keeps lines it cannot read and never turns anything into an approval", () => {
     appendFileSync(decisionLogPath(repo), "not json\n");
     const lines = readDecisionJournal(repo);

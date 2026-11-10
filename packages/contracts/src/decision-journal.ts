@@ -66,10 +66,31 @@ export function readDecisionJournal(repo: string): JournalLine[] {
   return lines;
 }
 
-/** Each decision with the amendment that applies to it (the last matching one), so a reader sees what is known now. */
+/**
+ * The only corrections an amendment may make. A line that claims anything else (for example that a rejection was really an
+ * approval) is not applied: the journal is append-only text anyone with the user's account can write, so a reader accepts
+ * an amendment only when its rule allows exactly that correction of exactly that kind of entry.
+ */
+const ALLOWED: Record<AmendmentRule, { from: readonly string[]; to: { decision: DecisionOutcome; decidedBy: DecidedBy } }> = {
+  "agent-reported-decline": { from: ["rejected"], to: { decision: "withdrawn", decidedBy: "agent" } },
+  "client-answered-without-dialog": { from: ["rejected", "dismissed"], to: { decision: "auto-answered", decidedBy: "client" } },
+};
+
+function validAmendment(amendment: DecisionAmendment, entry: DecisionLogEntry): boolean {
+  const rule = ALLOWED[amendment.rule];
+  return Boolean(rule) && rule.from.includes(entry.decision) && amendment.corrected?.decision === rule.to.decision && amendment.corrected?.decidedBy === rule.to.decidedBy;
+}
+
+/** Each decision with the amendment that applies to it (the last valid one), so a reader sees what is known now. */
 export function effectiveDecisions(lines: JournalLine[]): Array<{ line: number; entry: DecisionLogEntry; decision: DecisionOutcome; decidedBy: DecidedBy | "unknown"; amendedBy?: DecisionAmendment }> {
+  const entries = new Map(lines.filter((l) => l.entry).map((l) => [`${l.line}:${l.sha256}`, l.entry!]));
   const amendments = new Map<string, DecisionAmendment>();
-  for (const line of lines) if (line.amendment) amendments.set(`${line.amendment.amends.line}:${line.amendment.amends.sha256}`, line.amendment);
+  for (const line of lines) {
+    if (!line.amendment) continue;
+    const key = `${line.amendment.amends.line}:${line.amendment.amends.sha256}`;
+    const entry = entries.get(key);
+    if (entry && validAmendment(line.amendment, entry)) amendments.set(key, line.amendment);
+  }
   return lines
     .filter((line): line is JournalLine & { entry: DecisionLogEntry } => Boolean(line.entry))
     .map((line) => {
@@ -84,8 +105,15 @@ export function effectiveDecisions(lines: JournalLine[]): Array<{ line: number; 
     });
 }
 
-/** A round trip the Runtime observed: when the dialog was asked for and when the client's answer came back. */
-export type ObservedRoundTrip = { askedAt: string; answeredAt: string; tool: string; client?: string };
+/**
+ * A round trip the Runtime observed: when the dialog was asked for, when the client's answer came back (the retry of the
+ * call), and the code that retry finished with.
+ */
+export type ObservedRoundTrip = { askedAt: string; answeredAt: string; tool: string; client?: string; finishedCode?: string };
+
+/** Tools through which a workflow act (confirm-story, review-decisions ...) is applied; other actions are tool names. */
+const ACT_TOOLS = new Set(["praxis_workflow_apply", "praxis_review_apply", "praxis_quality_apply"]);
+const tripMatches = (trip: ObservedRoundTrip, action: string): boolean => (action.startsWith("praxis_") ? trip.tool === action : ACT_TOOLS.has(trip.tool));
 
 export type JournalFinding = {
   line: number;
@@ -133,9 +161,12 @@ export function auditDecisionJournal(lines: JournalLine[], options: { roundTrips
       continue;
     }
     const written = Date.parse(entry.at);
-    const trip = (options.roundTrips ?? [])
-      .filter((t) => Date.parse(t.answeredAt) <= written && written - Date.parse(t.answeredAt) <= 2_000)
-      .sort((a, b) => Date.parse(b.answeredAt) - Date.parse(a.answeredAt))[0];
+    // exactly one round trip of the same tool, answered just before this entry and finished as a rejection: anything less
+    // certain leaves the entry as written
+    const candidates = (options.roundTrips ?? []).filter(
+      (t) => tripMatches(t, entry.action) && Date.parse(t.answeredAt) <= written && written - Date.parse(t.answeredAt) <= 2_000 && (t.finishedCode === undefined || t.finishedCode === "APPROVAL_REJECTED"),
+    );
+    const trip = candidates.length === 1 ? candidates[0] : undefined;
     if (trip) {
       const ms = Date.parse(trip.answeredAt) - Date.parse(trip.askedAt);
       if (ms < options.minAnswerMs) {

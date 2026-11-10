@@ -32,19 +32,19 @@ What the agent can reach, per client:
 | # | Guarantee | How |
 | --- | --- | --- |
 | G1 | The agent cannot approve through Praxis's interface | An approval is created only from a channel's answer: the client's protocol response, a click in the page, or the CLI's terminal prompt. Tool arguments, command fields, files and chat text never become one. Approvals are objects only `user-approval.ts` issues (a `WeakSet`), so parsed JSON cannot pass for one. |
-| G2 | An approval binds one action and its exact content | The subject digest is computed from the live state when the action runs. A changed plan has a different digest: the old approval does not verify and the person is asked again. The preview fingerprint is checked before anyone is asked. |
-| G3 | Fresh and used once | An answer is usable for 10 minutes. A page decision is used once. An undecided page request expires after 10 minutes and is journaled as `expired`. |
-| G4 | Instant answers are not the person's | A dialog answer that arrives faster than `PRAXIS_APPROVAL_MIN_ANSWER_MS` (1000 ms) is the client's own, `accept` included. An answer for a dialog this Runtime never asked for is ignored. |
+| G2 | An approval binds one action and its exact content | The subject digest is computed from the live state when the action runs. A changed plan has a different digest: the old approval does not verify and the person is asked again. The preview fingerprint is checked before anyone is asked. A page decision also binds the digest of the exact text the person read; different text for the same subject is another request. A Quality fix binds the patch itself (not only its file names), and the person is shown the whole patch. |
+| G3 | Fresh and used once | An answer is usable for 10 minutes from the moment the person gave it (for the page: from the click). A page decision is taken once: when several calls wait on the same page, the first takes the click and every other call asks anew. Two tabs posting at once record one decision. An undecided page request expires after 10 minutes and is journaled as `expired`. |
+| G4 | Instant answers are not the person's | A dialog answer that arrives faster than `PRAXIS_APPROVAL_MIN_ANSWER_MS` (1000 ms) is not taken as the person's either way, `accept` included. It is journaled as `auto-answered`, and the page asks again with clear evidence, so a person who really pressed Reject that fast only rejects once more. An answer for a dialog this Runtime never asked for is ignored. |
 | G5 | Honest labels | `assurance` is `client-ui`, `approval-page`, `host-prompt` or `trusted-client`; `decidedBy` is `user`, `client`, `agent`, `praxis` or `nobody`. `confirmation=NO` is the agent's withdrawal, never the person's rejection. |
 | G6 | Auditable, append-only corrections | Every request outcome is journaled outside the repository. Old misattributions are corrected by appended amendments that name the line and its hash. The person approves the amendments. No line is rewritten. |
-| G7 | No retrying a known failure | A client version seen answering its dialog by itself is sent to the page directly. At most 6 new approval pages open per minute, and an open request is reused. |
+| G7 | No retrying a known failure | A client version seen at least twice declining its dialog faster than any person (under 250 ms) is sent to the page directly. One fast answer never changes how a client is asked. At most 6 new approval pages open per minute, and an open request for the same action and text is reused. |
 
 ## Threats, mitigations, and what remains
 
 | # | Threat | Mitigation | Residual risk |
 | --- | --- | --- | --- |
 | T1 | The agent says the user approved (`confirmation=YES`, approval-looking arguments, chat text) | G1: refused; undeclared arguments are refused outright | none through Praxis |
-| T2 | An approval reused for different content, or replayed | G2, G3 | none through Praxis |
+| T2 | An approval reused for different content, or replayed | G2, G3 | none known through Praxis. The binding is only as complete as each action's subject: every protected action's subject is built from the live state, and the Quality fix subject now includes the patch. |
 | T3 | The client answers its own dialog: the Desktop Code tab's `decline` in milliseconds, or an `Elicitation` hook that auto-accepts | G4: recorded as `auto-answered` by the client; the page asks instead | a client that fakes a slow answer (a hook that sleeps, a malicious host) is believed: Praxis has to trust the client to show its own dialog |
 | T4 | The agent opens or clicks the approval page through Praxis | The secret link goes from the Runtime to the browser through a short-lived file only the person can read. Results carry only the request id. The skills forbid opening it. | none through Praxis's tools |
 | T5 | **An agent operates the browser that shows the page** (Claude in Chrome controls the person's real Chrome: it can see the tab and click Approve) | Praxis cannot detect browser automation. Set *Browser for approval pages* (`PRAXIS_APPROVAL_BROWSER`) to a browser no agent controls (for example Safari when Claude in Chrome runs in Chrome). The page strips its secret from the address bar on load. The skills forbid it. | **real**: with automation connected to that browser, the page is consent only for an agent that follows its instructions. The Desktop Code tab's built-in browser pane is a separate browser and cannot reach the page without the link. |
@@ -53,11 +53,11 @@ What the agent can reach, per client:
 | T8 | Clickjacking: the page framed under something else | `frame-ancestors 'none'`, `X-Frame-Options: DENY` | none known |
 | T9 | Plan text that injects markup or script into the page | everything is escaped server-side; a CSP with a per-page script nonce; no inline handlers; no images or remote resources | none known |
 | T10 | The secret leaks | not in the process list (a file, not an argument), not in tool results or diagnostics; `Referrer-Policy: no-referrer`; stripped from the address bar after load (a reload of the same tab still works); the file is deleted after 15 s | see T5 and T6 |
-| T11 | An agent floods the person with pages (a retry loop) | G7: 6 new pages per minute, and an open request for the same action is reused | the person may still be asked more than they like; the skills tell the agent not to loop |
-| T12 | A misleading request (the content was written by the agent: a commit message, a story's text) | the page and the dialog show the full, exact content Praxis will act on, never a summary written by the agent; anything too long to show in full is refused | the person has to read it |
+| T11 | An agent floods the person with pages (a retry loop, or calls in parallel) | G7: 6 new pages per minute; an open request for the same action is reused, including by calls that start at the same moment | the person may still be asked more than they like; the skills tell the agent not to loop |
+| T12 | A misleading request (the content was written by the agent: a commit message, a story's text, a patch) | the page and the dialog show the action Praxis computed from the live state, never a summary written by the agent: the story or decision text, the patch of a Quality fix, the files and their hashes for a commit; anything too long to show in full is refused | a commit is identified by file names and content hashes, not shown as a diff; the person has to read what is shown |
 | T13 | A look-alike page made by the agent | clicking it changes nothing in Praxis (it has no token); results come only from Praxis | the person may be misled about whether something ran; Praxis's result says what really happened |
 | T14 | Earlier journal entries that blame the person | G6 amendments; v2 entries carry `decidedBy` and evidence | entries without timing are listed `unverified` and left as written |
-| T15 | Someone edits the journal or the observations file | the journal is never read back as an authorization; the observations file can only make Praxis use the page instead of a dialog | the journal is a record for an honest system, not tamper-proof storage (see T6) |
+| T15 | Someone edits the journal or the observations file | the journal is never read back as an authorization, and a reader applies an amendment only when its rule allows exactly that correction (a rejection can never be amended into an approval); the observations file can only switch a client between its dialog and the page | editing the observations file can move a client from its dialog to the page, which is the weaker channel when an agent controls the browser (T5); the journal is a record for an honest system, not tamper-proof storage (see T6) |
 | T16 | Cowork runs the agent in a sandbox | a Runtime inside the sandbox cannot open a page in the person's browser: it answers `APPROVAL_CLIENT_UI_REQUIRED` (nothing runs, nobody rejected) | see [desktop-approvals.md](desktop-approvals.md) for which Cowork setup works |
 
 ## Comparing the channels honestly
@@ -71,6 +71,10 @@ What the agent can reach, per client:
 | Trusted Client (opt-in) | no: a standing permission | not applicable | no | `trusted-client` |
 
 In the work item's approval records, an approval-page approval has the same trust class as a review-page Save (`review-page`): a person's click in a page the Runtime served on loopback and opened itself. It is never counted as `independent-human`, which is reserved for a client's own dialog.
+
+## Review
+
+An independent review of this design found that one click could approve two parallel calls, and that a page decision could be reused for a different text or a different Quality fix patch with the same subject. It also found that a mixed call could mislabel a host-prompt approval as a page approval, and that one fast answer from a person could change how their client is asked from then on. All of these are fixed and covered by `desktop-approval.test.ts`; G2, G3, G4 and G7 above describe the behaviour as fixed.
 
 ## What would be stronger (not implemented here)
 

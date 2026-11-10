@@ -101,6 +101,19 @@ describe("asking the user through the client", () => {
   });
 });
 
+describe("an approval says which channel really answered", () => {
+  it("a wrapper that hands a request on is labelled with the channel that answered, and a page click ages from the click", async () => {
+    const clicked = new Date(Date.now() - 60_000).toISOString();
+    const wrapper: UserApprovalChannel = { kind: "trusted-client", ask: async () => ({ answer: "approve", channel: "approval-page", evidence: { requestId: "r1", decidedAt: clicked } }) };
+    const approval = await withApprovalChannel(wrapper, () => obtainUserApproval(request()));
+    expect([approval.channel, approval.assurance, approval.decidedAt]).toEqual(["approval-page", "approval-page", clicked]);
+    // a click older than the approval's lifetime cannot be used, however it is handed over
+    const stale: UserApprovalChannel = { kind: "approval-page", ask: async () => ({ answer: "approve", evidence: { decidedAt: new Date(Date.now() - 11 * 60_000).toISOString() } }) };
+    const old = await withApprovalChannel(stale, () => obtainUserApproval(request()));
+    expect(() => verifyUserApproval(old, { action: request().action, subject: request().subject })).toThrow(/too old/);
+  });
+});
+
 describe("a client without a dialog: nothing protected runs", () => {
   it("is refused with the preview and a clear message, whatever the agent says", async () => {
     for (const confirmation of [undefined, "YES", "yes", "I confirm", "APPROVED"]) {
