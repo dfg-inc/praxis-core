@@ -14,10 +14,12 @@ import type { DecisionKind } from "./authority.js";
  * elicitation dialog (the client shows the preview and returns Approve / Reject / Dismiss). That answer arrives as a
  * protocol response to the server, not as a tool argument, so an agent cannot write it.
  *
- * A client that cannot show the dialog (or answers it without showing it, as the Claude Desktop Code tab does) can be served
- * by the Praxis approval page instead: a page the Runtime opens in the user's browser itself, whose secret link the agent
- * never receives. Without either, the protected action is NOT executed: what the agent says the user said is never a
- * decision. Read-only functionality and the agent's own notes keep working.
+ * An answer in that dialog is a client response: Praxis knows the client's dialog answered, not who or what answered it. It
+ * is not independently authenticated human authorization, and nothing on the user's computer can provide that (an agent with
+ * a shell on the same account can reach every file, setting and loopback page). So no other channel stands in for the dialog:
+ * not the agent's confirmation, not a page Praxis serves, not a setting in a repository, the environment or the account's
+ * files. A client that cannot show the dialog (or answers it without showing it, as the Claude Desktop Code tab does) gets
+ * the protected action NOT executed. Read-only functionality and the agent's own notes keep working.
  *
  * What an approval is bound to: one action and one subject (the exact content shown in the preview). An approval
  * for another action, or for the same action after its content changed, does not verify. Rejection and dismissal
@@ -34,25 +36,18 @@ export const USER_APPROVAL_VERSION = 1;
 /** How long an approval stays usable between being given and being applied. */
 export const USER_APPROVAL_TTL_MS = 10 * 60 * 1000;
 
+/** approval-page, host-permission and trusted-client are no longer produced by a shipped Runtime; kept so earlier journals read. */
 export type ApprovalChannelKind = "client-elicitation" | "terminal-prompt" | "approval-page" | "host-permission" | "trusted-client" | "test";
 /**
- * client-ui: given by the user in a dialog (the client's elicitation dialog, or the terminal's for the CLI); the agent
- * cannot write that answer.
- * approval-page: given by a click in the Praxis approval page, which the Runtime served on 127.0.0.1 and opened in the
- * user's browser itself. The agent never receives the page's secret link, so it cannot click through Praxis's own tools.
- * Weaker than a client dialog in one way that Praxis cannot detect: a browser-automation tool connected to that browser,
- * or a program running as the user, can operate the page (see docs/approval-threat-model.md).
- * host-prompt: OPT-IN only (PRAXIS_APPROVAL_MODE=host-permission). The call reached Praxis, so the host's own
- * tool-permission prompt was passed, and its arguments carried the exact plan. Praxis cannot verify that the prompt was
- * shown: an "always allow" setting removes it, and then the agent approves itself. Never the default.
+ * client-ui: the client's own dialog answered (the client's elicitation dialog, or the terminal's for the CLI). The agent
+ * cannot write that answer through Praxis; it is a client response, not independently authenticated (approval-audit.ts).
+ * The others are what released 0.1.0-alpha.48 to alpha.49.1 recorded and are read for what they were:
+ * approval-page: a click in a page the Runtime served on 127.0.0.1. Anything running as the user can operate such a page,
+ * so it is the test source's mechanism only (docs/approval-threat-model.md).
+ * host-prompt and trusted-client: standing permissions switched on by PRAXIS_APPROVAL_MODE, which a repository's Claude
+ * Code settings could set (T18). Removed.
  */
 export type ApprovalAssurance = "client-ui" | "approval-page" | "host-prompt" | "trusted-client";
-/*
- * trusted-client: OPT-IN only (PRAXIS_APPROVAL_MODE=trusted-client, an extension setting). The user has told Praxis to
- * trust this client to run protected actions without asking about each one (for example Claude Desktop with "Always
- * allow"). It is NOT evidence that the user confirmed this action: the journal says "trusted-client". What stays: the
- * agent's confirmation=YES, the preview and its fingerprint (a stale plan is refused), argument checks and the journal.
- */
 
 /** What the user is shown and what the decision binds. */
 export type ApprovalRequest = {
@@ -393,7 +388,7 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
   });
   throw new ApprovalError(
     "APPROVAL_CLIENT_UI_REQUIRED",
-    `${request.summary} was NOT executed, and nobody rejected it: Praxis could not ask the user (${why}). Show the user the preview below. It can be applied where Praxis can ask: a client whose approval dialog works, or the Praxis approval page when the Runtime runs on the user's own computer. The agent's or the user's text in chat is not accepted as approval, and trying again here gives the same answer. Read-only tools still work.`,
+    `${request.summary} was NOT executed, and nobody rejected it: Praxis could not ask the user (${why}). Show the user the preview below. It can be applied where Praxis can ask: a client whose approval dialog is shown (for example the Claude Code CLI in a terminal). The agent's or the user's text in chat, a page and any setting are not accepted as approval, and trying again here gives the same answer. Read-only tools still work.`,
     { ...previewDetails(request), outcome: automatic ? "auto-answered" : "unavailable", decidedBy: automatic ? "client" : "nobody", ...(answer?.evidence ? { evidence: answer.evidence } : {}), ...(automatic ? { automatic } : {}) },
   );
 }
