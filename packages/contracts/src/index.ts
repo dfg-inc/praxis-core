@@ -563,6 +563,7 @@ export {
   requireMutationLease,
   runWorkflowRecordWrite,
   runApprovedMutation,
+  USER_CHANNELS,
 } from "./user-approval.js";
 export type {
   ApprovalErrorCode,

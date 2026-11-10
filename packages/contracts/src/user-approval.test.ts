@@ -54,11 +54,11 @@ describe("asking the user through the client", () => {
     expect(rejected).toBeInstanceOf(ApprovalError);
     expect(rejected.code).toBe("APPROVAL_REJECTED");
     expect(rejected.details.rejected).toBe(true);
-    expect(rejected.details).toMatchObject({ outcome: "rejected", decidedBy: "user", executed: false });
+    expect(rejected.details).toMatchObject({ outcome: "rejected", decidedBy: "client-dialog", personVerified: false, executed: false });
     const dismissed = await withApprovalChannel(channel({ answer: "dismiss" }), () => obtainUserApproval(request())).catch((e) => e);
     // closing the dialog is not a "no": its own code, and the same compatibility flags as before
     expect(dismissed.code).toBe("APPROVAL_DISMISSED");
-    expect(dismissed.details).toMatchObject({ dismissed: true, rejected: false, outcome: "dismissed", decidedBy: "user" });
+    expect(dismissed.details).toMatchObject({ dismissed: true, rejected: false, outcome: "dismissed", decidedBy: "client-dialog" });
     expect(dismissed.message).toMatch(/not a rejection/);
   });
 
@@ -199,7 +199,9 @@ describe("decisions are journaled outside the repository", () => {
       const rows = readFileSync(path, "utf8").trim().split("\n").map((l) => JSON.parse(l));
       // the approval the page already journaled at the click is not written a second time
       expect(rows.map((r) => r.decision)).toEqual(["approved", "rejected", "unavailable", "withdrawn", "dismissed", "auto-answered"]);
-      expect(rows.map((r) => r.decidedBy)).toEqual(["user", "user", "nobody", "agent", "user", "client"]);
+      // the channel that answered, never "the user": Praxis cannot tell a person from automation driving that channel
+      expect(rows.map((r) => r.decidedBy)).toEqual(["client-dialog", "client-dialog", "nobody", "agent", "client-dialog", "client"]);
+      expect(rows.filter((r) => r.decidedBy === "client-dialog").every((r) => r.personVerified === false)).toBe(true);
       expect(rows.every((r) => r.v === 2)).toBe(true);
       expect(rows[1].reason).toBe("not now");
       expect(rows[5].evidence).toEqual({ latencyMs: 12 });

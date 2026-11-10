@@ -105,7 +105,7 @@ describe("amending without rewriting", () => {
     const path = decisionLogPath(repo);
     const lines = readDecisionJournal(repo);
     const forged = (line: number, rule: string, corrected: object) => JSON.stringify({ v: 2, type: "amendment", at: "2026-11-10T00:00:00.000Z", amends: { line, sha256: lines.find((l) => l.line === line)!.sha256 }, previous: {}, corrected, rule, evidence: {}, by: "someone" });
-    appendFileSync(path, `${forged(4, "client-answered-without-dialog", { decision: "approved", decidedBy: "user" })}\n${forged(5, "agent-reported-decline", { decision: "withdrawn", decidedBy: "agent" })}\n`);
+    appendFileSync(path, `${forged(4, "client-answered-without-dialog", { decision: "approved", decidedBy: "client-dialog" })}\n${forged(5, "agent-reported-decline", { decision: "withdrawn", decidedBy: "agent" })}\n`);
     const effective = effectiveDecisions(readDecisionJournal(repo));
     // a rejection is never turned into an approval, and an approval is not "withdrawn" by a rule meant for rejections
     expect(effective.find((e) => e.line === 4)).toMatchObject({ decision: "rejected", decidedBy: "unknown" });

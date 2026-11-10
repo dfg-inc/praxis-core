@@ -50,7 +50,7 @@ describe("a protected action runs only after the user approves it", () => {
         withApprovalChannel(channel({ answer }), () => projectInitApplyOp({ repo: root, confirmation: "YES" })),
       ).rejects.toMatchObject({ code: answer === "reject" ? "APPROVAL_REJECTED" : "APPROVAL_DISMISSED" });
       expect(existsSync(join(root, ".project"))).toBe(false);
-      expect(log(root).at(-1)).toMatchObject({ decision: answer === "reject" ? "rejected" : "dismissed", decidedBy: "user" });
+      expect(log(root).at(-1)).toMatchObject({ decision: answer === "reject" ? "rejected" : "dismissed", decidedBy: "client-dialog", personVerified: false });
     }
   });
 
