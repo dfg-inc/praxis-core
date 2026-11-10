@@ -205,8 +205,17 @@ function shell(state: WorkflowState, view: ReviewView, title: string, body: stri
     token: options.token,
     ...data,
   };
+  // The page carries its own policy, so the offline copy (opened from a file, without the server's header) is as strict as the
+  // served page: nothing but its inline code, no request except to the review server, and no frame of it navigating anywhere.
+  let connect = "'none'";
+  try {
+    if (options.saveUrl) connect = new URL(options.saveUrl).origin;
+  } catch {
+    connect = "'none'";
+  }
+  const policy = `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${connect}; base-uri 'none'; form-action 'none'`;
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${esc(policy)}"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title><style>${CSS}</style></head>
 <body><main${wide ? ' class="wide"' : ""}>
 <h1>${esc(title)}</h1>

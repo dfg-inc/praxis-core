@@ -33,12 +33,17 @@ typecheck:
 
 test:
   stage: verify
+  variables:
+    # The shared pod is loaded by other jobs: a longer per-test timeout, the assertions are unchanged.
+    PRAXIS_TEST_TIMEOUT_MS: "30000"
   script:
     - npm run build
     - npm run test
 
 contracts:
   stage: verify
+  variables:
+    PRAXIS_TEST_TIMEOUT_MS: "30000"
   script:
     - npm run build
     - npm run test -w @praxis/contracts --if-present

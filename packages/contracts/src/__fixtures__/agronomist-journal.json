@@ -1,0 +1,1129 @@
+{
+  "about": "Anonymized reproduction of an external report: an agronomist journal whose note feed must become a chat while everything around it stays as it is. Farm, people and data are invented. 'existing' is the journal today (tabs Актуальные / Архивные, filters, search, the new-note form, the note feed, the note card); the Viewer lists the feed's cards as rows. 'chat' replaces only the feed element; 'reported' is the table the BA produced.",
+  "open": {
+    "action": "open",
+    "projectId": "agro-journal",
+    "title": "Журнал агронома: лента записей в виде чата",
+    "request": "Переделай ленту записей журнала агронома в чат: сообщения слева и справа, автор, время, разделители по дням, вложения и голосовые. Шапку, фильтры, вкладки и работу с записями оставь как есть.",
+    "mode": "guided",
+    "changeKind": "change"
+  },
+  "repository": {
+    "action": "register-repository",
+    "repository": {
+      "id": "journal-web",
+      "name": "journal-web",
+      "role": "web frontend of the journal"
+    }
+  },
+  "impact": {
+    "action": "record-impact",
+    "impact": {
+      "baseline": {
+        "summary": "Журнал агронома сегодня: шапка с названием и хозяйством, вкладки «Актуальные» и «Архивные», фильтры по полю и типу записи, поиск, форма новой записи и лента записей в виде карточек.",
+        "behaviors": [
+          {
+            "id": "B1",
+            "statement": "Шапка показывает название журнала и хозяйства; вкладки «Актуальные» и «Архивные» переключают ленту.",
+            "evidence": [
+              {
+                "repositoryId": "journal-web",
+                "path": "src/pages/JournalPage.tsx"
+              }
+            ]
+          },
+          {
+            "id": "B2",
+            "statement": "Фильтры по полю и типу записи и поиск сужают ленту записей.",
+            "evidence": [
+              {
+                "repositoryId": "journal-web",
+                "path": "src/journal/JournalFilters.tsx"
+              }
+            ]
+          },
+          {
+            "id": "B3",
+            "statement": "Запись в ленте — карточка с автором, датой, текстом, вложениями и голосовой заметкой.",
+            "evidence": [
+              {
+                "repositoryId": "journal-web",
+                "path": "src/journal/NoteCard.tsx"
+              }
+            ]
+          },
+          {
+            "id": "B4",
+            "statement": "Новая запись создаётся в форме над лентой: текст, поле, тип, вложение, голосовая заметка; запись открывается в карточке.",
+            "evidence": [
+              {
+                "repositoryId": "journal-web",
+                "path": "src/journal/NoteEditor.tsx"
+              }
+            ]
+          }
+        ]
+      },
+      "affected": [
+        {
+          "repositoryId": "journal-web",
+          "path": "src/journal/NoteFeed.tsx",
+          "area": "лента записей",
+          "change": "карточки записей становятся сообщениями чата",
+          "risk": "фильтры и открытие записи должны работать как раньше"
+        }
+      ],
+      "regressionChecks": [
+        {
+          "id": "R1",
+          "statement": "Шапка, вкладки «Актуальные» и «Архивные», фильтры, поиск и форма новой записи работают как раньше.",
+          "requirementIds": [
+            "REQ-JRN-003"
+          ]
+        },
+        {
+          "id": "R2",
+          "statement": "Запись по-прежнему открывается в карточке.",
+          "requirementIds": [
+            "REQ-JRN-004"
+          ]
+        }
+      ]
+    }
+  },
+  "requirements": [
+    {
+      "id": "REQ-JRN-001",
+      "statement": "Лента записей журнала показывается как чат: каждая запись — отдельное сообщение, по времени, старые вверху.",
+      "acceptanceCriteria": [
+        "Записи идут по времени создания, от старых к новым; новые внизу ленты.",
+        "Перед первой записью каждого дня стоит разделитель с датой.",
+        "Записи текущего пользователя выровнены справа, записи других участников — слева.",
+        "У каждого сообщения видны автор и время; подряд идущие сообщения одного автора группируются, автор показан один раз на группу.",
+        "Лента не является таблицей: нет строк и столбцов, каждая запись — отдельный «пузырь» сообщения."
+      ]
+    },
+    {
+      "id": "REQ-JRN-002",
+      "statement": "Голосовые заметки и вложения видны прямо в сообщении.",
+      "acceptanceCriteria": [
+        "Голосовое сообщение показывает кнопку воспроизведения и длительность; в прототипе воспроизведение помечено как имитация без звука.",
+        "Вложения показаны в сообщении: фото и документы с именем файла и размером.",
+        "У голосовой заметки с расшифровкой расшифровка видна под плеером."
+      ]
+    },
+    {
+      "id": "REQ-JRN-003",
+      "statement": "Шапка журнала, вкладки «Актуальные» и «Архивные», фильтры, поиск и форма новой записи остаются как сейчас; вкладки и фильтры по-прежнему сужают ленту.",
+      "acceptanceCriteria": [
+        "Шапка журнала и вкладки «Актуальные» и «Архивные» на месте; вкладки переключают ленту между актуальными и архивными записями.",
+        "Фильтры «Поле» и «Тип записи» и поиск сужают ленту; выбранные значения сохраняются в адресе.",
+        "Если под условия не подходит ни одна запись, лента говорит об этом и предлагает сбросить фильтры.",
+        "Форма новой записи (текст, поле, тип, вложение, голосовая заметка, «Добавить запись») остаётся на месте и работает как раньше."
+      ]
+    },
+    {
+      "id": "REQ-JRN-004",
+      "statement": "Запись открывается в карточке, как и раньше.",
+      "acceptanceCriteria": [
+        "Нажатие на сообщение открывает карточку записи с полем, типом, автором, временем и вложениями."
+      ]
+    },
+    {
+      "id": "REQ-JRN-005",
+      "statement": "Журнал работает на телефоне и на компьютере.",
+      "acceptanceCriteria": [
+        "На ширине телефона сообщения занимают почти всю ширину, лента прокручивается, остальные элементы журнала остаются на месте.",
+        "На компьютере сообщение не шире примерно двух третей ленты."
+      ]
+    }
+  ],
+  "mock": {
+    "attachments": {
+      "id": "attachments",
+      "name": "Вложения",
+      "fields": [
+        {
+          "key": "id",
+          "label": "Код",
+          "type": "string"
+        },
+        {
+          "key": "noteId",
+          "label": "Запись",
+          "type": "string"
+        },
+        {
+          "key": "name",
+          "label": "Файл",
+          "type": "string"
+        },
+        {
+          "key": "type",
+          "label": "Тип",
+          "type": "enum",
+          "options": [
+            "Фото",
+            "Документ"
+          ]
+        },
+        {
+          "key": "size",
+          "label": "Размер",
+          "type": "string"
+        }
+      ],
+      "rows": [
+        {
+          "id": "F-0",
+          "noteId": "N-091",
+          "name": "akt-semena.pdf",
+          "type": "Документ",
+          "size": "180 КБ"
+        },
+        {
+          "id": "F-1",
+          "noteId": "N-102",
+          "name": "pole3-kray-1.jpg",
+          "type": "Фото",
+          "size": "2,4 МБ"
+        },
+        {
+          "id": "F-2",
+          "noteId": "N-102",
+          "name": "pole3-kray-2.jpg",
+          "type": "Фото",
+          "size": "2,1 МБ"
+        },
+        {
+          "id": "F-3",
+          "noteId": "N-104",
+          "name": "analiz-pochvy-pole3.pdf",
+          "type": "Документ",
+          "size": "340 КБ"
+        },
+        {
+          "id": "F-4",
+          "noteId": "N-107",
+          "name": "pole7-tlya.jpg",
+          "type": "Фото",
+          "size": "1,8 МБ"
+        },
+        {
+          "id": "F-5",
+          "noteId": "N-107",
+          "name": "skhema-ochagov.png",
+          "type": "Фото",
+          "size": "620 КБ"
+        },
+        {
+          "id": "F-6",
+          "noteId": "N-109",
+          "name": "akt-obrabotki-0514.pdf",
+          "type": "Документ",
+          "size": "210 КБ"
+        }
+      ]
+    },
+    "notes": {
+      "id": "notes",
+      "name": "Записи журнала",
+      "fields": [
+        {
+          "key": "id",
+          "label": "Код",
+          "type": "string"
+        },
+        {
+          "key": "createdAt",
+          "label": "Создана",
+          "type": "string"
+        },
+        {
+          "key": "author",
+          "label": "Автор",
+          "type": "string"
+        },
+        {
+          "key": "role",
+          "label": "Роль",
+          "type": "string"
+        },
+        {
+          "key": "status",
+          "label": "Статус",
+          "type": "enum",
+          "options": [
+            "active",
+            "archived"
+          ]
+        },
+        {
+          "key": "field",
+          "label": "Поле",
+          "type": "enum",
+          "options": [
+            "Поле 3",
+            "Поле 7",
+            "Поле 12"
+          ]
+        },
+        {
+          "key": "kind",
+          "label": "Тип записи",
+          "type": "enum",
+          "options": [
+            "Наблюдение",
+            "Обработка",
+            "Задача"
+          ]
+        },
+        {
+          "key": "text",
+          "label": "Текст",
+          "type": "string"
+        },
+        {
+          "key": "voice",
+          "label": "Голосовая заметка, с",
+          "type": "number"
+        }
+      ],
+      "rows": [
+        {
+          "id": "N-090",
+          "createdAt": "2026-04-20T08:10",
+          "author": "Пётр Сомов",
+          "role": "бригадир",
+          "status": "archived",
+          "field": "Поле 3",
+          "kind": "Обработка",
+          "text": "Боронование поля 3 закончено.",
+          "voice": null
+        },
+        {
+          "id": "N-091",
+          "createdAt": "2026-04-22T07:35",
+          "author": "Ирина Ковалёва",
+          "role": "агроном",
+          "status": "archived",
+          "field": "Поле 7",
+          "kind": "Задача",
+          "text": "Подготовить семена подсолнечника к посеву.",
+          "voice": null
+        },
+        {
+          "id": "N-092",
+          "createdAt": "2026-04-22T09:05",
+          "author": "Анна Лисина",
+          "role": "агроном-разведчик",
+          "status": "archived",
+          "field": "Поле 7",
+          "kind": "Наблюдение",
+          "text": "Почва на поле 7 прогрелась до +10 °C на глубине заделки.",
+          "voice": 15
+        },
+        {
+          "id": "N-101",
+          "createdAt": "2026-05-12T07:40",
+          "author": "Пётр Сомов",
+          "role": "бригадир",
+          "status": "active",
+          "field": "Поле 3",
+          "kind": "Наблюдение",
+          "text": "Обошёл поле 3 с утра: всходы ровные, на краю у лесополосы заметил проплешины.",
+          "voice": null
+        },
+        {
+          "id": "N-102",
+          "createdAt": "2026-05-12T07:42",
+          "author": "Пётр Сомов",
+          "role": "бригадир",
+          "status": "active",
+          "field": "Поле 3",
+          "kind": "Наблюдение",
+          "text": "Фото проплешин прикладываю.",
+          "voice": null
+        },
+        {
+          "id": "N-103",
+          "createdAt": "2026-05-12T09:15",
+          "author": "Ирина Ковалёва",
+          "role": "агроном",
+          "status": "active",
+          "field": "Поле 3",
+          "kind": "Задача",
+          "text": "Возьмите пробы почвы с проплешин: три точки, глубина 0–20 см.",
+          "voice": null
+        },
+        {
+          "id": "N-104",
+          "createdAt": "2026-05-12T14:05",
+          "author": "Лаборатория почв",
+          "role": "лаборатория",
+          "status": "active",
+          "field": "Поле 3",
+          "kind": "Наблюдение",
+          "text": "Результаты анализа: pH 5,4, подвижный фосфор ниже нормы.",
+          "voice": null
+        },
+        {
+          "id": "N-105",
+          "createdAt": "2026-05-13T06:55",
+          "author": "Анна Лисина",
+          "role": "агроном-разведчик",
+          "status": "active",
+          "field": "Поле 7",
+          "kind": "Наблюдение",
+          "text": "На поле 7 единичные очаги тли на краевых рядах, в глубине поля чисто.",
+          "voice": 42
+        },
+        {
+          "id": "N-106",
+          "createdAt": "2026-05-13T07:10",
+          "author": "Ирина Ковалёва",
+          "role": "агроном",
+          "status": "active",
+          "field": "Поле 7",
+          "kind": "Задача",
+          "text": "Анна, отметьте очаги на схеме и пришлите фото крупным планом.",
+          "voice": null
+        },
+        {
+          "id": "N-107",
+          "createdAt": "2026-05-13T07:31",
+          "author": "Анна Лисина",
+          "role": "агроном-разведчик",
+          "status": "active",
+          "field": "Поле 7",
+          "kind": "Наблюдение",
+          "text": "Отметила, фото и схема ниже.",
+          "voice": null
+        },
+        {
+          "id": "N-108",
+          "createdAt": "2026-05-13T08:02",
+          "author": "Ирина Ковалёва",
+          "role": "агроном",
+          "status": "active",
+          "field": "Поле 7",
+          "kind": "Обработка",
+          "text": "Назначаю обработку краевых рядов завтра утром, норма по регламенту.",
+          "voice": 18
+        },
+        {
+          "id": "N-109",
+          "createdAt": "2026-05-14T05:50",
+          "author": "Пётр Сомов",
+          "role": "бригадир",
+          "status": "active",
+          "field": "Поле 7",
+          "kind": "Обработка",
+          "text": "Обработка краевых рядов выполнена, 6,5 га, ветер 2 м/с.",
+          "voice": null
+        },
+        {
+          "id": "N-110",
+          "createdAt": "2026-05-14T06:20",
+          "author": "Ирина Ковалёва",
+          "role": "агроном",
+          "status": "active",
+          "field": "Поле 3",
+          "kind": "Задача",
+          "text": "Пётр, по полю 3 готовим известкование, жду расчёт потребности к пятнице.",
+          "voice": null
+        },
+        {
+          "id": "N-111",
+          "createdAt": "2026-05-14T06:22",
+          "author": "Ирина Ковалёва",
+          "role": "агроном",
+          "status": "active",
+          "field": "Поле 3",
+          "kind": "Задача",
+          "text": "Анализ почвы — во вложении у лаборатории, запись от 12 мая.",
+          "voice": null
+        },
+        {
+          "id": "N-112",
+          "createdAt": "2026-05-14T09:40",
+          "author": "Пётр Сомов",
+          "role": "бригадир",
+          "status": "active",
+          "field": "Поле 3",
+          "kind": "Задача",
+          "text": null,
+          "voice": 27
+        }
+      ]
+    }
+  },
+  "screen": {
+    "id": "journal",
+    "title": "Журнал агронома",
+    "description": "Хозяйство «Опытное поле» · сезон 2026",
+    "states": [
+      "default",
+      "loading",
+      "error"
+    ],
+    "stateMessages": {
+      "loading": "Загружаем записи…",
+      "error": "Не удалось загрузить журнал."
+    }
+  },
+  "styles": {
+    "colors": {
+      "primary": "#2f7d32",
+      "background": "#ffffff",
+      "text": "#1f2a1f"
+    },
+    "fonts": {
+      "body": "Inter, system-ui, sans-serif"
+    },
+    "radius": "12px",
+    "sources": [
+      {
+        "repositoryId": "journal-web",
+        "file": "src/styles/tokens.css",
+        "note": "anonymized fixture: tokens invented for the reproduction"
+      }
+    ]
+  },
+  "datasets": [
+    {
+      "id": "empty",
+      "label": "Пустой журнал",
+      "description": "ни одной записи",
+      "rows": {
+        "notes": [],
+        "attachments": []
+      }
+    }
+  ],
+  "existing": [
+    {
+      "id": "status",
+      "kind": "tabs",
+      "label": "Записи журнала",
+      "param": "status",
+      "tabs": [
+        {
+          "id": "active",
+          "label": "Актуальные"
+        },
+        {
+          "id": "archived",
+          "label": "Архивные"
+        }
+      ],
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-01"
+      ]
+    },
+    {
+      "id": "byField",
+      "kind": "filter",
+      "label": "Поле",
+      "param": "field",
+      "collection": "notes",
+      "allLabel": "Все поля",
+      "filters": [
+        {
+          "param": "field",
+          "field": "field"
+        }
+      ],
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-02"
+      ]
+    },
+    {
+      "id": "byKind",
+      "kind": "filter",
+      "label": "Тип записи",
+      "param": "type",
+      "collection": "notes",
+      "allLabel": "Все типы",
+      "filters": [
+        {
+          "param": "type",
+          "field": "kind"
+        }
+      ],
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-02"
+      ]
+    },
+    {
+      "id": "find",
+      "kind": "search",
+      "label": "Поиск по записям",
+      "collection": "notes",
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-02"
+      ]
+    },
+    {
+      "id": "newNote",
+      "kind": "form",
+      "label": "Новая запись",
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-04"
+      ]
+    },
+    {
+      "id": "newText",
+      "kind": "field",
+      "label": "Текст записи",
+      "collection": "notes",
+      "field": "text",
+      "required": true,
+      "text": "Что сделано или замечено",
+      "intent": "create",
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-04"
+      ]
+    },
+    {
+      "id": "newField",
+      "kind": "field",
+      "label": "Поле",
+      "collection": "notes",
+      "field": "field",
+      "intent": "create",
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-04"
+      ]
+    },
+    {
+      "id": "newKind",
+      "kind": "field",
+      "label": "Тип записи",
+      "collection": "notes",
+      "field": "kind",
+      "intent": "create",
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-04"
+      ]
+    },
+    {
+      "id": "attach",
+      "kind": "button",
+      "label": "Прикрепить файл",
+      "action": "none",
+      "intent": "create",
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-04"
+      ]
+    },
+    {
+      "id": "record",
+      "kind": "button",
+      "label": "Записать голосовую",
+      "action": "none",
+      "intent": "create",
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-04"
+      ]
+    },
+    {
+      "id": "addNote",
+      "kind": "button",
+      "label": "Добавить запись",
+      "action": "submit",
+      "intent": "create",
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-04"
+      ]
+    },
+    {
+      "id": "feed",
+      "kind": "list",
+      "label": "Лента записей",
+      "collection": "notes",
+      "idField": "id",
+      "rowOpens": "card",
+      "columns": [
+        "createdAt",
+        "author",
+        "kind",
+        "field",
+        "text",
+        "voice"
+      ],
+      "filters": [
+        {
+          "param": "status",
+          "field": "status"
+        },
+        {
+          "param": "field",
+          "field": "field"
+        },
+        {
+          "param": "type",
+          "field": "kind"
+        }
+      ],
+      "emptyText": "Нет записей по выбранным условиям.",
+      "noDataText": "В журнале пока нет записей.",
+      "emptyAction": {
+        "label": "Сбросить фильтры",
+        "clear": [
+          "field",
+          "type"
+        ]
+      },
+      "requirementIds": [
+        "REQ-JRN-003"
+      ],
+      "acIds": [
+        "REQ-JRN-003-AC-02",
+        "REQ-JRN-003-AC-03"
+      ]
+    },
+    {
+      "id": "card",
+      "kind": "drawer",
+      "label": "Запись журнала",
+      "param": "note",
+      "collection": "notes",
+      "idField": "id",
+      "onMissing": "close",
+      "detailFields": [
+        {
+          "field": "createdAt",
+          "label": "Создана"
+        },
+        {
+          "field": "author"
+        },
+        {
+          "field": "field"
+        },
+        {
+          "field": "kind"
+        },
+        {
+          "field": "text"
+        },
+        {
+          "field": "voice"
+        }
+      ],
+      "related": [
+        {
+          "collection": "attachments",
+          "matchField": "noteId",
+          "columns": [
+            "name",
+            "type",
+            "size"
+          ],
+          "label": "Вложения"
+        }
+      ],
+      "missingText": "—",
+      "requirementIds": [
+        "REQ-JRN-004"
+      ],
+      "acIds": [
+        "REQ-JRN-004-AC-01"
+      ]
+    }
+  ],
+  "chat": {
+    "feed": {
+      "id": "feed",
+      "kind": "conversation",
+      "label": "Лента записей",
+      "collection": "notes",
+      "idField": "id",
+      "rowOpens": "card",
+      "filters": [
+        {
+          "param": "status",
+          "field": "status"
+        },
+        {
+          "param": "field",
+          "field": "field"
+        },
+        {
+          "param": "type",
+          "field": "kind"
+        }
+      ],
+      "emptyText": "Нет записей по выбранным условиям.",
+      "noDataText": "В журнале пока нет записей.",
+      "emptyAction": {
+        "label": "Сбросить фильтры",
+        "clear": [
+          "field",
+          "type"
+        ]
+      },
+      "conversation": {
+        "authorField": "author",
+        "timeField": "createdAt",
+        "textField": "text",
+        "outgoingValues": [
+          "Ирина Ковалёва"
+        ],
+        "voiceField": "voice",
+        "metaField": "kind",
+        "attachments": {
+          "collection": "attachments",
+          "matchField": "noteId",
+          "nameField": "name",
+          "typeField": "type",
+          "sizeField": "size"
+        },
+        "groupMinutes": 5,
+        "locale": "ru-RU"
+      },
+      "requirementIds": [
+        "REQ-JRN-001",
+        "REQ-JRN-002",
+        "REQ-JRN-003",
+        "REQ-JRN-005"
+      ],
+      "acIds": [
+        "REQ-JRN-001-AC-01",
+        "REQ-JRN-001-AC-02",
+        "REQ-JRN-001-AC-03",
+        "REQ-JRN-001-AC-04",
+        "REQ-JRN-001-AC-05",
+        "REQ-JRN-002-AC-01",
+        "REQ-JRN-002-AC-02",
+        "REQ-JRN-002-AC-03",
+        "REQ-JRN-003-AC-02",
+        "REQ-JRN-003-AC-03",
+        "REQ-JRN-005-AC-01",
+        "REQ-JRN-005-AC-02"
+      ]
+    },
+    "scenarios": [
+      {
+        "id": "all",
+        "title": "Актуальные записи",
+        "description": "12 записей за три дня",
+        "expect": {
+          "rows": [
+            {
+              "element": "feed",
+              "count": 12
+            }
+          ],
+          "contains": [
+            "12 мая 2026 г.",
+            "13 мая 2026 г.",
+            "14 мая 2026 г."
+          ]
+        },
+        "requirementIds": [
+          "REQ-JRN-001"
+        ],
+        "acIds": [
+          "REQ-JRN-001-AC-01",
+          "REQ-JRN-001-AC-02"
+        ]
+      },
+      {
+        "id": "archived",
+        "title": "Архивные записи",
+        "query": {
+          "status": "archived"
+        },
+        "expect": {
+          "rows": [
+            {
+              "element": "feed",
+              "count": 3
+            }
+          ],
+          "contains": [
+            "20 апреля 2026 г."
+          ],
+          "absent": [
+            "Обошёл поле 3"
+          ]
+        },
+        "requirementIds": [
+          "REQ-JRN-003"
+        ],
+        "acIds": [
+          "REQ-JRN-003-AC-01"
+        ]
+      },
+      {
+        "id": "field7",
+        "title": "Только поле 7",
+        "query": {
+          "field": "Поле 7"
+        },
+        "expect": {
+          "rows": [
+            {
+              "element": "feed",
+              "count": 5
+            }
+          ],
+          "absent": [
+            "Обошёл поле 3"
+          ]
+        },
+        "requirementIds": [
+          "REQ-JRN-003"
+        ],
+        "acIds": [
+          "REQ-JRN-003-AC-02"
+        ]
+      },
+      {
+        "id": "tasks",
+        "title": "Только задачи",
+        "query": {
+          "type": "Задача"
+        },
+        "expect": {
+          "rows": [
+            {
+              "element": "feed",
+              "count": 5
+            }
+          ]
+        },
+        "requirementIds": [
+          "REQ-JRN-003"
+        ],
+        "acIds": [
+          "REQ-JRN-003-AC-02"
+        ]
+      },
+      {
+        "id": "empty",
+        "title": "Ничего не найдено",
+        "description": "поле 12 без записей",
+        "query": {
+          "field": "Поле 12"
+        },
+        "expect": {
+          "rows": [
+            {
+              "element": "feed",
+              "count": 0
+            }
+          ],
+          "contains": [
+            "Нет записей по выбранным условиям.",
+            "Сбросить фильтры"
+          ]
+        },
+        "requirementIds": [
+          "REQ-JRN-003"
+        ],
+        "acIds": [
+          "REQ-JRN-003-AC-03"
+        ]
+      },
+      {
+        "id": "open-note",
+        "title": "Карточка записи с документом",
+        "query": {
+          "note": "N-104"
+        },
+        "expect": {
+          "overlay": [
+            {
+              "element": "card",
+              "state": "open"
+            }
+          ],
+          "contains": [
+            "analiz-pochvy-pole3.pdf"
+          ]
+        },
+        "requirementIds": [
+          "REQ-JRN-004"
+        ],
+        "acIds": [
+          "REQ-JRN-004-AC-01"
+        ]
+      },
+      {
+        "id": "kept",
+        "title": "Форма и элементы журнала на месте",
+        "expect": {
+          "contains": [
+            "Актуальные",
+            "Архивные",
+            "Новая запись",
+            "Прикрепить файл",
+            "Записать голосовую",
+            "Добавить запись"
+          ]
+        },
+        "requirementIds": [
+          "REQ-JRN-003"
+        ],
+        "acIds": [
+          "REQ-JRN-003-AC-01",
+          "REQ-JRN-003-AC-04"
+        ]
+      }
+    ]
+  },
+  "reported": {
+    "about": "The prototype the BA produced, rebuilt from the report: the chat is a table, and the side of the chat is a data column.",
+    "notes": "Лента записей показана таблицей: Prototype Viewer поддерживает только стандартные элементы интерфейса.",
+    "mock": {
+      "id": "notes",
+      "name": "Записи журнала",
+      "fields": [
+        {
+          "key": "id",
+          "label": "Код",
+          "type": "string"
+        },
+        {
+          "key": "author",
+          "label": "Author",
+          "type": "string"
+        },
+        {
+          "key": "side",
+          "label": "Side in Chat",
+          "type": "enum",
+          "options": [
+            "Входящее",
+            "Исходящее"
+          ]
+        },
+        {
+          "key": "created",
+          "label": "Created",
+          "type": "string"
+        },
+        {
+          "key": "voice",
+          "label": "Voice",
+          "type": "string"
+        },
+        {
+          "key": "text",
+          "label": "Text",
+          "type": "string"
+        },
+        {
+          "key": "attachments",
+          "label": "Attachments",
+          "type": "string"
+        },
+        {
+          "key": "date",
+          "label": "Date",
+          "type": "string"
+        },
+        {
+          "key": "status",
+          "label": "Статус",
+          "type": "enum",
+          "options": [
+            "active",
+            "archived"
+          ]
+        },
+        {
+          "key": "field",
+          "label": "Поле",
+          "type": "enum",
+          "options": [
+            "Поле 3",
+            "Поле 7",
+            "Поле 12"
+          ]
+        },
+        {
+          "key": "kind",
+          "label": "Тип записи",
+          "type": "enum",
+          "options": [
+            "Наблюдение",
+            "Обработка",
+            "Задача"
+          ]
+        }
+      ]
+    },
+    "feed": {
+      "id": "feed",
+      "kind": "table",
+      "label": "Лента записей",
+      "collection": "notes",
+      "columns": [
+        "author",
+        "side",
+        "created",
+        "voice",
+        "text",
+        "attachments",
+        "date"
+      ],
+      "filters": [
+        {
+          "param": "status",
+          "field": "status"
+        },
+        {
+          "param": "field",
+          "field": "field"
+        },
+        {
+          "param": "type",
+          "field": "kind"
+        }
+      ],
+      "rowOpens": "card",
+      "idField": "id",
+      "requirementIds": [
+        "REQ-JRN-001",
+        "REQ-JRN-002"
+      ]
+    }
+  }
+}

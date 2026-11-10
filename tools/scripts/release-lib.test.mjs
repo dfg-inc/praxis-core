@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -380,6 +380,33 @@ describe("discover + sync on temp tree", () => {
     expect(pkg.dependencies["@praxis/contracts"]).toBe(
       "file:vendor/praxis-contracts-0.1.0-alpha.45.tgz",
     );
+  });
+
+  it("a patch prerelease (0.1.0-alpha.49.1) is one version: set, pinned, checked and set again without growing", () => {
+    const root = mkdtempSync(join(tmpdir(), "praxis-patch-"));
+    writeIndependentRepo(root, { product: "0.1.0-alpha.49", vendor: "0.1.0-alpha.49", pin: "0.1.0-alpha.49" });
+    const pkgPath = join(root, "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    pkg.scripts = { "pack:zip": "node tools/scripts/pack-claude-plugins.mjs --version 0.1.0-alpha.49" };
+    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+    writeFileSync(join(root, "package-lock.json"), JSON.stringify({ version: "0.1.0-alpha.49", packages: {} }) + "\n");
+    for (let round = 0; round < 2; round += 1) {
+      syncAllVersions(root, "0.1.0-alpha.49.1", { dryRun: false });
+      syncVendorPins(root, "0.1.0-alpha.49.1", { dryRun: false });
+    }
+    const after = JSON.parse(readFileSync(pkgPath, "utf8"));
+    expect(after.version).toBe("0.1.0-alpha.49.1");
+    expect(after.scripts["pack:zip"]).toBe("node tools/scripts/pack-claude-plugins.mjs --version 0.1.0-alpha.49.1");
+    expect(after.dependencies["@praxis/contracts"]).toBe("file:vendor/praxis-contracts-0.1.0-alpha.49.1.tgz");
+    // the old tarball is stale, the lockfile still names alpha.49: both are reported, and alpha.49.1 is never read as alpha.49
+    const stale = checkEcosystemRelease(root);
+    expect(stale.ok).toBe(false);
+    expect(stale.mismatches.some((m) => m.kind === "stale-vendor-tarball" && m.found === "praxis-contracts-0.1.0-alpha.49.tgz")).toBe(true);
+    expect(stale.mismatches.some((m) => m.kind === "lockfile-version" && m.found === "0.1.0-alpha.49")).toBe(true);
+    writeFileSync(join(root, "vendor", "praxis-contracts-0.1.0-alpha.49.1.tgz"), "vendor");
+    rmSync(join(root, "vendor", "praxis-contracts-0.1.0-alpha.49.tgz"));
+    writeFileSync(join(root, "package-lock.json"), JSON.stringify({ version: "0.1.0-alpha.49.1", packages: { "node_modules/@praxis/contracts": { version: "0.1.0-alpha.49.1", resolved: "file:vendor/praxis-contracts-0.1.0-alpha.49.1.tgz" } } }) + "\n");
+    expect(checkEcosystemRelease(root)).toMatchObject({ ok: true, expected: "0.1.0-alpha.49.1" });
   });
 
   it("checkVersionConsistency reports mismatches", () => {

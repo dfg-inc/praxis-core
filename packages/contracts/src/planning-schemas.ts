@@ -181,8 +181,84 @@ export const ELEMENT_KINDS = [
   "modal",
   "drawer",
   "message",
+  "conversation",
+  "custom",
 ] as const;
 export const ElementKindSchema = z.enum(ELEMENT_KINDS);
+
+const FieldKeySchema = z.string().min(1);
+const MockValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
+/**
+ * conversation: the rows of a mock collection shown as a chat. Each row is one message: aligned by who wrote it, grouped by
+ * author, with a separator per day, attachments from another collection and a mock voice player. Rows are still narrowed by
+ * the element's filters and search and still open a drawer or modal (rowOpens), as a table's rows do.
+ */
+export const ConversationSchema = z.object({
+  /** Who wrote the message. */
+  authorField: FieldKeySchema,
+  /** When: "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM[:SS]", wall-clock time shown as written. Messages are ordered by it. */
+  timeField: FieldKeySchema,
+  textField: FieldKeySchema.optional(),
+  /** The field that tells an outgoing message (written by the person using the screen, shown on the right). Default: authorField. */
+  outgoingField: FieldKeySchema.optional(),
+  /** Values of outgoingField that mean outgoing. Empty: every message is incoming. */
+  outgoingValues: z.array(z.string()).default([]),
+  /** Short text in the avatar (initials). Default: the initials of the author. Never an image. */
+  avatarField: FieldKeySchema.optional(),
+  /** A small label in the message, for example the record type. */
+  metaField: FieldKeySchema.optional(),
+  /** Seconds: a message with a value is a voice message. The player is a mock; the prototype has no audio. */
+  voiceField: FieldKeySchema.optional(),
+  /** Rows of another collection that belong to a message: attachments with a name, a type (photo or document) and a size. */
+  attachments: z
+    .object({ collection: z.string().min(1), matchField: FieldKeySchema, nameField: FieldKeySchema, typeField: FieldKeySchema.optional(), sizeField: FieldKeySchema.optional() })
+    .optional(),
+  /** Messages by the same author within this many minutes form one group: author and avatar are shown once. */
+  groupMinutes: z.number().int().min(0).max(1440).default(5),
+  /** Language of the day separators, for example "ru-RU". Default: the browser's. */
+  locale: z.string().regex(/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/).optional(),
+  /** A box under the messages that adds an outgoing message to the page's copy of the mock data (never saved). */
+  composer: z
+    .object({
+      placeholder: z.string().optional(),
+      sendLabel: z.string().optional(),
+      /** Values of the new row. The author defaults to the first outgoing value; the values of active filters override these, so the message stays visible. A composer asks for a create story in coverage. */
+      values: z.record(z.string(), MockValueSchema).default({}),
+    })
+    .optional(),
+});
+export type Conversation = z.infer<typeof ConversationSchema>;
+
+export const CUSTOM_LIMITS = { html: 60_000, css: 30_000, script: 60_000 } as const;
+
+/**
+ * custom: a part of a screen written as HTML, CSS and script for an interface pattern no other kind represents (a board, a
+ * calendar, a map-like layout). It runs in a sandboxed frame with its own content security policy: an opaque origin with no
+ * access to the review page, its token, its data or its controls, no network, no popups, no forms and no navigation of the page.
+ * It receives the mock rows and the query parameters as data. What a reviewer can point at is declared in `parts`.
+ */
+export const CustomViewSchema = z.object({
+  /** Why none of the structured kinds fits. Shown to the reviewer. */
+  reason: z.string().min(1),
+  html: z.string().max(CUSTOM_LIMITS.html),
+  css: z.string().max(CUSTOM_LIMITS.css).default(""),
+  script: z.string().max(CUSTOM_LIMITS.script).default(""),
+  /** Height of the frame in CSS pixels; content taller than that scrolls inside the frame. */
+  height: z.number().int().min(80).max(2000).default(480),
+  /**
+   * Other mock collections the part receives in full (the element's own collection arrives narrowed by its filters and search).
+   * The part reads them in praxis.onData(data) or on the window event "praxis:data" (event.detail): data is
+   * { screen, query (the screen's parameters, tab defaults included), role, dataset, rows: { [collectionId]: rows } }.
+   * It is sent when the frame loads and again when the data or the search changes; praxis.mode is "preview", "inspect" or "review".
+   */
+  collections: z.array(z.string().min(1)).default([]),
+  /** What a reviewer can point at in Inspect and Review: elements marked data-praxis-part="id" in the markup. */
+  parts: z
+    .array(z.object({ id: z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/), label: z.string().min(1), requirementIds: z.array(RequirementIdSchema).default([]), acIds: z.array(z.string()).default([]) }))
+    .default([]),
+});
+export type CustomView = z.infer<typeof CustomViewSchema>;
 
 /** Show an element only while a URL query parameter has (or lacks) a value. The parameter default of a tabs element counts as its value. */
 export const ShowWhenSchema = z.object({
@@ -253,6 +329,10 @@ export const PrototypeElementSchema = z.object({
   showWhen: ShowWhenSchema.optional(),
   /** field: the value must be filled before a submit works. */
   required: z.boolean().default(false),
+  /** conversation: how the rows become messages. */
+  conversation: ConversationSchema.optional(),
+  /** custom: the sandboxed markup, styles and script. */
+  custom: CustomViewSchema.optional(),
 });
 export type PrototypeElement = z.infer<typeof PrototypeElementSchema>;
 
