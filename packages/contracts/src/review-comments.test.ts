@@ -213,3 +213,13 @@ describe("stale saves of requirement-level remarks and whitespace in stored text
     expect(same.state).toBe(s);
   });
 });
+
+describe("a remark sent from the review page is the user's to approve", () => {
+  it("a handed-over remark needs the dialog; a wording edit alone does not", async () => {
+    const { needsApprovalWhenHandedOver } = await import("./index.js");
+    expect(needsApprovalWhenHandedOver({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", acceptance: [{ id: AC2, comment: "too slow" }] }] })).toBe(true);
+    expect(needsApprovalWhenHandedOver({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", comment: "overall" }] })).toBe(true);
+    expect(needsApprovalWhenHandedOver({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", scopeNote: "later" }] })).toBe(true);
+    expect(needsApprovalWhenHandedOver({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", statement: "New wording", acceptance: [] }] })).toBe(false);
+  });
+});
