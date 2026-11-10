@@ -7,7 +7,8 @@ import type { UserApproval } from "./user-approval.js";
  * anything in a command. It says what the CLIENT vouched for; no client identifies the person yet, so `actor` stays empty.
  *
  *   independent-human  the client's own approval dialog (the Runtime asked, the person answered in the client)
- *   review-page        the person's Save in a review page the Runtime served on loopback (a browser, no client vouching)
+ *   review-page        the person's click in a page the Runtime served on loopback and opened itself: Save in a review page,
+ *                      or Approve in the approval page (a browser, no client vouching)
  *   host-attested      the host's own permission prompt or Trusted Client mode (the host, not a dialog, vouched)
  *   test-only          the test harness (PRAXIS_TEST_APPROVALS): never a person, never production
  * States written before this record existed carry decisions with no record: they are reported as "unverified provenance".
@@ -41,6 +42,8 @@ export type ApprovalSubject = z.infer<typeof ApprovalSubjectSchema>;
 export function trustOfApproval(approval: Pick<UserApproval, "channel" | "assurance">): ApprovalRecord["trust"] {
   if (approval.channel === "test") return "test-only";
   if (approval.assurance === "client-ui") return "independent-human";
+  // the same trust as a review-page Save: the person's click in a page the Runtime opened, the agent never had its link
+  if (approval.assurance === "approval-page") return "review-page";
   return "host-attested";
 }
 
@@ -50,6 +53,8 @@ export function describeApproval(approval: Pick<UserApproval, "channel" | "assur
   switch (trustOfApproval(approval)) {
     case "independent-human":
       return "approved in the client's approval dialog";
+    case "review-page":
+      return "approved in the Praxis approval page (the person's click in the browser page Praxis opened; the client did not vouch for it)";
     case "host-attested":
       return approval.channel === "trusted-client" ? "approved in Trusted Client mode (the host's own permission, no dialog was shown)" : "approved through the host's permission prompt (no Praxis dialog)";
     default:

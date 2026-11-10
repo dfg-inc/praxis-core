@@ -54,9 +54,12 @@ describe("asking the user through the client", () => {
     expect(rejected).toBeInstanceOf(ApprovalError);
     expect(rejected.code).toBe("APPROVAL_REJECTED");
     expect(rejected.details.rejected).toBe(true);
+    expect(rejected.details).toMatchObject({ outcome: "rejected", decidedBy: "user", executed: false });
     const dismissed = await withApprovalChannel(channel({ answer: "dismiss" }), () => obtainUserApproval(request())).catch((e) => e);
-    expect(dismissed.code).toBe("APPROVAL_REJECTED");
-    expect(dismissed.details.dismissed).toBe(true);
+    // closing the dialog is not a "no": its own code, and the same compatibility flags as before
+    expect(dismissed.code).toBe("APPROVAL_DISMISSED");
+    expect(dismissed.details).toMatchObject({ dismissed: true, rejected: false, outcome: "dismissed", decidedBy: "user" });
+    expect(dismissed.message).toMatch(/not a rejection/);
   });
 
   it("a client that fails to ask is not a yes, and the preview comes back", async () => {
@@ -71,11 +74,30 @@ describe("asking the user through the client", () => {
     expect(result.code).toBe("APPROVAL_REJECTED");
   });
 
-  it("confirmation=NO is a rejection and asks nobody", async () => {
+  it("confirmation=NO is the agent withdrawing the request: it asks nobody and is never the user's rejection", async () => {
     const seen: ApprovalRequest[] = [];
     const result = await withApprovalChannel(channel({ answer: "approve" }, seen), () => obtainUserApproval(request(), { confirmation: "NO" })).catch((e) => e);
-    expect(result.code).toBe("APPROVAL_REJECTED");
+    expect(result.code).toBe("APPROVAL_WITHDRAWN");
+    expect(result.details).toMatchObject({ outcome: "withdrawn", decidedBy: "agent", rejected: false, executed: false });
+    expect(result.message).toMatch(/withdrawn by the agent/);
+    expect(result.message).not.toMatch(/rejected by the user/);
     expect(seen).toHaveLength(0);
+  });
+
+  it("a client that answers by itself is the client's answer: nobody rejected anything", async () => {
+    const result = await withApprovalChannel(channel({ answer: "unavailable", automatic: "decline", evidence: { latencyMs: 9, client: "claude-code 2.1.309" } }), () => obtainUserApproval(request(), { confirmation: "YES" })).catch((e) => e);
+    expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    expect(result.details).toMatchObject({ outcome: "auto-answered", decidedBy: "client", automatic: "decline", evidence: { latencyMs: 9 }, executed: false });
+    expect(result.message).toMatch(/nobody rejected it/);
+    expect(result.message).toMatch(/9 ms/);
+  });
+
+  it("a channel's own outcome (an open page, a timeout) is passed through with its outcome, never as a no", async () => {
+    for (const [code, outcome] of [["APPROVAL_PENDING", "pending"], ["APPROVAL_TIMED_OUT", "timed-out"], ["APPROVAL_EXPIRED", "expired"]] as const) {
+      const result = await withApprovalChannel(channel(new ApprovalError(code, "x", { requestId: "r1" })), () => obtainUserApproval(request())).catch((e) => e);
+      expect(result.code).toBe(code);
+      expect(result.details).toMatchObject({ outcome, decidedBy: "nobody", executed: false, requestId: "r1" });
+    }
   });
 });
 
@@ -154,12 +176,20 @@ describe("decisions are journaled outside the repository", () => {
       await withApprovalChannel(channel({ answer: "approve" }), () => obtainUserApproval(request(), { repo }));
       await withApprovalChannel(channel({ answer: "reject", reason: "not now" }), () => obtainUserApproval(request(), { repo })).catch(() => undefined);
       await obtainUserApproval(request(), { repo, confirmation: "YES" }).catch(() => undefined);
+      await obtainUserApproval(request(), { repo, confirmation: "NO" }).catch(() => undefined);
+      await withApprovalChannel(channel({ answer: "dismiss" }), () => obtainUserApproval(request(), { repo })).catch(() => undefined);
+      await withApprovalChannel(channel({ answer: "unavailable", automatic: "decline", evidence: { latencyMs: 12 } }), () => obtainUserApproval(request(), { repo })).catch(() => undefined);
+      await withApprovalChannel(channel({ answer: "approve", journaled: true }), () => obtainUserApproval(request(), { repo }));
       const path = decisionLogPath(repo);
       expect(path.startsWith(repo)).toBe(false);
       expect(existsSync(join(repo, ".praxis"))).toBe(false);
       const rows = readFileSync(path, "utf8").trim().split("\n").map((l) => JSON.parse(l));
-      expect(rows.map((r) => r.decision)).toEqual(["approved", "rejected", "refused"]);
+      // the approval the page already journaled at the click is not written a second time
+      expect(rows.map((r) => r.decision)).toEqual(["approved", "rejected", "unavailable", "withdrawn", "dismissed", "auto-answered"]);
+      expect(rows.map((r) => r.decidedBy)).toEqual(["user", "user", "nobody", "agent", "user", "client"]);
+      expect(rows.every((r) => r.v === 2)).toBe(true);
       expect(rows[1].reason).toBe("not now");
+      expect(rows[5].evidence).toEqual({ latencyMs: 12 });
       expect(rows[0].repository).toBe(repo);
       expect(JSON.stringify(rows)).not.toMatch(/unverified/);
     } finally {

@@ -14,13 +14,18 @@ import type { DecisionKind } from "./authority.js";
  * elicitation dialog (the client shows the preview and returns Approve / Reject / Dismiss). That answer arrives as a
  * protocol response to the server, not as a tool argument, so an agent cannot write it.
  *
- * There is no other way to approve. A client that cannot show the dialog gets the preview and a clear message, and the
- * protected action is NOT executed: what the agent says the user said is never a decision. Read-only functionality and
- * the agent's own notes keep working.
+ * A client that cannot show the dialog (or answers it without showing it, as the Claude Desktop Code tab does) can be served
+ * by the Praxis approval page instead: a page the Runtime opens in the user's browser itself, whose secret link the agent
+ * never receives. Without either, the protected action is NOT executed: what the agent says the user said is never a
+ * decision. Read-only functionality and the agent's own notes keep working.
  *
  * What an approval is bound to: one action and one subject (the exact content shown in the preview). An approval
  * for another action, or for the same action after its content changed, does not verify. Rejection and dismissal
  * stop the action; nothing runs.
+ *
+ * Only an answer Praxis has evidence for is attributed to the user. A dialog answered faster than a person can read it, a
+ * client that cannot ask, a timeout and the agent's own confirmation=NO are each recorded as what they are, never as the
+ * user's rejection (see DecisionOutcome).
  */
 
 export const USER_APPROVAL_CONTRACT = "praxis.approval.user";
@@ -29,15 +34,19 @@ export const USER_APPROVAL_VERSION = 1;
 /** How long an approval stays usable between being given and being applied. */
 export const USER_APPROVAL_TTL_MS = 10 * 60 * 1000;
 
-export type ApprovalChannelKind = "client-elicitation" | "terminal-prompt" | "host-permission" | "trusted-client" | "test";
+export type ApprovalChannelKind = "client-elicitation" | "terminal-prompt" | "approval-page" | "host-permission" | "trusted-client" | "test";
 /**
  * client-ui: given by the user in a dialog (the client's elicitation dialog, or the terminal's for the CLI); the agent
  * cannot write that answer.
+ * approval-page: given by a click in the Praxis approval page, which the Runtime served on 127.0.0.1 and opened in the
+ * user's browser itself. The agent never receives the page's secret link, so it cannot click through Praxis's own tools.
+ * Weaker than a client dialog in one way that Praxis cannot detect: a browser-automation tool connected to that browser,
+ * or a program running as the user, can operate the page (see docs/approval-threat-model.md).
  * host-prompt: OPT-IN only (PRAXIS_APPROVAL_MODE=host-permission). The call reached Praxis, so the host's own
  * tool-permission prompt was passed, and its arguments carried the exact plan. Praxis cannot verify that the prompt was
  * shown: an "always allow" setting removes it, and then the agent approves itself. Never the default.
  */
-export type ApprovalAssurance = "client-ui" | "host-prompt" | "trusted-client";
+export type ApprovalAssurance = "client-ui" | "approval-page" | "host-prompt" | "trusted-client";
 /*
  * trusted-client: OPT-IN only (PRAXIS_APPROVAL_MODE=trusted-client, an extension setting). The user has told Praxis to
  * trust this client to run protected actions without asking about each one (for example Claude Desktop with "Always
@@ -59,16 +68,27 @@ export type ApprovalRequest = {
   risks?: string[];
 };
 
+/** What Praxis observed about an answer: how long it took, which page request carried it. Never the content. */
+export type AnswerEvidence = { latencyMs?: number; requestId?: string; via?: string; client?: string };
+
 /**
- * approve / reject / dismiss: the user's answer in the client's dialog.
- * unavailable: the client could not show the dialog for this connection (a protocol revision without it); the
- * request is then handled as a client with no dialog, never as a yes.
+ * approve / reject / dismiss: the user's answer in the client's dialog or the approval page.
+ * unavailable: there was no way to ask the person on this connection, so nobody decided. `automatic` says the client
+ * answered by itself (for example `decline` a few milliseconds after it was asked, with no dialog on screen): that is the
+ * client's answer, never the user's. The request is then handled as a client with no dialog, never as a yes or a no.
  */
-export type AskAnswer = { answer: "approve" | "reject" | "dismiss" | "unavailable"; reason?: string };
+export type AskAnswer = {
+  answer: "approve" | "reject" | "dismiss" | "unavailable";
+  reason?: string;
+  evidence?: AnswerEvidence;
+  automatic?: "accept" | "decline" | "cancel";
+  /** The channel wrote this decision to the journal when it was made (the approval page logs the click itself). */
+  journaled?: true;
+};
 
 /** A way to put an ApprovalRequest in front of the person. Supplied by the MCP client integration. */
 export interface UserApprovalChannel {
-  readonly kind: "client-elicitation" | "terminal-prompt" | "host-permission" | "trusted-client";
+  readonly kind: "client-elicitation" | "terminal-prompt" | "approval-page" | "host-permission" | "trusted-client";
   ask(request: ApprovalRequest): Promise<AskAnswer>;
 }
 
@@ -92,7 +112,31 @@ const issued = new WeakSet<object>();
 
 export const subjectDigest = (subject: string): string => `sha256:${createHash("sha256").update(subject, "utf8").digest("hex")}`;
 
-export type ApprovalErrorCode = "APPROVAL_REQUIRED" | "APPROVAL_REJECTED" | "APPROVAL_CLIENT_UI_REQUIRED" | "APPROVAL_SCOPE_MISMATCH" | "APPROVAL_EXPIRED" | "APPROVAL_TIMED_OUT" | "APPROVAL_TOO_LARGE";
+const assuranceOf = (channel: ApprovalChannelKind): ApprovalAssurance =>
+  channel === "host-permission" ? "host-prompt" : channel === "trusted-client" ? "trusted-client" : channel === "approval-page" ? "approval-page" : "client-ui";
+
+/**
+ * Codes for an action that did not run, one per outcome, so none is mistaken for another:
+ *   APPROVAL_REJECTED            the user rejected it (in a dialog or the approval page)
+ *   APPROVAL_DISMISSED           the user closed the dialog without deciding
+ *   APPROVAL_WITHDRAWN           the agent stopped it (confirmation=NO): no decision of the user is claimed
+ *   APPROVAL_PENDING             the approval page is open and nobody has decided yet
+ *   APPROVAL_TIMED_OUT           a dialog was shown and nobody answered in time
+ *   APPROVAL_EXPIRED             an answer or a page request is too old to use
+ *   APPROVAL_CLIENT_UI_REQUIRED  there is no way to ask the user here (no dialog, or the client answered by itself)
+ *   APPROVAL_SCOPE_MISMATCH / APPROVAL_TOO_LARGE / APPROVAL_REQUIRED  Praxis refused before asking
+ */
+export type ApprovalErrorCode =
+  | "APPROVAL_REQUIRED"
+  | "APPROVAL_REJECTED"
+  | "APPROVAL_DISMISSED"
+  | "APPROVAL_WITHDRAWN"
+  | "APPROVAL_PENDING"
+  | "APPROVAL_CLIENT_UI_REQUIRED"
+  | "APPROVAL_SCOPE_MISMATCH"
+  | "APPROVAL_EXPIRED"
+  | "APPROVAL_TIMED_OUT"
+  | "APPROVAL_TOO_LARGE";
 
 /** Standalone (no dependency on workflow.ts, which depends on this file). Carries the same `code` as WorkflowError. */
 export class ApprovalError extends Error {
@@ -139,7 +183,7 @@ export function createUserApproval(input: {
     subjectDigest: subjectDigest(input.request.subject),
     decision: "approved" as const,
     channel: input.channel,
-    assurance: input.channel === "host-permission" ? ("host-prompt" as const) : input.channel === "trusted-client" ? ("trusted-client" as const) : ("client-ui" as const),
+    assurance: assuranceOf(input.channel),
     decidedAt: (input.now ?? new Date()).toISOString(),
     ...(input.reason ? { reason: input.reason } : {}),
   });
@@ -167,10 +211,13 @@ export function approvalsGivenInThisCall(): readonly UserApproval[] {
 }
 
 /** What a diagnostic can say about how approvals will be obtained right now. */
-export function approvalModeReport(): { mode: "client-ui" | "no-dialog" | "trusted-client"; note: string } {
+export function approvalModeReport(): { mode: "client-ui" | "approval-page" | "no-dialog" | "trusted-client"; note: string } {
   const channel = currentApprovalChannel();
   if (channel?.kind === "trusted-client") {
     return { mode: "trusted-client", note: "TRUSTED CLIENT (enabled by you in the extension settings): protected actions run on the agent's confirmation=YES for a current preview, without a separate confirmation of each action. This is your standing permission for this client, not proof that you confirmed each action. Every action is still checked against its preview and journaled." };
+  }
+  if (channel?.kind === "approval-page") {
+    return { mode: "approval-page", note: "This client cannot show Praxis's approval dialog, so Praxis opens its own approval page in your browser: you approve or reject the exact action there. The agent never gets that page's link. A browser-automation tool in that browser, or a program running as you, could still operate the page; Praxis cannot detect that." };
   }
   if (channel && channel.kind !== "host-permission") {
     return { mode: "client-ui", note: "Protected actions are approved or rejected by the user in the client's own dialog; the agent cannot write that answer." };
@@ -183,17 +230,39 @@ export function approvalModeReport(): { mode: "client-ui" | "no-dialog" | "trust
 
 // --- decision log --------------------------------------------------------------------------------------------------
 
+/**
+ * What happened to one request, in the journal. Only approved / rejected / dismissed are decisions of a person, and only
+ * with decidedBy "user". Entries written before journal v2 have no decidedBy; see decision-journal.ts for how they are read
+ * and amended.
+ *   pending        the approval page is open, nobody decided yet
+ *   timed-out      a dialog was shown and nobody answered in time
+ *   expired        a page request or an answer became too old to use
+ *   withdrawn      the agent stopped the action (confirmation=NO)
+ *   auto-answered  the client answered without showing anything to the user
+ *   unavailable    there was no way to ask the user
+ *   refused        Praxis refused before asking (a stale plan, too large, a mismatched scope)
+ */
+export type DecisionOutcome = "approved" | "rejected" | "dismissed" | "pending" | "timed-out" | "expired" | "withdrawn" | "auto-answered" | "unavailable" | "refused";
+/** Who made the outcome: the user (with evidence), the client by itself, the agent, Praxis, a standing permission, or nobody. */
+export type DecidedBy = "user" | "client" | "agent" | "praxis" | "trusted-client" | "host-prompt" | "nobody";
+
 export type DecisionLogEntry = {
   at: string;
   action: string;
   summary: string;
   subjectDigest: string;
-  decision: "approved" | "rejected" | "dismissed" | "refused";
+  decision: DecisionOutcome;
   channel: ApprovalChannelKind | "none";
+  /** Journal format: 2 adds decidedBy and evidence. Absent on entries written before. */
+  v?: 2;
+  decidedBy?: DecidedBy;
+  evidence?: AnswerEvidence;
   reason?: string;
   /** The repository the decision was about (kept in the entry, not in the repository). */
   repository?: string;
 };
+
+const decidedByFor = (channel: ApprovalChannelKind): DecidedBy => (channel === "trusted-client" ? "trusted-client" : channel === "host-permission" ? "host-prompt" : "user");
 
 /**
  * Where the decision journal lives: in the user's own Praxis home (PRAXIS_STATE_HOME, default ~/.praxis), one file per
@@ -212,7 +281,7 @@ export function logDecision(repo: string | undefined, entry: DecisionLogEntry): 
   try {
     const path = decisionLogPath(repo);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    appendFileSync(path, `${JSON.stringify({ ...entry, repository: resolve(repo) })}\n`, { mode: 0o600 });
+    appendFileSync(path, `${JSON.stringify({ v: 2, ...entry, repository: resolve(repo) })}\n`, { mode: 0o600 });
   } catch {
     /* ignore */
   }
@@ -220,18 +289,38 @@ export function logDecision(repo: string | undefined, entry: DecisionLogEntry): 
 
 // --- asking ------------------------------------------------------------------------------------------------------
 
+/** Where the person answered, in words for a result message. */
+const whereAsked = (kind: ApprovalChannelKind): string =>
+  kind === "approval-page" ? "the Praxis approval page" : kind === "terminal-prompt" ? "the terminal prompt" : "the client's approval dialog";
+
+/** The journal outcome for a refusal a channel raised itself, so a timeout or an open page is never logged as a "no". */
+const OUTCOME_OF_CODE: Partial<Record<ApprovalErrorCode, { decision: DecisionOutcome; decidedBy: DecidedBy }>> = {
+  APPROVAL_PENDING: { decision: "pending", decidedBy: "nobody" },
+  APPROVAL_TIMED_OUT: { decision: "timed-out", decidedBy: "nobody" },
+  APPROVAL_EXPIRED: { decision: "expired", decidedBy: "nobody" },
+  APPROVAL_CLIENT_UI_REQUIRED: { decision: "unavailable", decidedBy: "nobody" },
+};
+
 /**
- * Gets the user's decision for exactly this request, or throws before anything runs.
- *   rejected / dismissed -> APPROVAL_REJECTED
- *   no dialog available  -> APPROVAL_CLIENT_UI_REQUIRED, carrying the preview so it can be shown to the user
- * `confirmation` is the agent's own argument: "NO" records that the user declined (it can only stop things); "YES"
- * never approves anything, it only says the agent wants to apply what was previewed.
+ * Gets the user's decision for exactly this request, or throws before anything runs. Every refusal carries
+ * `details.outcome` and `details.decidedBy`, and the journal records the same, so a caller never has to guess:
+ *   the user rejected                      -> APPROVAL_REJECTED   (decidedBy "user", with the channel's evidence)
+ *   the user closed the dialog             -> APPROVAL_DISMISSED  (decidedBy "user"; not a rejection)
+ *   confirmation=NO                        -> APPROVAL_WITHDRAWN  (decidedBy "agent"; never recorded as the user's)
+ *   nobody could be asked / client answered by itself -> APPROVAL_CLIENT_UI_REQUIRED (decidedBy "nobody" / "client")
+ *   the approval page is open              -> APPROVAL_PENDING    (raised by that channel; decidedBy "nobody")
+ * `confirmation` is the agent's own argument: "NO" withdraws the request (it can only stop things); "YES" never approves
+ * anything, it only says the agent wants to apply what was previewed.
  */
 export async function obtainUserApproval(request: ApprovalRequest, options: { confirmation?: string; repo?: string } = {}): Promise<UserApproval> {
   const base = { at: new Date().toISOString(), action: request.action, summary: request.summary, subjectDigest: subjectDigest(request.subject) };
   if (options.confirmation === "NO") {
-    logDecision(options.repo, { ...base, decision: "rejected", channel: "none", reason: "the user declined (reported by the agent)" });
-    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected. Nothing was changed.`, { rejected: true });
+    logDecision(options.repo, { ...base, decision: "withdrawn", decidedBy: "agent", channel: "none", reason: "the agent withdrew the request (confirmation=NO); no decision of the user is claimed" });
+    throw new ApprovalError(
+      "APPROVAL_WITHDRAWN",
+      `${request.summary} was withdrawn by the agent (confirmation=NO). Nothing was changed. This is not recorded as the user's decision: Praxis has no evidence of one.`,
+      { executed: false, outcome: "withdrawn", decidedBy: "agent", rejected: false, dismissed: false },
+    );
   }
   const channel = currentApprovalChannel();
   let answer: AskAnswer | undefined;
@@ -240,31 +329,56 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
       answer = await channel.ask(request);
     } catch (error) {
       if (error instanceof ApprovalNeedsInput) throw error;
-      // a channel that refuses with its own explanation (a plan that does not match) is passed through unchanged
+      // a channel that refuses with its own explanation (a plan that does not match, an open page) is passed through unchanged
       if (error instanceof ApprovalError) {
-        logDecision(options.repo, { ...base, decision: "refused", channel: channel.kind, reason: error.message.slice(0, 200) });
+        const known = OUTCOME_OF_CODE[error.code] ?? { decision: "refused" as const, decidedBy: "praxis" as const };
+        if (error.details.journaled !== true) {
+          const evidence = error.details.evidence as AnswerEvidence | undefined;
+          logDecision(options.repo, { ...base, ...known, channel: channel.kind, ...(evidence ? { evidence } : {}), reason: error.message.slice(0, 200) });
+        }
+        error.details.outcome ??= known.decision;
+        error.details.decidedBy ??= known.decidedBy;
+        error.details.executed ??= false;
+        delete error.details.journaled;
         throw error;
       }
-      logDecision(options.repo, { ...base, decision: "refused", channel: channel.kind, reason: error instanceof Error ? error.message : String(error) });
-      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, previewDetails(request));
+      logDecision(options.repo, { ...base, decision: "refused", decidedBy: "praxis", channel: channel.kind, reason: error instanceof Error ? error.message : String(error) });
+      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, { ...previewDetails(request), outcome: "refused", decidedBy: "praxis" });
     }
   }
   if (channel && answer && answer.answer !== "unavailable") {
+    const decidedBy = decidedByFor(channel.kind);
+    const said = { channel: channel.kind, decidedBy, ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}) };
     if (answer.answer === "approve") {
       const approval = createUserApproval({ request, channel: channel.kind });
       channelStore.getStore()?.approvals.push(approval);
-      logDecision(options.repo, { ...base, decision: "approved", channel: channel.kind, ...(answer.reason ? { reason: answer.reason } : {}) });
+      if (!answer.journaled) logDecision(options.repo, { ...base, decision: "approved", ...said });
       return approval;
     }
     const dismissed = answer.answer === "dismiss";
-    logDecision(options.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", channel: channel.kind, ...(answer.reason ? { reason: answer.reason } : {}) });
-    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was ${dismissed ? "dismissed" : "rejected"} by the user. Nothing was changed.`, { rejected: !dismissed, dismissed });
+    if (!answer.journaled) logDecision(options.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", ...said });
+    const details = { executed: false, outcome: dismissed ? "dismissed" : "rejected", decidedBy, channel: channel.kind, ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}), rejected: !dismissed, dismissed };
+    if (dismissed) {
+      throw new ApprovalError("APPROVAL_DISMISSED", `${request.summary} was not run: the user closed ${whereAsked(channel.kind)} without deciding. Nothing was changed. This is not a rejection; ask the user whether to try again.`, details);
+    }
+    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected by the user in ${whereAsked(channel.kind)}. Nothing was changed.`, details);
   }
-  logDecision(options.repo, { ...base, decision: "refused", channel: "none", reason: "no approval dialog in this client" });
+  const automatic = answer?.automatic;
+  const why = automatic
+    ? `the client answered "${automatic}" ${answer?.evidence?.latencyMs ?? "?"} ms after it was asked, faster than a person can read the request${answer?.reason ? ` (${answer.reason})` : ""}; that is the client's answer, not the user's`
+    : answer?.reason ?? "this client cannot show an approval dialog (no MCP elicitation support)";
+  logDecision(options.repo, {
+    ...base,
+    decision: automatic ? "auto-answered" : "unavailable",
+    decidedBy: automatic ? "client" : "nobody",
+    channel: channel?.kind ?? "none",
+    ...(answer?.evidence ? { evidence: answer.evidence } : {}),
+    reason: why.slice(0, 300),
+  });
   throw new ApprovalError(
     "APPROVAL_CLIENT_UI_REQUIRED",
-    `${request.summary} was NOT executed. It needs the user's approval in the client's own dialog, and this client cannot show one (no MCP elicitation support). Show the user the preview below and tell them it can only be applied from a client that supports approval dialogs; the agent's or the user's text in chat is not accepted as approval. Read-only tools still work.`,
-    previewDetails(request),
+    `${request.summary} was NOT executed, and nobody rejected it: Praxis could not ask the user (${why}). Show the user the preview below. It can be applied where Praxis can ask: a client whose approval dialog works, or the Praxis approval page when the Runtime runs on the user's own computer. The agent's or the user's text in chat is not accepted as approval, and trying again here gives the same answer. Read-only tools still work.`,
+    { ...previewDetails(request), outcome: automatic ? "auto-answered" : "unavailable", decidedBy: automatic ? "client" : "nobody", ...(answer?.evidence ? { evidence: answer.evidence } : {}), ...(automatic ? { automatic } : {}) },
   );
 }
 

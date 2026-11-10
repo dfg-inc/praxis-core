@@ -128,6 +128,9 @@ export const OP_CODES = {
   APPROVAL_EXPIRED: "APPROVAL_EXPIRED",
   APPROVAL_REVOKED: "APPROVAL_REVOKED",
   APPROVAL_REJECTED: "APPROVAL_REJECTED",
+  APPROVAL_DISMISSED: "APPROVAL_DISMISSED",
+  APPROVAL_WITHDRAWN: "APPROVAL_WITHDRAWN",
+  APPROVAL_PENDING: "APPROVAL_PENDING",
   APPROVAL_CLIENT_UI_REQUIRED: "APPROVAL_CLIENT_UI_REQUIRED",
   APPROVAL_TIMED_OUT: "APPROVAL_TIMED_OUT",
   APPROVAL_RECONCILIATION_REQUIRED: "APPROVAL_RECONCILIATION_REQUIRED",
@@ -618,7 +621,7 @@ function asApprovalError(err: unknown): never {
  * client supports it. A client without one gets the preview and a clear refusal; nothing runs (see user-approval.ts). A stale preview is refused before the user is asked, so what they approve is what runs.
  */
 async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => Promise<T> | T): Promise<T> {
-  // "NO" is the user's refusal reported by the agent: it is recorded and refused below, not treated as a missing YES.
+  // "NO" is the agent withdrawing the request: it is recorded as withdrawn (never as the user's rejection) and refused below.
   if (spec.requireYes && ctx.confirmation !== "NO") requireConfirm(ctx.confirmation, spec.what);
   // Nested inside an action that is already approved (one approval covers the operations it is made of).
   if (hasMutationLease()) return write();

@@ -569,11 +569,16 @@ export type {
   ApprovalAssurance,
   ApprovalChannelKind,
   ApprovalRequest,
+  AnswerEvidence,
   AskAnswer,
+  DecidedBy,
   DecisionLogEntry,
+  DecisionOutcome,
   UserApproval,
   UserApprovalChannel,
 } from "./user-approval.js";
+export { appendDecisionAmendments, auditDecisionJournal, effectiveDecisions, readDecisionJournal } from "./decision-journal.js";
+export type { AmendmentRule, DecisionAmendment, JournalFinding, JournalLine, ObservedRoundTrip } from "./decision-journal.js";
 
 // Planning: stages, scope and review, prototype, story plan, story editing, repositories, impact, next step.
 export * from "./planning-schemas.js";

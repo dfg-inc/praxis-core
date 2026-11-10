@@ -29,8 +29,11 @@ export type ProviderReport = {
 
 /** How the user's approval is obtained for protected actions in this session. */
 export type ApprovalReport = {
-  /** client-ui: asked in the MCP client's own dialog. no-dialog: the client cannot ask, so protected actions are not executed. */
-  mode: "client-ui" | "no-dialog" | "trusted-client";
+  /**
+   * client-ui: asked in the MCP client's own dialog. approval-page: asked in the Praxis approval page the Runtime opens in the
+   * user's browser. no-dialog: there is no way to ask, so protected actions are not executed.
+   */
+  mode: "client-ui" | "approval-page" | "no-dialog" | "trusted-client";
   /** Stated plainly, including what does not work. */
   note: string;
   /** Where decisions are journaled (outside the repository). */
@@ -163,6 +166,11 @@ export function doctorNextSteps(input: {
     if (report.state === "partial") {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
+  }
+  if (input.approval.mode === "approval-page") {
+    steps.push(
+      "This MCP client cannot show Praxis's approval dialog (or answers it without showing it, as the Claude Desktop Code tab does). Protected actions open the Praxis approval page in your browser instead: read the exact action there and choose Approve or Reject. The agent never receives that page's link. Anything that can operate your browser or run programs as you (a browser-automation extension, a shell) could still operate the page; set the browser for approval pages to one no agent controls (PRAXIS_APPROVAL_BROWSER).",
+    );
   }
   if (input.approval.mode === "no-dialog") {
     steps.push(
