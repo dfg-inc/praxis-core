@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { rollupStoryVerdict } from "./story.js";
-import { approvalFor } from "./human-act-testing.js";
+import { applyAsUser, approvalFor } from "./human-act-testing.js";
 import {
   applyWorkflowCommand,
   BULK_IMPORT_REQUIREMENTS,
@@ -399,13 +399,13 @@ describe("capabilities, Jira failure, compatibility", () => {
     expect(inspectImportImplementation(partial)).toBe("partial-success");
     const statement =
       "Invalid, duplicate or failed rows never prevent valid rows from being created. The import is not all-or-nothing; each row has its own outcome.";
-    let state = applyWorkflowCommand(null, {
+    let state = applyAsUser(null, {
       action: "open",
       projectId: "PRJ",
       title: "Bulk User Import",
       request: "Import users from CSV",
       mode: "classic",
-    }, { channel: { via: "html-review" } }).state; // an alpha.48-style item: the user chose classic
+    }, {}).state; // an alpha.48-style item: the user chose classic
     state = applyWorkflowCommand(state, {
       action: "add-requirement",
       id: "REQ-BUI-061",
@@ -437,13 +437,13 @@ describe("capabilities, Jira failure, compatibility", () => {
   });
 
   it("asks only blocking questions and keeps other requirements moving", () => {
-    let state = applyWorkflowCommand(null, {
+    let state = applyAsUser(null, {
       action: "open",
       projectId: "PRJ",
       title: "Bulk User Import",
       request: "Import users from CSV",
       mode: "classic",
-    }, { channel: { via: "html-review" } }).state; // an alpha.48-style item: the user chose classic
+    }, {}).state; // an alpha.48-style item: the user chose classic
     const clarified = applyWorkflowCommand(state, {
       action: "clarify",
       role: "ba",
@@ -514,13 +514,13 @@ describe("capabilities, Jira failure, compatibility", () => {
   });
 
   it("stores a user story and refuses to treat a missing happy path as pass", () => {
-    let state = applyWorkflowCommand(null, {
+    let state = applyAsUser(null, {
       action: "open",
       projectId: "PRJ",
       title: "Bulk User Import",
       request: "Import users from CSV",
       mode: "classic",
-    }, { channel: { via: "html-review" } }).state; // an alpha.48-style item: the user chose classic
+    }, {}).state; // an alpha.48-style item: the user chose classic
     state = applyWorkflowCommand(state, {
       action: "add-requirement",
       id: "REQ-BUI-061",

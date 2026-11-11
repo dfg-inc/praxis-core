@@ -2,10 +2,12 @@
 import { JSDOM } from "jsdom";
 import { beforeAll, describe, expect, it } from "vitest";
 import { applyWorkflowCommand, migrateWorkflowState, openLocalWorkflow, phaseGates, renderReview, submissionToCommands, workStateStamp, WorkflowStateSchema, type WorkflowState } from "./index.js";
+import { applyAsUser, userChannelFor } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
-const U = { via: "html-review" as const };
-const run = (s: WorkflowState | null, c: Record<string, unknown>, channel?: typeof U) => applyWorkflowCommand(s, c, { now: NOW, ...(channel ? { channel } : {}) }).state;
+/** The user decided this in the client's dialog (the test harness stands in for the dialog). */
+const U = "user" as const;
+const run = (s: WorkflowState | null, c: Record<string, unknown>, channel?: typeof U) => applyWorkflowCommand(s, c, { now: NOW, ...(channel ? { channel: userChannelFor(c) } : {}) }).state;
 beforeAll(() => {
   process.env.PRAXIS_TEST_APPROVALS = "1";
 });
@@ -54,7 +56,7 @@ describe("default mode and switching", () => {
 
   it("switching to the mode the item is already in changes nothing", () => {
     const s = classicItem();
-    const res = applyWorkflowCommand(s, { action: "set-mode", mode: "classic" }, { now: NOW, channel: U });
+    const res = applyAsUser(s, { action: "set-mode", mode: "classic" }, { now: NOW });
     expect(res.duplicate).toBe(true);
     expect(res.state).toBe(s);
   });
@@ -62,7 +64,7 @@ describe("default mode and switching", () => {
   it("the user switches mode from a review submission, and the dialog line says what stops being enforced", () => {
     const guided = run(classicItem(), { action: "set-mode", mode: "guided" });
     const plan = submissionToCommands(guided, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: guided.workItem.id, baseFingerprint: "x", baseState: workStateStamp(guided), modeChange: { to: "classic", reason: "no" } });
-    expect(plan.commands).toEqual([{ action: "set-mode", via: "html-review", mode: "classic", reason: "no" }]);
+    expect(plan.commands).toEqual([{ action: "set-mode", via: "approved", mode: "classic", reason: "no" }]);
     expect(plan.details[0]).toMatch(/gates, plan-before-stories and coverage checks stop being enforced/);
   });
 });
@@ -89,7 +91,7 @@ describe("a contract is agreed by the user", () => {
     const s = withContract();
     expect(phaseGates(s, "development").missing.join(" ")).toMatch(/contract C-1 \(Orders API\) is not agreed by the user/);
     const agreed = run(s, { action: "set-contract", contract: { ...s.contracts[0], status: "agreed" } }, U);
-    expect(agreed.contracts[0]).toMatchObject({ status: "agreed", agreement: { via: "html-review" } });
+    expect(agreed.contracts[0]).toMatchObject({ status: "agreed", agreement: { via: "approved" } });
     expect(phaseGates(agreed, "development").missing.join(" ")).not.toMatch(/contract C-1/);
   });
 
@@ -142,7 +144,7 @@ describe("what the user agreed cannot be dropped or left behind by the agent", (
     const never = run(s, { action: "set-contract", contract: { id: "C-9", name: "never agreed", providerServiceId: "svc-api", consumerServiceIds: ["svc-web"] } });
     expect(run(never, { action: "remove-contract", id: "C-9" }).contracts.map((c) => c.id)).toEqual(["C-1"]);
     const plan = submissionToCommands(s, { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "contracts", workItemId: s.workItem.id, baseFingerprint: contractsFp(s), contracts: { agree: [], remove: ["C-1"] } });
-    expect(plan.commands).toEqual([{ action: "remove-contract", via: "html-review", id: "C-1" }]);
+    expect(plan.commands).toEqual([{ action: "remove-contract", via: "approved", id: "C-1" }]);
     expect(plan.details[0]).toMatch(/REMOVE contract C-1/);
   });
   it("S7: a contract that became proposed again after the gate was passed blocks quality and delivery", () => {
@@ -180,7 +182,7 @@ describe("N1: an agreed contract cannot be laundered away by changing it first",
     expect(run(fresh, { action: "remove-contract", id: "C-2" }).contracts.map((c) => c.id)).toEqual(["C-1"]);
   });
   it("the open result says when an item is classic", () => {
-    const res = applyWorkflowCommand(null, { action: "open", projectId: "p", title: "t", request: "r", mode: "classic" }, { now: NOW, channel: U });
+    const res = applyAsUser(null, { action: "open", projectId: "p", title: "t", request: "r", mode: "classic" }, { now: NOW });
     expect((res.result as { note?: string }).note).toMatch(/classic/);
     expect((applyWorkflowCommand(null, { action: "open", projectId: "p", title: "t", request: "r" }, { now: NOW }).result as { mode: string }).mode).toBe("guided");
   });

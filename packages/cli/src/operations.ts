@@ -128,6 +128,9 @@ export const OP_CODES = {
   APPROVAL_EXPIRED: "APPROVAL_EXPIRED",
   APPROVAL_REVOKED: "APPROVAL_REVOKED",
   APPROVAL_REJECTED: "APPROVAL_REJECTED",
+  APPROVAL_DISMISSED: "APPROVAL_DISMISSED",
+  APPROVAL_WITHDRAWN: "APPROVAL_WITHDRAWN",
+  APPROVAL_PENDING: "APPROVAL_PENDING",
   APPROVAL_CLIENT_UI_REQUIRED: "APPROVAL_CLIENT_UI_REQUIRED",
   APPROVAL_TIMED_OUT: "APPROVAL_TIMED_OUT",
   APPROVAL_RECONCILIATION_REQUIRED: "APPROVAL_RECONCILIATION_REQUIRED",
@@ -618,7 +621,7 @@ function asApprovalError(err: unknown): never {
  * client supports it. A client without one gets the preview and a clear refusal; nothing runs (see user-approval.ts). A stale preview is refused before the user is asked, so what they approve is what runs.
  */
 async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => Promise<T> | T): Promise<T> {
-  // "NO" is the user's refusal reported by the agent: it is recorded and refused below, not treated as a missing YES.
+  // "NO" is the agent withdrawing the request: it is recorded as withdrawn (never as the user's rejection) and refused below.
   if (spec.requireYes && ctx.confirmation !== "NO") requireConfirm(ctx.confirmation, spec.what);
   // Nested inside an action that is already approved (one approval covers the operations it is made of).
   if (hasMutationLease()) return write();
@@ -1327,6 +1330,12 @@ export async function developerCompleteRecoveryApplyOp(
     repository: repo,
     workItemId: wp,
     requireYes: true,
+    // the person is shown the recovery plan itself, not only its fingerprint
+    describe: async () => ({
+      summary: `Recover the completion of ${wp} in Jira`,
+      description: JSON.stringify(await developerCompleteRecoveryPreviewOp(ctx), null, 2),
+      targets: [wp],
+    }),
   }, () => withProvider({ ...ctx, repo }, (p) =>
     applyDeveloperCompleteRecovery({
       provider: p,
@@ -1925,6 +1934,13 @@ export async function developerGitLinkJiraApplyOp(ctx: OpContext) {
     repository: repo,
     workItemId: ctx.wp,
     requireYes: true,
+    // the person is shown the issue and the exact comment, not only a fingerprint
+    describe: () => ({
+      summary: `Add a comment to ${preview.jiraIssueKey} in Jira`,
+      description: `Issue: ${preview.jiraIssueKey}\n\nComment to add, exactly:\n${preview.proposedComment}`,
+      previewFingerprint: preview.previewFingerprint,
+      targets: [preview.jiraIssueKey!],
+    }),
   }, () => withProvider(ctx, async (p) => {
     await p.addComment(preview.jiraIssueKey!, preview.proposedComment!);
     return {

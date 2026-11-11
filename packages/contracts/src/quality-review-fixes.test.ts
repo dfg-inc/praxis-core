@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyWorkflowCommand, capabilityEvidence, evaluateEvidence, maskLiterals, openLocalWorkflow, phaseGates, requirementCoverage, statedOperations, type WorkflowState } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-29T10:00:00.000Z");
 const EXEC = { evidenceSource: { kind: "executed" as const, artifacts: [], runId: "run-1" }, now: NOW };
@@ -37,8 +38,8 @@ describe("round 7 review: Story criteria, scenario ids, retired criteria", () =>
   it("a removed criterion's id is never handed out again, so its old PASS cannot count for a new criterion", () => {
     let s = record(base(), [entry(`${R}-AC-01`), entry(`${R}-AC-02`)]);
     expect(requirementCoverage(s, R).verdict).toBe("PASS");
-    s = applyWorkflowCommand(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: R, acceptance: [], addAcceptance: [], removeAcceptance: [`${R}-AC-02`] }] }, { now: NOW, channel: { via: "html-review" } }).state;
-    s = applyWorkflowCommand(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: R, acceptance: [], addAcceptance: [{ statement: "BRAND NEW, different" }], removeAcceptance: [] }] }, { now: NOW, channel: { via: "html-review" } }).state;
+    s = applyAsUser(s, { action: "review-requirements", via: "approved", decisions: [{ requirementId: R, acceptance: [], addAcceptance: [], removeAcceptance: [`${R}-AC-02`] }] }, { now: NOW }).state;
+    s = applyAsUser(s, { action: "review-requirements", via: "approved", decisions: [{ requirementId: R, acceptance: [], addAcceptance: [{ statement: "BRAND NEW, different" }], removeAcceptance: [] }] }, { now: NOW }).state;
     const ids = s.requirements[0]!.acceptanceCriteria.map((c) => c.id);
     expect(ids).toEqual([`${R}-AC-01`, `${R}-AC-03`]);
     // the requirement was revised, so the earlier results are stale; the new criterion has nothing, in particular not the removed one's PASS
@@ -80,7 +81,7 @@ describe("round 7 re-review: criterion ids removed before the upgrade", () => {
     let s = record(base(), [entry(`${R}-AC-01`), entry(`${R}-AC-02`)]);
     // the state as an older version saved it: AC-02 gone, no retired list, its result still in coverage
     s = { ...s, requirements: s.requirements.map((r) => ({ ...r, retiredCriteria: [], acceptanceCriteria: r.acceptanceCriteria.filter((c) => c.id !== `${R}-AC-02`) })) };
-    s = applyWorkflowCommand(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: R, acceptance: [], addAcceptance: [{ statement: "new" }], removeAcceptance: [] }] }, { now: NOW, channel: { via: "html-review" } }).state;
+    s = applyAsUser(s, { action: "review-requirements", via: "approved", decisions: [{ requirementId: R, acceptance: [], addAcceptance: [{ statement: "new" }], removeAcceptance: [] }] }, { now: NOW }).state;
     expect(s.requirements[0]!.acceptanceCriteria.map((c) => c.id)).toEqual([`${R}-AC-01`, `${R}-AC-03`]);
   });
 });

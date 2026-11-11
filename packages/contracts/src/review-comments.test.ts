@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { submissionToCommands } from "./review-submission.js";
 import { acceptanceStatus, applyWorkflowCommand, phaseGates, requirementsFingerprint, ReviewMarkSchema, WorkflowStateSchema, type WorkflowState } from "./index.js";
+import { userChannelFor } from "./human-act-testing.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 const T1 = new Date("2026-10-26T10:00:00.000Z");
 const T2 = new Date("2026-10-26T11:00:00.000Z");
 const T3 = new Date("2026-10-26T12:00:00.000Z");
-const run = (state: WorkflowState | null, command: Record<string, unknown>, now: Date, channel?: { via: "html-review" }) => applyWorkflowCommand(state, command, { now, ...(channel ? { channel } : {}) }).state;
+/** The user decided this in the client's dialog (the test harness stands in for the dialog). */
+const U = "user" as const;
+const run = (state: WorkflowState | null, command: Record<string, unknown>, now: Date, asUser?: typeof U) => applyWorkflowCommand(state, command, { now, ...(asUser ? { channel: userChannelFor(command) } : {}) }).state;
 const AC2 = "REQ-ORD-002-AC-02";
 
 function seeded(): WorkflowState {
@@ -15,13 +19,13 @@ function seeded(): WorkflowState {
 }
 const review = (s: WorkflowState) => s.requirements[0].acceptanceCriteria.find((c) => c.id === AC2)!.review;
 const decide = (s: WorkflowState, ac: Record<string, unknown>, now: Date) =>
-  run(s, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-002", acceptance: [{ id: AC2, ...ac }] }] }, now, { via: "html-review" });
+  run(s, { action: "review-requirements", via: "approved", decisions: [{ requirementId: "REQ-ORD-002", acceptance: [{ id: AC2, ...ac }] }] }, now, U);
 const lastNote = (s: WorkflowState) => s.history[s.history.length - 1].note ?? "";
 
 describe("a user's review remark is stored, dated per kind of change, and logged", () => {
   it("reject + comment stores the status, the reason, who and when", () => {
     const s = decide(seeded(), { status: "rejected", comment: "Не нравится решение" }, T2);
-    expect(review(s)).toMatchObject({ status: "rejected", comment: "Не нравится решение", at: T2.toISOString(), via: "html-review", commentAt: T2.toISOString(), commentVia: "html-review" });
+    expect(review(s)).toMatchObject({ status: "rejected", comment: "Не нравится решение", at: T2.toISOString(), via: "approved", commentAt: T2.toISOString(), commentVia: "approved" });
     expect(lastNote(s)).toContain(`${AC2} rejected`);
     expect(lastNote(s)).toContain(`${AC2} comment changed`);
     expect(lastNote(s)).not.toContain("marks only");
@@ -81,12 +85,12 @@ describe("a user's review remark is stored, dated per kind of change, and logged
 
   it("accept-all keeps a comment typed on a pending criterion", () => {
     let s = decide(seeded(), { comment: "keep me" }, T2);
-    s = run(s, { action: "accept-requirements", via: "html-review" }, T3, { via: "html-review" });
+    s = run(s, { action: "accept-requirements", via: "approved" }, T3, U);
     expect(review(s)).toMatchObject({ status: "accepted", comment: "keep me" });
   });
 
   it("a requirement comment and a scope note are logged too", () => {
-    const s = run(seeded(), { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-002", comment: "overall", scopeNote: "later" }] }, T2, { via: "html-review" });
+    const s = run(seeded(), { action: "review-requirements", via: "approved", decisions: [{ requirementId: "REQ-ORD-002", comment: "overall", scopeNote: "later" }] }, T2, U);
     expect(lastNote(s)).toContain("REQ-ORD-002 comment changed");
     expect(lastNote(s)).toContain("scope note changed");
     expect(s.requirements[0].comment).toBe("overall");
@@ -95,7 +99,7 @@ describe("a user's review remark is stored, dated per kind of change, and logged
 
 describe("fingerprint: review marks and comments are not content", () => {
   it("rejecting, commenting and accepting leave the requirements fingerprint (and an acceptance bound to it) as it was", () => {
-    let s = run(seeded(), { action: "accept-requirements", via: "html-review" }, T1, { via: "html-review" });
+    let s = run(seeded(), { action: "accept-requirements", via: "approved" }, T1, U);
     const before = requirementsFingerprint(s);
     s = decide(s, { status: "rejected", comment: "no" }, T2);
     expect(requirementsFingerprint(s)).toBe(before);
@@ -127,7 +131,7 @@ describe("a targeted edit keeps the reason the user gave", () => {
 
 describe("alpha.48 compatibility", () => {
   it("a mark stored by alpha.48 (status, comment, at, via only) still parses and is returned unchanged", () => {
-    const old = { status: "rejected", comment: "old", at: T1.toISOString(), via: "html-review" };
+    const old = { status: "rejected", comment: "old", at: T1.toISOString(), via: "approved" };
     expect(ReviewMarkSchema.parse(old)).toEqual(old);
     const s = decide(seeded(), { status: "rejected", comment: "old" }, T1);
     const roundTrip = WorkflowStateSchema.parse(JSON.parse(JSON.stringify(s)));
@@ -149,7 +153,7 @@ describe("two tabs of the same review: a stale save never overwrites fresher dat
   const plan = (state: WorkflowState, criteria: Array<Record<string, unknown>>) => submissionToCommands(state, page(state, criteria));
   const save = (state: WorkflowState, criteria: Array<Record<string, unknown>>) => {
     let s = state;
-    for (const command of plan(state, criteria).commands) s = applyWorkflowCommand(s, command, { now: T3, channel: { via: "html-review" } }).state;
+    for (const command of plan(state, criteria).commands) s = applyAsUser(s, command, { now: T3 }).state;
     return s;
   };
 
@@ -174,7 +178,7 @@ describe("two tabs of the same review: a stale save never overwrites fresher dat
 
   it("an edit of the wording is refused when the criterion was reworded after the page was opened", () => {
     const opened = seeded();
-    const afterA = applyWorkflowCommand(opened, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-002", acceptance: [{ id: AC1, statement: "A's wording" }] }] }, { now: T2, channel: { via: "html-review" } }).state;
+    const afterA = applyAsUser(opened, { action: "review-requirements", via: "approved", decisions: [{ requirementId: "REQ-ORD-002", acceptance: [{ id: AC1, statement: "A's wording" }] }] }, { now: T2 }).state;
     const b = plan(afterA, [{ id: AC1, revision: 1, statement: "B's wording" }]);
     expect(b.commands).toHaveLength(0);
     expect(b.conflicts.length).toBeGreaterThan(0);
@@ -207,5 +211,15 @@ describe("stale saves of requirement-level remarks and whitespace in stored text
     const same = applyWorkflowCommand(s, { action: "revise-acceptance", edits: [{ id: "REQ-ORD-003-AC-01", statement: "one " }] }, { now: T2 });
     expect(same.duplicate).toBe(true);
     expect(same.state).toBe(s);
+  });
+});
+
+describe("a remark sent from the review page is the user's to approve", () => {
+  it("a handed-over remark needs the dialog; a wording edit alone does not", async () => {
+    const { needsApprovalWhenHandedOver } = await import("./index.js");
+    expect(needsApprovalWhenHandedOver({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", acceptance: [{ id: AC2, comment: "too slow" }] }] })).toBe(true);
+    expect(needsApprovalWhenHandedOver({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", comment: "overall" }] })).toBe(true);
+    expect(needsApprovalWhenHandedOver({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", scopeNote: "later" }] })).toBe(true);
+    expect(needsApprovalWhenHandedOver({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", statement: "New wording", acceptance: [] }] })).toBe(false);
   });
 });

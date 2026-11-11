@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { applyWorkflowCommand, redactPersistent, WorkflowStateSchema, type WorkflowState } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-26T10:00:00.000Z");
-const ok = (s: WorkflowState | null, c: Record<string, unknown>) => applyWorkflowCommand(s, c, { now: NOW, channel: { via: "html-review" } }).state;
+const ok = (s: WorkflowState | null, c: Record<string, unknown>) => applyAsUser(s, c, { now: NOW }).state;
 
 /** What the Runtime writes to disk is redactPersistent(state); it must read back as the same state. */
 describe("persisted state survives the secret redaction", () => {

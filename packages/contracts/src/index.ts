@@ -540,7 +540,7 @@ export {
 export type { ApprovalOperation } from "./approval.js";
 export type { GitDescribed, GitOperationKind } from "./git-describe.js";
 export { HUMAN_ACT_KIND, humanActContent, humanActApprovalRequest } from "./human-acts.js";
-export { approvalFor, runApprovedForTest } from "./human-act-testing.js";
+export { applyAsUser, approvalFor, runApprovedForTest, userChannelFor } from "./human-act-testing.js";
 export type { HumanAct } from "./human-acts.js";
 export type { HumanActRequest } from "./workflow.js";
 export {
@@ -563,17 +563,23 @@ export {
   requireMutationLease,
   runWorkflowRecordWrite,
   runApprovedMutation,
+  USER_CHANNELS,
 } from "./user-approval.js";
 export type {
   ApprovalErrorCode,
   ApprovalAssurance,
   ApprovalChannelKind,
   ApprovalRequest,
+  AnswerEvidence,
   AskAnswer,
+  DecidedBy,
   DecisionLogEntry,
+  DecisionOutcome,
   UserApproval,
   UserApprovalChannel,
 } from "./user-approval.js";
+export { appendDecisionAmendments, auditDecisionJournal, effectiveDecisions, readDecisionJournal } from "./decision-journal.js";
+export type { AmendmentRule, DecisionAmendment, JournalFinding, JournalLine, ObservedRoundTrip } from "./decision-journal.js";
 
 // Planning: stages, scope and review, prototype, story plan, story editing, repositories, impact, next step.
 export * from "./planning-schemas.js";
@@ -637,5 +643,5 @@ export type { CriterionState, CriterionCoverage, CoverageCounts, CoverageResult,
 export { EvidenceSourceSchema } from "./story.js";
 export type { EvidenceSource } from "./story.js";
 
-export { ApprovalRecordSchema, ApprovalSubjectSchema, APPROVAL_TRUST, approvalSummary, describeApproval, trustOfApproval } from "./approval-audit.js";
+export { ApprovalRecordSchema, ApprovalSubjectSchema, APPROVAL_TRUST, approvalSummary, currentTrust, describeApproval, trustOfApproval } from "./approval-audit.js";
 export type { ApprovalRecord, ApprovalSubject } from "./approval-audit.js";

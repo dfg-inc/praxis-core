@@ -1539,11 +1539,13 @@ export function nextStep(state: WorkflowState): NextStep {
 // --- the dispatcher --------------------------------------------------------------------------------------------
 
 /**
- * Where a decision came from. The user's own click in a review page served by the Runtime ("html-review"), or a batch of
- * decisions the user approved in the client's dialog ("approved"). Nothing an agent puts in a command can stand in for
- * either: the command's own via field is replaced by what the Runtime verified.
+ * Where a decision came from: a batch of decisions the user approved in the client's dialog ("approved"). That is the only
+ * channel. A click in a review page served on loopback ("html-review") is no longer one: anything running as the user can
+ * operate such a page, and released 0.1.0-alpha.48 to alpha.49.1 recorded its Save as the user's decision. Saved states
+ * keep "html-review" on the decisions recorded that way; nothing new is recorded with it. Nothing an agent puts in a command
+ * stands in for the channel: the command's own via field is replaced by what the Runtime verified.
  */
-export type ReviewChannel = { via: "html-review" } | { via: "approved"; approval: UserApproval; batch: ReadonlyArray<Record<string, unknown>> };
+export type ReviewChannel = { via: "approved"; approval: UserApproval; batch: ReadonlyArray<Record<string, unknown>> };
 
 export const REVIEW_DECISION_ACTION = "review-decisions";
 
@@ -1595,9 +1597,8 @@ export function isUserDecision(command: { action: string } & Record<string, unkn
   }
 }
 
-function verifiedVia(command: PlanningCommand, channel: ReviewChannel | undefined): "html-review" | "approved" | null {
-  if (!channel) return null;
-  if (channel.via === "html-review") return "html-review";
+function verifiedVia(command: PlanningCommand, channel: ReviewChannel | undefined): "approved" | null {
+  if (!channel || channel.via !== "approved") return null;
   verifyUserApproval(channel.approval, { action: REVIEW_DECISION_ACTION, subject: reviewBatchSubject(channel.batch) });
   const mine = canonicalText(withoutVia(command as unknown as Record<string, unknown>));
   if (!channel.batch.some((item) => canonicalText(withoutVia(item)) === mine)) {
@@ -1606,8 +1607,8 @@ function verifiedVia(command: PlanningCommand, channel: ReviewChannel | undefine
   return "approved";
 }
 
-/** Whether the user's own channel stands behind this command (page click, or a batch they approved). null when there is none. */
-export function verifyUserChannel(command: Record<string, unknown>, channel: ReviewChannel | undefined): "html-review" | "approved" | null {
+/** Whether the user's own channel stands behind this command (a batch they approved in the dialog). null when there is none. */
+export function verifyUserChannel(command: Record<string, unknown>, channel: ReviewChannel | undefined): "approved" | null {
   return verifiedVia(command as unknown as PlanningCommand, channel);
 }
 
@@ -1647,7 +1648,7 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
   if (isUserDecision(rawCommand as never) && !verified) {
     throw new WorkflowError(
       "USER_DECISION_REQUIRED",
-      `${rawCommand.action} records that the user accepted or rejected something. It cannot come from the agent: the user decides in the HTML review (praxis_review_render), or approves the decisions in the client's dialog (praxis_review_apply).`,
+      `${rawCommand.action} records that the user accepted or rejected something. It cannot come from the agent: the user sends them from the HTML review (praxis_review_render, Save) and approves exactly those decisions in the client's dialog (praxis_review_apply).`,
     );
   }
   const command = ("via" in rawCommand ? { ...rawCommand, via: verified ?? "chat" } : rawCommand) as PlanningCommand;

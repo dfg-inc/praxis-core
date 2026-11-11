@@ -6,13 +6,19 @@ import type { UserApproval } from "./user-approval.js";
  * and how much that channel proves. The record is written by the contract at the moment the decision is verified, never from
  * anything in a command. It says what the CLIENT vouched for; no client identifies the person yet, so `actor` stays empty.
  *
- *   independent-human  the client's own approval dialog (the Runtime asked, the person answered in the client)
- *   review-page        the person's Save in a review page the Runtime served on loopback (a browser, no client vouching)
- *   host-attested      the host's own permission prompt or Trusted Client mode (the host, not a dialog, vouched)
+ *   client-response    the client's own approval dialog answered (the Runtime asked, the client answered, and nothing was
+ *                      configured to answer it). A client response, not independently authenticated: no channel on the
+ *                      person's computer can prove a person, rather than automation or an agent, answered
+ * Kept only so saved work items stay readable; nothing new is recorded with them:
+ *   independent-human  what 0.1.0-alpha.49.1 and earlier recorded for a dialog answer: the same class as client-response
+ *                      (the name overstated it)
+ *   review-page        a click in a page the Runtime served on loopback (review page Save, the approval page): released
+ *                      alpha.48 to alpha.49.1 accepted it as the person's decision; it is no longer a channel
+ *   host-attested      the host's own permission prompt or Trusted Client mode: removed
  *   test-only          the test harness (PRAXIS_TEST_APPROVALS): never a person, never production
  * States written before this record existed carry decisions with no record: they are reported as "unverified provenance".
  */
-export const APPROVAL_TRUST = ["independent-human", "review-page", "host-attested", "test-only"] as const;
+export const APPROVAL_TRUST = ["client-response", "independent-human", "review-page", "host-attested", "test-only"] as const;
 export const ApprovalSubjectSchema = z.object({
   type: z.enum(["story", "decision", "service", "requirement", "criterion", "review", "work-item"]),
   id: z.string(),
@@ -40,22 +46,29 @@ export type ApprovalSubject = z.infer<typeof ApprovalSubjectSchema>;
 
 export function trustOfApproval(approval: Pick<UserApproval, "channel" | "assurance">): ApprovalRecord["trust"] {
   if (approval.channel === "test") return "test-only";
-  if (approval.assurance === "client-ui") return "independent-human";
+  if (approval.assurance === "client-ui") return "client-response";
+  // not produced by a shipped Runtime any more; classified for what they are if a test or an old caller makes one
+  if (approval.assurance === "approval-page") return "review-page";
   return "host-attested";
 }
 
 /** What an approval is, in words that do not claim more than the channel proved. */
 export function describeApproval(approval: Pick<UserApproval, "channel" | "assurance"> | "review-page"): string {
-  if (approval === "review-page") return "saved from the review page (the person's click in the browser; the client did not vouch for it)";
+  if (approval === "review-page") return "saved from the review page (a click in a page served on this computer; not accepted as a decision since 0.1.0-alpha.49.2)";
   switch (trustOfApproval(approval)) {
-    case "independent-human":
-      return "approved in the client's approval dialog";
+    case "client-response":
+      return "approved in the client's approval dialog (a client response; not independently authenticated)";
+    case "review-page":
+      return "a click in a page served on this computer (not a decision of the user since 0.1.0-alpha.49.2)";
     case "host-attested":
-      return approval.channel === "trusted-client" ? "approved in Trusted Client mode (the host's own permission, no dialog was shown)" : "approved through the host's permission prompt (no Praxis dialog)";
+      return "a standing permission (removed in 0.1.0-alpha.49.2)";
     default:
       return "TEST harness approval (not a person)";
   }
 }
+
+/** How a saved record's trust reads today: the earlier name for a dialog answer is the same class as client-response. */
+export const currentTrust = (trust: ApprovalRecord["trust"]): ApprovalRecord["trust"] => (trust === "independent-human" ? "client-response" : trust);
 
 /** Counts by trust, and the decisions that exist without any record. */
 export function approvalSummary(state: { approvals?: ApprovalRecord[]; stories: Array<{ id: string; revision: number; confirmedBehavior: boolean; status: string }>; decisions: Array<{ id: string; confirmed?: boolean }>; services: Array<{ id: string; status: string }> }) {
@@ -66,6 +79,16 @@ export function approvalSummary(state: { approvals?: ApprovalRecord[]; stories: 
     ...state.decisions.filter((d) => d.confirmed && !has("confirm-decision", "decision", d.id)).map((d) => `decision ${d.id}`),
     ...state.services.filter((s) => (s.status === "approved" || s.status === "completed") && !has("approve-service", "service", s.id)).map((s) => `service ${s.id}`),
   ];
-  const by = (trust: ApprovalRecord["trust"]) => records.filter((r) => r.trust === trust).length;
-  return { total: records.length, independentHuman: by("independent-human"), reviewPage: by("review-page"), hostAttested: by("host-attested"), testOnly: by("test-only"), unverifiedProvenance: unverified };
+  const by = (trust: ApprovalRecord["trust"]) => records.filter((r) => currentTrust(r.trust) === trust).length;
+  return {
+    total: records.length,
+    clientResponse: by("client-response"),
+    // no record is independently authenticated; kept at 0 so readers of the earlier field are not misled by its old meaning
+    independentHuman: 0,
+    reviewPage: by("review-page"),
+    hostAttested: by("host-attested"),
+    testOnly: by("test-only"),
+    legacyIndependentHumanLabel: records.filter((r) => r.trust === "independent-human").length,
+    unverifiedProvenance: unverified,
+  };
 }

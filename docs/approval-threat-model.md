@@ -1,0 +1,111 @@
+# Approval threat model
+
+This page says what Praxis's approvals protect, against whom, and where the protection ends. The rule behind every line: **Praxis does not claim more than the architecture enforces, and where it cannot enforce a boundary, the protected action stays blocked.**
+
+## Five kinds of "yes", kept apart
+
+| Class | What it is | Taken for a protected action? | Recorded as |
+| --- | --- | --- | --- |
+| Agent assertion | `confirmation=YES`, approval-looking arguments, a command's `via` field, chat text, a file the agent wrote | **never** | `APPROVAL_CLIENT_UI_REQUIRED` (nothing ran) or `APPROVAL_WITHDRAWN` for `confirmation=NO` |
+| Convenience confirmation (a standing permission) | Trusted Client, host-permission and `planText`, an approval page Praxis served on this computer, review-page Save, any setting in a repository, the environment or the account's files | **never** (removed in 0.1.0-alpha.49.2) | earlier records keep their labels: `trusted-client`, `host-prompt`, `review-page` |
+| Automation | a client that answers its own dialog (the Desktop Code tab), a configured answer (a Claude Code `Elicitation` hook in any scope), the test harness | **never**: refused where Praxis can see it (G4, G5) | `auto-answered` / `unavailable`, `decidedBy: client` or `nobody` |
+| Client-origin response | the connected client's own dialog answered, at a person's pace, with nothing configured to answer it | **yes**: the only channel | `assurance: client-ui`, trust `client-response`, `decidedBy: client-dialog` or `terminal-prompt`, `personVerified: false` |
+| Independently authenticated human authorization | a decision bound to a person by an authority the agent's account cannot reach | **not available in this version** | (none) |
+
+A client-origin response is the strongest thing Praxis can obtain on the person's own computer. It is **not** proof that a person answered: Praxis knows that the client's dialog answered, not who or what answered it (see R1 and R3). Earlier versions labelled it `independent-human`; such records read as `client-response`, and `approvalSummary` reports `independentHuman: 0`.
+
+## What is protected
+
+1. **The person's decision, as far as the client's dialog carries it.** A protected action runs only after the connected client's dialog approved exactly that action, and only when nothing Praxis can see is configured to answer that dialog.
+2. **What runs is what was shown.** An approval binds one action and the digest of its exact content.
+3. **The record is honest.** The journal and every result say which channel answered and on what evidence. Nothing is attributed to the person without evidence, and nothing is called a verified person.
+
+## Who is involved
+
+| Party | Trusted for approvals? | Notes |
+| --- | --- | --- |
+| The person | yes: the only source of a decision | Praxis cannot tell who is at the keyboard |
+| The MCP client (Claude Code, Claude Desktop) | trusted to show its own dialog when it shows one, unless it is seen or configured to answer it by itself | the Desktop Code tab answers its dialog by itself; Claude Code runs `Elicitation` hooks from repository, user, plugin and managed settings |
+| The agent (the model) | **no** | may be mistaken, over-eager or prompt-injected; may write repository files and, with a shell, any file of the account |
+| The repository | **no** | its `.claude/settings.json` sets environment variables and hooks for the MCP servers Claude Code starts; its code may run during verification (T17) |
+| The account's own files (home folder, Desktop extension settings, `~/.praxis`) | **no** when the agent has a shell on that account | a shell writes them like the person does |
+| The Praxis Runtime | yes, as shipped | a local process running as the person; what a program running as the person can do to it is R2 |
+
+What the agent can reach, per client:
+
+| | Desktop Chat | Desktop Code tab | Cowork | Claude Code CLI |
+| --- | --- | --- | --- | --- |
+| Shell on the person's account | no, unless an extension gives one, or the agent can write repository code Praxis runs (T17) | **yes** | a shell in the Cowork sandbox, with your folders mounted (T17) | **yes** |
+| How a protected action is approved | **not at all**: no dialog, refused | **not at all**: the client answers its dialog by itself, refused | **not at all**: no dialog, refused | the CLI's own dialog |
+
+## What Praxis enforces
+
+| # | Guarantee | How |
+| --- | --- | --- |
+| G1 | The agent cannot approve through Praxis | An approval is created only from the client's protocol response (or the `praxis` CLI's terminal prompt). Tool arguments, command fields, files, chat text and the journal never become one. Approvals are objects only `user-approval.ts` issues (a `WeakSet`), so parsed JSON cannot pass for one. |
+| G2 | Nothing configurable weakens approval | No mode, page, file or environment variable stands in for the dialog. A shipped Runtime is built with `PRAXIS_BUNDLE_KIND="production"` as a compile-time constant, and every test switch (`PRAXIS_TEST_APPROVALS`, the test page, a lower answer time, the test browser, `PRAXIS_TEST_REVIEW_NO_BROWSER`) is inert in it. The doctor names any such variable it ignored. Settings that only make approval stricter (a longer minimum answer time) are taken from anywhere. |
+| G3 | An approval binds one action and its exact content | The subject digest is computed from the live state when the action runs. A changed plan has a different digest, so the old approval does not verify and the person is asked again. The preview fingerprint is checked before anyone is asked. A Quality fix binds the patch itself. |
+| G4 | Instant answers are not the person's | A dialog answer faster than 1000 ms is the client's own either way, `accept` included. It is journaled as `auto-answered`, and nothing runs. Timing works in this one direction only: it never shows that a person answered. |
+| G5 | A configured answer is not the person's, and a project does not configure the approval | Before asking, and again after the answer, the Runtime checks the client's configuration it can read, and **everything it cannot fully check refuses** (a file that cannot be read or parsed, one too large, a limit reached, a command line it cannot read). Settings are parsed as JSON, so escaped keys are the same keys; front matter is read with its escapes undone. What refuses: an `Elicitation` hook in any settings scope (the working folder, the repository and every folder above them; `HOME`, the account's real home, `CLAUDE_CONFIG_DIR`, `~/.claude.json`; managed settings), in any installed plugin (manifests parsed and their `hooks` paths followed, directory marketplaces included) or in an agent, skill or command definition; in the repository's own Claude Code settings, **anything but an allow-list of keys** that neither run anything nor configure the client or the Runtime (`permissions`, `model`, `outputStyle` and a few more): so any hook of any event, any `env` entry, a status line command, plugins and marketplaces, helper commands and keys Praxis does not know refuse, as do hooks in the repository's agent, skill and command definitions; a client started with any flag of the families that bring configuration (`--plugin…`, `--setting…`, `--managed…`, `--agents`, and an SDK host's `--await-initialize`) anywhere in the process chain above the Runtime, or whose environment or user settings `env` point it at configuration (`CLAUDE_CODE_PLUGIN_DIRS`, a managed or remote settings path, the switch to Cowork's settings and the like) or load code into it (`BUN_OPTIONS`, `NODE_OPTIONS` with `--require`, `DYLD_INSERT_LIBRARIES`, `LD_PRELOAD` and the like); the repository's keys that start its own `.mcp.json` servers without asking; a state home inside the repository. Linked folders are followed; front matter is read as YAML keys, not words. This is best effort against a configuration surface Praxis does not own (R6), not a proof. |
+| G6 | Fresh and used once | An answer is usable for 10 minutes from the moment it was given, for one execution of one action. |
+| G7 | Honest labels, auditable, append-only corrections | `decidedBy` names what answered; `personVerified` is always `false`. Every outcome is journaled outside the repository. Old misattributions are corrected by appended amendments that name the line and its hash, after the person approves them. No line is rewritten. |
+| G8 | No retrying a known failure | A client version seen at least twice declining its dialog faster than any person is not asked again: the action is refused at once. Forgetting that note only makes Praxis ask again, which gets the same automatic answer. |
+| G9 | Review decisions follow the same rule | A review page's Send for approval records nothing: it hands the decisions over. `praxis_review_apply` shows exactly those decisions (and any remark the page carries) in the client's dialog, and only its approval records them. A page served on loopback is never a channel. |
+
+## Threats, mitigations, and what remains
+
+| # | Threat | Mitigation | Residual risk |
+| --- | --- | --- | --- |
+| T1 | The agent says the user approved (`confirmation=YES`, approval-looking arguments, chat text, a forged `via`) | G1: refused; undeclared arguments are refused outright | none through Praxis |
+| T2 | An approval reused for different content, or replayed | G3, G6 | none known through Praxis |
+| T3 | The client answers its own dialog: the Desktop Code tab's `decline` in milliseconds | G4, G8: recorded as the client's; nothing runs; nobody is said to have rejected it | none: the action stays blocked in that client |
+| T6 | **A program running as the person** (an agent with a shell, repository code Praxis runs) | none that holds against a determined program | **real**: see R1 to R4. Praxis approval is a consent mechanism for what goes through Praxis, plus refusal of every configuration-based self-approval Praxis can see. It is not a security boundary against a program running as the person. |
+| T12 | A misleading request (content the agent wrote: a commit message, a story, a patch) | the dialog shows the action Praxis computed from the live state, never an agent's summary; anything too long to show in full is refused | a commit is identified by file names and content hashes, not shown as a diff; the person has to read what is shown |
+| T14 | Earlier journal entries that blame the person | G7 amendments; v2 entries carry `decidedBy` and evidence | entries without timing are listed `unverified` and left as written |
+| T15 | Someone edits the journal or the observations file | the journal is never read back as an authorization; an amendment is applied only when its rule allows exactly that correction; the observations file can only make Praxis refuse sooner or ask again | the journal is a record for an honest system, not tamper-proof storage (R2) |
+| T17 | Repository code that Praxis runs (Quality checks, `.praxis/quality/adapter.mjs`) | unsandboxed by design (`docs/workflow-stages.md`) | that code has a shell's power (T6) |
+| T18 | **A repository sets the approval mode.** Claude Code applies the `env` block of a repository's `.claude/settings.json` to the MCP servers it starts; `PRAXIS_APPROVAL_MODE=trusted-client` (or `host-permission` with the plan text the agent obtained) let a protected action run on the agent's `confirmation=YES` | fixed in 0.1.0-alpha.49.2: both modes are removed and the variable is read by nothing | none through settings. **Affects released 0.1.0-alpha.48 to alpha.49.1.** |
+| T18b | **The account's settings set it**: the Desktop extension's *Approval mode* setting (released 0.1.0-alpha.48 to alpha.49.1), or the `~/.praxis/approval-settings.json` file of the unreleased Desktop candidate. A shell on the account writes both | fixed in 0.1.0-alpha.49.2: the setting and the file are gone; no account file is read for approval | none through settings. Affects released 0.1.0-alpha.48 to alpha.49.1 (the extension setting). |
+| T18c | **A repository makes the review page's secret link readable**: a test variable made the Runtime write the link into the repository, where the agent could read it and post the user's review decisions | fixed in 0.1.0-alpha.49.2: the shipped Runtime never writes the link anywhere, and a page's Save records nothing anyway (G9) | none. Affects released 0.1.0-alpha.48 to alpha.49.1. |
+| T19 | **A page served on this computer is operated by the agent** (a browser it controls, its own "browser" program, a shell with the link) | the approval page and review-page Save are no longer channels in a shipped Runtime (G9) | none through pages. Affected only the unreleased Desktop candidate. |
+| T20 | **A configured answer to the dialog**: an `Elicitation` hook in repository, user, plugin or managed settings, a plugin, an agent, skill or command definition, or the client's command line answers the dialog; a hook that waits a second defeats the answer-time rule | G5. The third review's bypasses of the first version of this check (an escaped key, a file over its size limit, a lossy command line, plugin manifests naming other files, a walk that stopped silently) are refused now | a source G5 does not know (R6). **Affects released 0.1.0-alpha.48 to alpha.49.1** in Claude Code. |
+| T21 | Test switches in the environment (test approvals, a lower answer time, the test page) | G2 | none in a shipped Runtime |
+| T22 | **The repository chooses what the Runtime runs or where it records**: its settings' `env` sets `PATH` (the `git`, `node` and `open` Praxis starts, so the files and hashes a Git dialog shows), `PRAXIS_QUALITY_*`, `PRAXIS_BROWSER_EXECUTABLE`, or `PRAXIS_STATE_HOME` (the journal inside the repository) | G5: protected actions are refused while the repository's settings set such variables, or while the state home is inside the repository | previews and checks still run with that environment: the repository's configuration already runs as you (R5) |
+| T23 | A web page reaches the Quality service on loopback (a form post, DNS rebinding) | the service refuses any request with a browser `Origin` or `Sec-Fetch-Site` header, or a `Host` other than loopback | a local program (R2) |
+
+### What remains: the boundary this version does not provide
+
+| # | Path | Why Praxis cannot close it on the person's computer |
+| --- | --- | --- |
+| R1 | **A program that controls the client process**: the agent starts the Runtime under an MCP client of its own and answers the dialog itself, at a person's pace; or it starts the genuine client with code loaded into it through the client's environment (`BUN_OPTIONS`, `NODE_OPTIONS` with `--require`, `DYLD_INSERT_LIBRARIES` and the like), a modified binary, or configuration Praxis does not read | the client is a program running as the person; Praxis cannot verify its integrity from outside it. It refuses the injection variables and launch flags it knows when it inherits them (G5), not the ones it does not |
+| R2 | The agent edits Praxis's state (work item files, the journal) or its code, or skips Praxis and runs `git` or Jira itself | Praxis reads its state from files the agent can write, and the agent can use the same credentials |
+| R3 | The agent drives the genuine CLI in a pseudo-terminal, or injects keystrokes into the person's terminal with accessibility rights | the dialog is genuine; the input is not the person's |
+| R4 | Repository code Praxis runs (T17) | it runs as the person |
+| R5 | **The repository by itself**: once Claude Code trusts a folder it runs that repository's configuration as the person (hooks of any event, `.mcp.json` servers, a status line command, its `env` block), and a person who runs a repository's scripts (a make target, a direnv `.envrc`) runs them as themselves, so a repository can do R1 to R3 without any agent action (for example a cloned repository, or one an agent wrote with a file tool) | Praxis refuses protected actions while the repository's settings hold anything but the allow-list (G5), but code that already ran as the person can remove what Praxis would see, and `.mcp.json` servers are not refused. Claude Code's workspace trust prompt is the boundary: trust only repositories you have checked |
+| R6 | **A configuration source Praxis does not know or cannot read.** Two independent reviews each found sources the check missed in the client as it is today (the second: the environment form of `--plugin-dir`, hooks inline in a marketplace manifest), so more may exist now, not only in later versions: remote or organisation-managed settings the client fetches itself, a client built on the Agent SDK with hooks in code, a source not yet found | G5 reads what Claude Code documents and its installed files; checking a client's configuration from outside it cannot be complete. The robust answer is an approval channel configuration cannot answer (the end of this page) |
+
+Each needs an authority outside the account, or (R5) not opening an unchecked repository in a trusting client: see the end of this page. R3 needs no special rights: a program can type into the CLI's dialog, or into the `praxis` CLI's prompt, through a pseudo-terminal (`script(1)`). Until one exists, Praxis states these limits instead of claiming a guarantee, and in every client where it has no dialog to ask, protected actions, the acts only a person may perform included, are refused.
+
+## Comparing the channels honestly
+
+| Channel | Taken in 0.1.0-alpha.49.2? | The agent cannot approve through Praxis | Holds against a configured answer | Holds against a program running as the person | Label |
+| --- | --- | --- | --- | --- | --- |
+| The client's own dialog (Claude Code CLI) | **yes** | yes | yes where Praxis can see the configuration, best effort (G5, R6) | no (R1, R3, R5) | `client-ui`, trust `client-response` |
+| The Desktop Code tab's dialog | no: it answers by itself | | | | `auto-answered` |
+| Approval page, review-page Save | **no** | | | no | earlier records: `approval-page`, `review-page` |
+| Host permission prompt (`planText`) | **no** | no | | no | earlier records: `host-prompt` |
+| Trusted Client | **no** | no: a standing permission | | no | earlier records: `trusted-client` |
+
+## Review
+
+Two independent reviews of the earlier Desktop candidate found, among others, that repository settings could switch on Trusted Client (T18). The fix of that candidate moved the setting into the account's home and the Desktop extension settings; a third review of the trust boundary rejected that, because an agent with a shell writes those files too. It also showed that a repository's `Elicitation` hook answers the dialog (T20), that the review page's link could be made readable (T18c), and that a page served on loopback cannot carry a decision against such an agent (T19). A third review challenged that result and showed the first version of G5 failing open: it scanned raw file text, so an escaped event key, a settings file over its size limit, a lossy reading of the client's command line, a plugin manifest naming its hook file and a plugin walk that stopped silently each let a configured answer through, reproduced with the real Claude Code CLI. G5 was rebuilt to parse what it reads and to refuse whatever it cannot fully check, to refuse any hook or Runtime env in the repository's own configuration, and to read the whole process chain up to the client. The same review found the missing residuals R5 and R6, the environment the repository chooses (T22) and the Quality service open to web pages (T23). A third round found a fourth flag of the plugin family (`--plugin-dir-no-mcp`) and the user settings' `env` block; flags are now refused by family, not by name. A fourth round found code loaded into the genuine client through its environment (`BUN_OPTIONS`: the Claude Code binary runs on Bun) and a variable that switches the client to Cowork's settings and plugins; both are refused now. Every round found something new in how the client can be launched or configured: the check is a list Praxis keeps, against a surface it does not own, and a program that controls how the client starts is R1. Not refused, because Claude Code 2.1.314 did not load hooks from them: plugins stored as archives and `permissions.additionalDirectories` (R6). Its re-review confirmed those fixes and found the environment form of `--plugin-dir`, hooks inline in a marketplace manifest, linked folders the walk skipped, a process walk that stopped at a wrapper, environment names missing from a list (one loaded the repository's code into the Runtime), and ordinary configurations wrongly refused. The repository rule became an allow-list, the client's environment is checked, the whole process chain is read, and lenient settings (comments) and fixtures inside plugins no longer refuse. 0.1.0-alpha.49.2 is the result: one channel, every configurable weakening removed, configured answers and project configuration refused where Praxis can see them, and the limits above stated.
+
+## What would be stronger (not implemented here)
+
+Independently authenticated human authorization needs an authority the agent's account cannot reach. A design that would provide it:
+
+- An **approval authority outside the account**: a different OS account, a hosted service, or a phone app paired once by the person. It shows the action and its digest, and signs `(action, subject digest, nonce, expiry)` with a key the agent's account never holds.
+- A **user-verifying authenticator** at that authority (a passkey with user verification: Touch ID, Windows Hello, a hardware key), so a decision needs the person's presence, not a click.
+- A **Runtime that verifies the signature** before it runs the action, with the verifying key pinned at install time by the person, outside the reach of the agent's account.
+
+This closes R1 and R3 for actions taken through Praxis. R2 (bypassing Praxis with the same credentials) needs the credentials themselves held by that authority (for example a Git host that requires the signed approval). Praxis removed a native approval service earlier; bringing such an authority back is a product decision, and until then protected actions stay blocked wherever the client's dialog is not available.

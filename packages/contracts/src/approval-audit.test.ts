@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { applyWorkflowCommand, approvalFor, humanActRequest, approvalSummary, describeApproval, storyContentFingerprint, WorkflowStateSchema, type WorkflowState } from "./index.js";
+import { applyWorkflowCommand, approvalFor, humanActRequest, approvalSummary, describeApproval, storyContentFingerprint, trustOfApproval, WorkflowStateSchema, type WorkflowState } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-28T10:00:00.000Z");
 
@@ -45,11 +46,23 @@ describe("S11: a decision that needed a person is recorded with its channel and 
     expect(noted.approvals).toEqual([]);
   });
 
-  it("a review decision saved from the page is recorded as review-page, not as a client dialog", () => {
+  it("a click in the review page is not a channel: nothing is accepted or recorded from it", () => {
     const s = base();
-    const accepted = applyWorkflowCommand(s, { action: "accept-requirements", via: "html-review" }, { now: NOW, channel: { via: "html-review" } }).state;
-    expect(accepted.approvals.at(-1)).toMatchObject({ action: "accept-requirements", channel: "html-review", assurance: "review-page", trust: "review-page" });
-    expect(describeApproval("review-page")).toContain("the client did not vouch");
+    expect(() => applyWorkflowCommand(s, { action: "accept-requirements", via: "html-review" }, { now: NOW, channel: { via: "html-review" } as never })).toThrow(/records that the user/);
+    const accepted = applyAsUser(s, { action: "accept-requirements", via: "html-review" }, { now: NOW }).state;
+    expect(accepted.phaseAcceptance.requirements_review?.via).toBe("approved");
+    expect(accepted.approvals.at(-1)).toMatchObject({ action: "review-decisions", channel: "test", trust: "test-only" });
+    expect(describeApproval("review-page")).toMatch(/not accepted as a decision/);
+  });
+
+  it("a dialog answer is a client response, never independent human authorization, and earlier labels read the same way", () => {
+    expect(trustOfApproval({ channel: "client-elicitation", assurance: "client-ui" })).toBe("client-response");
+    expect(describeApproval({ channel: "client-elicitation", assurance: "client-ui" })).toMatch(/client response; not independently authenticated/);
+    expect(describeApproval({ channel: "client-elicitation", assurance: "client-ui" })).not.toMatch(/person|human/i);
+    const legacy = { at: NOW.toISOString(), action: "confirm-story", subjects: [{ type: "story", id: "US-AUD-001" }], summary: "s", subjectDigest: "sha256:x", channel: "client-elicitation", assurance: "client-ui", trust: "independent-human", workItemRevision: 1 };
+    const parsed = WorkflowStateSchema.parse({ ...JSON.parse(JSON.stringify(withStory(base()))), approvals: [{ id: "APR-0001", ...legacy }] });
+    const summary = approvalSummary(parsed);
+    expect(summary).toMatchObject({ clientResponse: 1, independentHuman: 0, legacyIndependentHumanLabel: 1 });
   });
 
   it("a state written before the record existed still parses, and its confirmed items are reported as unverified provenance", () => {

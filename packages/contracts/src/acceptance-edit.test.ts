@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { approvalFor } from "./human-act-testing.js";
 import { applyWorkflowCommand, commandCatalog, humanActRequest, parseWorkflowCommand, reviewProgress, type WorkflowState } from "./index.js";
+import { userChannelFor } from "./human-act-testing.js";
 
 const T1 = new Date("2026-10-26T10:00:00.000Z");
 const T2 = new Date("2026-10-26T11:00:00.000Z");
@@ -9,9 +10,11 @@ beforeAll(() => {
   process.env.PRAXIS_TEST_APPROVALS = "1";
 });
 /** Applies a command as the Runtime would: a rewording carries the approval the user gave in the dialog (omit it with `approve: false`). */
-const run = (state: WorkflowState | null, command: Record<string, unknown>, now = T3, channel?: { via: "html-review" }, approve = true) => {
+/** The user decided this in the client's dialog (the test harness stands in for the dialog). */
+const U = "user" as const;
+const run = (state: WorkflowState | null, command: Record<string, unknown>, now = T3, asUser?: typeof U, approve = true) => {
   const userApproval = approve && state && command.action === "revise-acceptance" ? (() => { try { return approvalFor(state, command).userApproval; } catch { return undefined; } })() : undefined;
-  return applyWorkflowCommand(state, command, { now, ...(channel ? { channel } : {}), ...(userApproval ? { userApproval } : {}) });
+  return applyWorkflowCommand(state, command, { now, ...(asUser ? { channel: userChannelFor(command) } : {}), ...(userApproval ? { userApproval } : {}) });
 };
 const AC6 = "REQ-ORD-002-AC-06";
 const AC5 = "REQ-ORD-005-AC-05";
@@ -31,7 +34,7 @@ function reviewed(): WorkflowState {
       return id === rejected ? { id, status: "rejected", comment: "Не нравится решение" } : { id, status: "accepted" };
     }),
   });
-  return run(s, { action: "review-requirements", via: "html-review", decisions: [marks("REQ-ORD-002", 6, AC6), marks("REQ-ORD-005", 5, AC5)] }, T2, { via: "html-review" }).state;
+  return run(s, { action: "review-requirements", via: "approved", decisions: [marks("REQ-ORD-002", 6, AC6), marks("REQ-ORD-005", 5, AC5)] }, T2, U).state;
 }
 const criteria = (s: WorkflowState) => s.requirements.flatMap((r) => r.acceptanceCriteria);
 const ac = (s: WorkflowState, id: string) => criteria(s).find((c) => c.id === id)!;

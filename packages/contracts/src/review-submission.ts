@@ -178,7 +178,14 @@ export function workStateStamp(state: WorkflowState): string {
  */
 const SHOWN_AND_APPROVED = new Set(["update-story", "exclude-story", "restore-story", "remove-contract", "set-mode", "waive-coverage"]);
 export function needsApprovalWhenHandedOver(command: { action: string } & Record<string, unknown>): boolean {
-  return isUserDecision(command) || SHOWN_AND_APPROVED.has(command.action);
+  return isUserDecision(command) || SHOWN_AND_APPROVED.has(command.action) || carriesRemark(command);
+}
+
+/** A remark written in the page is recorded as the user's (only the user changes it afterwards), so it is the user's to approve. */
+function carriesRemark(value: unknown, depth = 0): boolean {
+  if (depth > 6 || !value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some((item) => carriesRemark(item, depth + 1));
+  return Object.entries(value as Record<string, unknown>).some(([key, item]) => ((key === "comment" || key === "scopeNote") && typeof item === "string") || carriesRemark(item, depth + 1));
 }
 
 export function fingerprintFor(state: WorkflowState, view: ReviewView): string {
@@ -224,7 +231,8 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
   if (submission.workItemId !== state.workItem.id) {
     return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state.workItem.id}` }], stale: true, summary: [], details: [], affectsStories: false };
   }
-  const via = "html-review" as const;
+  // the decisions are recorded only once the client's dialog approved this exact batch (praxis_review_apply)
+  const via = "approved" as const;
   /** True when a command in the plan changes, stales, excludes or restores a story (shown in the details, and gates a handed-over file). */
   let affectsStories = false;
   const editedPlan = new Map<string, Record<string, unknown>>();

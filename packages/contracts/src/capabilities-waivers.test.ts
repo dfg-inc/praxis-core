@@ -2,15 +2,16 @@
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 import { analyzeStoryCoverage, applyWorkflowCommand, capabilityEvidence, maskLiterals, renderReview, ReviewSubmissionSchema, statedOperations, submissionToCommands, type WorkflowState } from "./index.js";
+import { applyAsUser } from "./human-act-testing.js";
 
 const NOW = new Date("2026-10-28T10:00:00.000Z");
-const apply = (s: WorkflowState | null, c: Record<string, unknown>) => applyWorkflowCommand(s, c, { now: NOW, channel: { via: "html-review" } });
+const apply = (s: WorkflowState | null, c: Record<string, unknown>) => applyAsUser(s, c, { now: NOW });
 const ok = (s: WorkflowState, c: Record<string, unknown>) => apply(s, c).state;
 
 function item(statement: string, criteria: string[]): WorkflowState {
   let s = apply(null, { action: "open", projectId: "orders", title: "Orders", request: "Orders", mode: "guided" }).state;
   s = ok(s, { action: "add-requirement", id: "REQ-ORD-001", statement, acceptanceCriteria: criteria });
-  return ok(s, { action: "accept-requirements", via: "html-review" });
+  return ok(s, { action: "accept-requirements", via: "approved" });
 }
 const plan = (caps: string[][]) => caps.map((capabilities, i) => ({ id: `US-ORD-00${i + 1}`, title: `Story ${i + 1}`, implementation: "implementation", userGets: "something", requirementIds: ["REQ-ORD-001"], capabilities }));
 
@@ -104,7 +105,7 @@ describe("S2/S3: waivers in the review page, with the agreement in the same subm
     for (const command of planned.commands) next = ok(next, command);
     expect(next.storyPlan!.status).toBe("agreed");
     expect(next.waivers).toHaveLength(3);
-    expect(next.waivers[0]).toMatchObject({ kind: "create", requirementId: "REQ-ORD-001", decidedVia: "html-review" });
+    expect(next.waivers[0]).toMatchObject({ kind: "create", requirementId: "REQ-ORD-001", decidedVia: "approved" });
     expect(next.waivers[0]!.gap).toContain('the statement says "create"');
   });
 

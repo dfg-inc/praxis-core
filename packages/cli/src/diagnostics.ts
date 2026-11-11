@@ -29,8 +29,12 @@ export type ProviderReport = {
 
 /** How the user's approval is obtained for protected actions in this session. */
 export type ApprovalReport = {
-  /** client-ui: asked in the MCP client's own dialog. no-dialog: the client cannot ask, so protected actions are not executed. */
-  mode: "client-ui" | "no-dialog" | "trusted-client";
+  /**
+   * client-ui: asked in the MCP client's own dialog (a client response, not independently authenticated). no-dialog: there is
+   * no way to ask, so protected actions are not executed. No other mode exists: nothing a repository, the environment or the
+   * account's files can set makes approval weaker (docs/approval-threat-model.md).
+   */
+  mode: "client-ui" | "no-dialog";
   /** Stated plainly, including what does not work. */
   note: string;
   /** Where decisions are journaled (outside the repository). */
@@ -166,7 +170,7 @@ export function doctorNextSteps(input: {
   }
   if (input.approval.mode === "no-dialog") {
     steps.push(
-      "This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them. Some hosts (Claude Desktop) have their own tool-permission prompt instead of a dialog: praxis_doctor approval.client shows what yours declared, and the optional host-permission setting (docs/user-approval.md) uses that prompt with the exact plan in the tool arguments; it is weaker, because Praxis cannot see whether the prompt was shown.",
+      "This MCP client cannot show an approval dialog (no elicitation support, or it answers without showing one, as the Claude Desktop Code tab does). Read-only tools, previews and reviews work, but protected actions (Git, Jira, accepting requirements or stories, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says, and no page or setting, counts as your approval. Apply them from the Claude Code CLI in a terminal, which shows the dialog.",
     );
   }
   if (input.dotenvRefused?.length) {

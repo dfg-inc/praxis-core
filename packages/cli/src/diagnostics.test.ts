@@ -105,7 +105,8 @@ describe("doctorNextSteps", () => {
     const steps = doctorNextSteps({ ...base, approval: approvalDiagnostics({}) }).join("\n");
     expect(steps).toMatch(/cannot show an approval dialog/);
     expect(steps).toMatch(/NOT executed/);
-    expect(steps).toMatch(/nothing the agent says counts as your approval/);
+    expect(steps).toMatch(/nothing the agent says, and no page or setting, counts as your approval/);
+    expect(steps).not.toMatch(/host-permission|Trusted Client|approval page/i);
   });
 
   it("gives actionable steps for a missing .project and a not-started Quality service", () => {
