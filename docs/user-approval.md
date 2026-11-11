@@ -49,7 +49,11 @@ An action that did not run says why, and Praxis never attributes a decision to y
 
 **An answer faster than a person can read the request is not a person's answer.** Response time is used only in this direction: it can show that an answer was automatic, and it never shows that a person answered (a script that waits a second looks the same as you). The Claude Desktop Code tab declares the dialog and then answers `decline` by itself, 9 to 34 ms after it is asked, with nothing on screen ([anthropics/claude-code#89858](https://github.com/anthropics/claude-code/issues/89858)). Any dialog answer sooner than 1000 ms is the client's own, `accept` as well as `decline`: Praxis records `auto-answered` and runs nothing. A client version seen twice declining faster than any person (under 250 ms) is not asked again: the action is refused at once. A new client version is tried once more, in case it was fixed.
 
-**A configured answer is not a person's answer either.** Claude Code runs `Elicitation` hooks from repository, user, plugin and managed settings and from agent definitions, and such a hook can answer the dialog. Praxis looks for one before it asks and again after the answer; if it finds one, it does not take the answer and names the file. A hook in a place Praxis cannot read is not detected (threat model, R1).
+**A configured answer is not a person's answer either.** Claude Code runs `Elicitation` hooks from repository, user, plugin and managed settings, from agent, skill and command definitions, and from flags it was started with, and such a hook can answer the dialog. Praxis checks that configuration before it asks and again after the answer, parses what it reads, and refuses whatever it cannot fully check. If it finds a hook, it does not take the answer and names the file.
+
+**A project does not configure its own approval.** While the repository's own Claude Code configuration has any hook (of any event) or sets environment for the Runtime or the programs it runs (`PATH`, `NODE_*`, `GIT_*`, `PRAXIS_*` and the like), or the Praxis state home is inside the repository, protected actions are refused and the doctor names the file. Move such hooks to your user settings if you want them, and keep `PRAXIS_*` settings out of the repository.
+
+This is best effort: a configuration source Praxis does not know about is not seen (threat model, R6), and a repository whose configuration Claude Code already ran as you could have removed what Praxis would see (R5). Claude Code's workspace trust prompt is the boundary for that: trust only repositories you have checked.
 
 ## Which clients can ask (evidence, not assumption)
 
@@ -58,7 +62,7 @@ An action that did not run says why, and Praxis never attributes a decision to y
 | Client | Protected actions | Evidence |
 | --- | --- | --- |
 | Claude Code CLI (terminal) | approved in its dialog | interactive runs (keys sent to the real CLI in a pseudo-terminal; earlier, a run with a person) |
-| Claude Code CLI with an `Elicitation` hook | refused (the hook is named) | verified with Claude Code 2.1.314 |
+| Claude Code CLI with an `Elicitation` hook, project hooks or Runtime env in the repository's settings, or started with `--settings` / `--plugin-dir` / `--plugin-url` / `--agents` | refused (the file or flag is named) | verified with Claude Code 2.1.314 |
 | Claude Desktop, Code tab | refused: its dialog answers by itself | live 2026-11-10 (Desktop 4.4212.0, embedded Claude Code 2.1.309) |
 | Claude Desktop, Chat | refused: no dialog declared | Desktop's extension host declares no elicitation |
 | Claude Desktop, Cowork | refused: no dialog | see [desktop-approvals.md](desktop-approvals.md) |
@@ -72,7 +76,7 @@ There is **no fallback**: not to the agent's word, not to a page, not to a setti
 - The protected tool answers `APPROVAL_CLIENT_UI_REQUIRED`: the action was **not executed**, **nobody rejected it**, the message says why, and `data.preview` carries the preview so the agent can show it to you.
 - Read-only tools, previews, reviews, the doctor and the agent's own workflow records keep working.
 - `confirmation=NO` is the one thing the agent can still send: it withdraws the request (`APPROVAL_WITHDRAWN`) and runs nothing.
-- The `praxis` CLI has its own dialog: in an interactive terminal it prints the action and asks you to type `approve`. With no terminal it refuses.
+- The `praxis` CLI has its own dialog: in an interactive terminal it prints the action and asks you to type `approve`. With no terminal it refuses. A program can type into a terminal through a pseudo-terminal (`script(1)`), so this prompt, like the client's dialog, is a client response, not proof of a person (threat model, R3).
 
 This holds for every protected action, including the acts only you may perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion, recording review decisions, opening a classic work item, correcting the journal). In Claude Desktop, apply them from the Claude Code CLI ([desktop-approvals.md](desktop-approvals.md)).
 

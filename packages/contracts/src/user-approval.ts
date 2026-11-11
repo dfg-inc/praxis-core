@@ -226,9 +226,10 @@ export function approvalModeReport(): { mode: "client-ui" | "no-dialog"; note: s
 // --- decision log --------------------------------------------------------------------------------------------------
 
 /**
- * What happened to one request, in the journal. Only approved / rejected / dismissed came from the user's own channel, and
- * then decidedBy names that channel (client-dialog, approval-page, terminal-prompt) and personVerified is false: Praxis
- * knows which channel answered, never that a person (rather than automation driving that channel) did. Entries written
+ * What happened to one request, in the journal. Only approved / rejected / dismissed came from a channel that answered, and
+ * then decidedBy names that channel (client-dialog, terminal-prompt; approval-page in earlier versions and the test source)
+ * and personVerified is false: Praxis knows which channel answered, never that a person (rather than automation driving that
+ * channel) did. Entries written
  * before journal v2 have no decidedBy; see decision-journal.ts for how they are read and amended.
  *   pending        the approval page is open, nobody decided yet
  *   timed-out      a dialog was shown and nobody answered in time
@@ -240,14 +241,15 @@ export function approvalModeReport(): { mode: "client-ui" | "no-dialog"; note: s
  */
 export type DecisionOutcome = "approved" | "rejected" | "dismissed" | "pending" | "timed-out" | "expired" | "withdrawn" | "auto-answered" | "unavailable" | "refused";
 /**
- * What produced the outcome. The user's own channels: client-dialog (the client's approval dialog), approval-page (a click
- * in the Praxis approval page), terminal-prompt (the CLI). Otherwise: the client by itself, the agent, Praxis, a standing
- * permission (trusted-client, host-prompt), or nobody. None of these names a verified person.
+ * What produced the outcome. A client response: client-dialog (the client's approval dialog) or terminal-prompt (the CLI).
+ * Otherwise: the client by itself, the agent, Praxis, nobody, or what earlier versions and the test source recorded
+ * (approval-page: a click in a page served on loopback; trusted-client, host-prompt: standing permissions). None of these
+ * names a verified person, and a page on loopback is never the user's channel.
  */
 export type DecidedBy = "client-dialog" | "approval-page" | "terminal-prompt" | "client" | "agent" | "praxis" | "trusted-client" | "host-prompt" | "nobody";
 
-/** The user's own channels: an answer from one of these is the user's decision as far as Praxis can know, never a proven person. */
-export const USER_CHANNELS: ReadonlySet<DecidedBy> = new Set(["client-dialog", "approval-page", "terminal-prompt"]);
+/** The channels whose answer is a client response: the user's decision as far as Praxis can know, never a proven person. */
+export const USER_CHANNELS: ReadonlySet<DecidedBy> = new Set(["client-dialog", "terminal-prompt"]);
 
 export type DecisionLogEntry = {
   at: string;
@@ -357,7 +359,7 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
     // labelled with the channel that answered, not the one that was asked (a wrapper may hand a request on)
     const answeredBy = answer.channel ?? channel.kind;
     const decidedBy = decidedByFor(answeredBy);
-    const said = { channel: answeredBy, decidedBy, ...(USER_CHANNELS.has(decidedBy) ? { personVerified: false as const } : {}), ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}) };
+    const said = { channel: answeredBy, decidedBy, personVerified: false as const, ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}) };
     if (answer.answer === "approve") {
       // an approval given earlier (a click in the page) ages from that click, not from when it is used
       const clicked = answer.evidence?.decidedAt ? new Date(answer.evidence.decidedAt) : undefined;
@@ -372,7 +374,7 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
     if (dismissed) {
       throw new ApprovalError("APPROVAL_DISMISSED", `${request.summary} was not run: ${whereAsked(answeredBy)} was closed without a decision. Nothing was changed. This is not a rejection; ask the user whether to try again.`, details);
     }
-    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected in ${whereAsked(answeredBy)}, the user's own channel. Nothing was changed.`, details);
+    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected in ${whereAsked(answeredBy)}. Nothing was changed.`, details);
   }
   const automatic = answer?.automatic;
   const why = automatic

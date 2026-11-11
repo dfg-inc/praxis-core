@@ -53,7 +53,9 @@ The Code tab declares that it can show approval dialogs. When Praxis asks, it an
 
 ## A dialog that is answered automatically
 
-Claude Code can answer an MCP dialog by itself through an `Elicitation` hook in its settings, including a repository's own `.claude/settings.json`. Praxis does not take such an answer. Before it asks, and again after the answer, it looks for that hook in the repository's and the folders above it, your user settings, installed plugins, managed settings, agent and skill definitions, and a settings file the client was started with. If it finds one, nothing protected runs, and `praxis_doctor` names the file. Remove the hook (or work in a repository without it) to approve in the CLI.
+Claude Code can answer an MCP dialog by itself through an `Elicitation` hook, including one in a repository's own `.claude/settings.json`. Praxis does not take such an answer. Before it asks, and again after the answer, it checks the repository and the folders above it, your user settings, installed plugins, managed settings, agent, skill and command definitions, and the flags the client was started with; anything it cannot fully check refuses. A repository whose own Claude Code settings run any hook, or set environment for the Runtime (`PATH`, `PRAXIS_*` and the like), is refused too: a project does not configure its own approval. `praxis_doctor` names the file. This is best effort (see the threat model, R5 and R6): trust only repositories you have checked when Claude Code asks.
+
+Claude Desktop starts its Code tab with settings on the command line, so the Code tab is refused before its dialog is even tried.
 
 ## Correcting earlier records
 
