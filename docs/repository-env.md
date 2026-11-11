@@ -31,7 +31,8 @@ Connection settings come only from the operator's real environment, never from a
 | GitLab base URL | `PRAXIS_GITLAB_BASE_URL` | `gitlab_base_url` | Operator environment |
 | Git provider choice | `PRAXIS_GIT_PROVIDER` | none | Repository `.env` (allowlisted) or operator environment |
 | Work-package time box | `PRAXIS_WORK_PACKAGE_MAX_HOURS` | none | Repository `.env` (allowlisted) or operator environment |
-| Quality service settings, approval modes, test switches, `PRAXIS_STATE_HOME`, `PRAXIS_SKIP_DOTENV` | `PRAXIS_QUALITY_*`, `PRAXIS_APPROVAL_*`, ... | none | Operator environment only |
+| Quality service settings, test switches, `PRAXIS_STATE_HOME`, `PRAXIS_SKIP_DOTENV` | `PRAXIS_QUALITY_*`, `PRAXIS_TEST_*`, ... | none | Operator environment only |
+| Approval variables (`PRAXIS_APPROVAL_*`) | none can weaken approval | none | Ignored from every source since 0.1.0-alpha.49.2, except a longer `PRAXIS_APPROVAL_MIN_ANSWER_MS` |
 
 "Operator environment" means one of:
 

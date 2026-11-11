@@ -63,7 +63,7 @@ This is best effort: a configuration source Praxis does not know about is not se
 | --- | --- | --- |
 | Claude Code CLI (terminal) | approved in its dialog | interactive runs (keys sent to the real CLI in a pseudo-terminal; earlier, a run with a person) |
 | Claude Code CLI with an `Elicitation` hook, project hooks or Runtime env in the repository's settings, or started with `--settings` / `--plugin-dir` / `--plugin-url` / `--agents` | refused (the file or flag is named) | verified with Claude Code 2.1.314 |
-| Claude Desktop, Code tab | refused: its dialog answers by itself | live 2026-11-10 (Desktop 4.4212.0, embedded Claude Code 2.1.309) |
+| Claude Desktop, Code tab | refused before asking: Desktop starts it with `--settings` and `--await-initialize` (the doctor names them); its dialog also answers by itself | live 2026-11-10 and 2026-11-11 (Desktop 4.4212.0, embedded Claude Code 2.1.309) |
 | Claude Desktop, Chat | refused: no dialog declared | Desktop's extension host declares no elicitation |
 | Claude Desktop, Cowork | refused: no dialog | see [desktop-approvals.md](desktop-approvals.md) |
 | Official MCP SDK 2.0 client | approved in its dialog | `accept:approval-ux` |
@@ -108,7 +108,7 @@ With `amend=true` and `confirmation=YES`, it appends one correction per entry af
 
 ## What this is not
 
-- It is **not** a security boundary against a program running as you. An agent with a shell can run a client of its own and answer the dialog, drive the CLI, edit repository files and Praxis's state, run Git itself, call Jira with your credentials, or drive a browser on your account. User approval is a consent and workflow mechanism: when the agent uses Praxis to change something, the client's dialog was asked and said yes, nothing configurable answered for you where Praxis can see it, and Praxis tells the truth about how it knows. The [threat model](approval-threat-model.md) goes through each case, including what it does not close (R1 to R4).
+- It is **not** a security boundary against a program running as you. An agent with a shell can run a client of its own and answer the dialog, drive the CLI, edit repository files and Praxis's state, run Git itself, call Jira with your credentials, or drive a browser on your account. User approval is a consent and workflow mechanism: when the agent uses Praxis to change something, the client's dialog was asked and said yes, nothing configurable answered for you where Praxis can see it, and Praxis tells the truth about how it knows. The [threat model](approval-threat-model.md) goes through each case, including what it does not close (R1 to R6).
 - It does not verify who is at the keyboard (no biometric, no hardware key): whatever answers the client's dialog is "the dialog's answer".
 - Git hooks, CI and the repository host are not changed by it.
 

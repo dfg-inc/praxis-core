@@ -69,7 +69,7 @@ Ask Claude to run `praxis_approval_journal` for the repository. It lists those e
 
 | Client | Protected actions | Reviews, previews, read-only tools |
 | --- | --- | --- |
-| Claude Desktop 4.4212.0, Code tab (embedded Claude Code 2.1.309) | not executed: the dialog answers itself (`auto-answered`) | work |
+| Claude Desktop 4.4212.0, Code tab (embedded Claude Code 2.1.309) | not executed: Desktop starts it with `--settings` and `--await-initialize`, so it is refused before asking (`unavailable`, the flags named); its dialog also answers by itself | work |
 | Claude Desktop, Chat | not executed: no dialog (`unavailable`) | work |
 | Claude Desktop, Cowork | not executed: no dialog | work (the review page opens only when the Runtime runs on your computer, not inside the Cowork sandbox) |
 | Claude Code CLI 2.1.314 | approved in its dialog | work |
