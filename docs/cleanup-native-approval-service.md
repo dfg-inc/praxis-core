@@ -100,7 +100,7 @@ Nothing should be printed.
 
 ## 8. Settings that no longer exist
 
-- The Claude Desktop extension settings *Security mode*, *Approval broker shared folder*, *Approval trust anchor*, *Approval ledger path* and *Operator approval page URL* are gone. The only approval setting is *Require approval in the client dialog* (optional). Extension values you entered earlier are ignored.
+- The Claude Desktop extension settings *Security mode*, *Approval broker shared folder*, *Approval trust anchor*, *Approval ledger path* and *Operator approval page URL* are gone. As of 0.1.0-alpha.49.2 the extension has no approval settings at all: approval happens only in the client's own dialog. Extension values you entered earlier are ignored.
 - Environment variables `PRAXIS_SECURITY_MODE`, `PRAXIS_BROKER_*`, `PRAXIS_APPROVAL_SERVICE_ENDPOINT`, `PRAXIS_APPROVAL_PUBLIC_KEY*`, `PRAXIS_APPROVAL_LEDGER`, `PRAXIS_OPERATOR_URL` are no longer read. Remove them from your shell profile and from any `.env` you wrote.
 - Any browser bookmark for `http://localhost:8780` (the old operator page) can go; nothing listens there now.
 - The repository folder `.praxis/approvals/` can hold files from the old stored-approval flow (for example `harness-*.json`) or from the first version of the decision log (`decisions.jsonl`); they authorize nothing and can be deleted. The decision journal now lives outside the repository, in `~/.praxis/decisions/`.

@@ -1,88 +1,107 @@
 # Approval threat model
 
-This page says what Praxis's approvals protect, against whom, and where the protection ends. It covers the client's approval dialog, the Praxis approval page (new for Claude Desktop), and the opt-in modes. The rule behind every line: **Praxis does not claim more than the architecture enforces.**
+This page says what Praxis's approvals protect, against whom, and where the protection ends. The rule behind every line: **Praxis does not claim more than the architecture enforces, and where it cannot enforce a boundary, the protected action stays blocked.**
+
+## Five kinds of "yes", kept apart
+
+| Class | What it is | Taken for a protected action? | Recorded as |
+| --- | --- | --- | --- |
+| Agent assertion | `confirmation=YES`, approval-looking arguments, a command's `via` field, chat text, a file the agent wrote | **never** | `APPROVAL_CLIENT_UI_REQUIRED` (nothing ran) or `APPROVAL_WITHDRAWN` for `confirmation=NO` |
+| Convenience confirmation (a standing permission) | Trusted Client, host-permission and `planText`, an approval page Praxis served on this computer, review-page Save, any setting in a repository, the environment or the account's files | **never** (removed in 0.1.0-alpha.49.2) | earlier records keep their labels: `trusted-client`, `host-prompt`, `review-page` |
+| Automation | a client that answers its own dialog (the Desktop Code tab), a configured answer (a Claude Code `Elicitation` hook in any scope), the test harness | **never**: refused where Praxis can see it (G4, G5) | `auto-answered` / `unavailable`, `decidedBy: client` or `nobody` |
+| Client-origin response | the connected client's own dialog answered, at a person's pace, with nothing configured to answer it | **yes**: the only channel | `assurance: client-ui`, trust `client-response`, `decidedBy: client-dialog` or `terminal-prompt`, `personVerified: false` |
+| Independently authenticated human authorization | a decision bound to a person by an authority the agent's account cannot reach | **not available in this version** | (none) |
+
+A client-origin response is the strongest thing Praxis can obtain on the person's own computer. It is **not** proof that a person answered: Praxis knows that the client's dialog answered, not who or what answered it (see R1 and R3). Earlier versions labelled it `independent-human`; such records read as `client-response`, and `approvalSummary` reports `independentHuman: 0`.
 
 ## What is protected
 
-1. **The person's decision.** A protected action runs only after the person approved exactly that action.
+1. **The person's decision, as far as the client's dialog carries it.** A protected action runs only after the connected client's dialog approved exactly that action, and only when nothing Praxis can see is configured to answer that dialog.
 2. **What runs is what was shown.** An approval binds one action and the digest of its exact content.
-3. **The record is honest.** The journal and every result say who decided, through which channel, and on what evidence. Nothing is attributed to the person without evidence.
+3. **The record is honest.** The journal and every result say which channel answered and on what evidence. Nothing is attributed to the person without evidence, and nothing is called a verified person.
 
 ## Who is involved
 
 | Party | Trusted for approvals? | Notes |
 | --- | --- | --- |
 | The person | yes: the only source of a decision | Praxis cannot tell who is at the keyboard |
-| The MCP client (Claude Desktop, Claude Code) | trusted to show its dialog truthfully, when it shows one | the Desktop Code tab answers its dialog by itself, so its answers are not taken as the person's |
-| The agent (the model) | **no** | may be mistaken, over-eager or prompt-injected; its tools differ per client (below) |
-| The Praxis Runtime | yes | a local process running as the person |
-| The browser that shows the approval page | trusted to show the page to the person | see T5: it may be operated by an automation tool |
-| Other local programs and web pages | no | |
+| The MCP client (Claude Code, Claude Desktop) | trusted to show its own dialog when it shows one, unless it is seen or configured to answer it by itself | the Desktop Code tab answers its dialog by itself; Claude Code runs `Elicitation` hooks from repository, user, plugin and managed settings |
+| The agent (the model) | **no** | may be mistaken, over-eager or prompt-injected; may write repository files and, with a shell, any file of the account |
+| The repository | **no** | its `.claude/settings.json` sets environment variables and hooks for the MCP servers Claude Code starts; its code may run during verification (T17) |
+| The account's own files (home folder, Desktop extension settings, `~/.praxis`) | **no** when the agent has a shell on that account | a shell writes them like the person does |
+| The Praxis Runtime | yes, as shipped | a local process running as the person; what a program running as the person can do to it is R2 |
 
 What the agent can reach, per client:
 
 | | Desktop Chat | Desktop Code tab | Cowork | Claude Code CLI |
 | --- | --- | --- | --- | --- |
-| Shell on the person's account | no, unless an installed extension gives one, **or the agent can write repository files that Praxis runs** (see T17) | **yes** | a shell in the Cowork sandbox; your folders are mounted into it, so it can write repository files Praxis runs (T17) | **yes** |
-| Browser automation | only with Claude in Chrome connected (it operates the person's real Chrome) | built-in browser pane (a separate browser), and Claude in Chrome if connected | Claude in Chrome if connected | only if configured |
-| How Praxis asks | approval page | approval page (its dialog answers by itself) | approval page if the Runtime runs on the person's computer; otherwise nothing runs | the CLI's approval dialog |
+| Shell on the person's account | no, unless an extension gives one, or the agent can write repository code Praxis runs (T17) | **yes** | a shell in the Cowork sandbox, with your folders mounted (T17) | **yes** |
+| How a protected action is approved | **not at all**: no dialog, refused | **not at all**: the client answers its dialog by itself, refused | **not at all**: no dialog, refused | the CLI's own dialog |
 
 ## What Praxis enforces
 
 | # | Guarantee | How |
 | --- | --- | --- |
-| G1 | The agent cannot approve through Praxis's approval interface | An approval is created only from a channel's answer: the client's protocol response, a click in the page, or the CLI's terminal prompt. Tool arguments, command fields, files and chat text never become one. Approvals are objects only `user-approval.ts` issues (a `WeakSet`), so parsed JSON cannot pass for one. This does not cover code that Praxis runs on the agent's behalf (T17). |
-| G2 | An approval binds one action and its exact content | The subject digest is computed from the live state when the action runs. A changed plan has a different digest: the old approval does not verify and the person is asked again. The preview fingerprint is checked before anyone is asked. A page decision also binds the digest of the exact text the person read; different text for the same subject is another request. A Quality fix binds the patch itself (not only its file names), and the person is shown the whole patch. |
-| G3 | Fresh and used once | An answer is usable for 10 minutes from the moment the person gave it (for the page: from the click). A page decision is taken once: when several calls wait on the same page, the first takes the click and every other call asks anew. Two tabs posting at once record one decision. An undecided page request expires after 10 minutes and is journaled as `expired`. |
-| G4 | Instant answers are not the person's | A dialog answer that arrives faster than `PRAXIS_APPROVAL_MIN_ANSWER_MS` (1000 ms) is not taken as the person's either way, `accept` included. It is journaled as `auto-answered`, and the page asks again with clear evidence, so a person who really pressed Reject that fast only rejects once more. An answer for a dialog this Runtime never asked for is ignored. |
-| G5 | Honest labels | `assurance` is `client-ui`, `approval-page`, `host-prompt` or `trusted-client`. `decidedBy` names what answered: `client-dialog`, `approval-page`, `terminal-prompt` (the user's own channels, always with `personVerified: false`), or `client`, `agent`, `praxis`, `trusted-client`, `host-prompt`, `nobody`. No label claims a verified person. `confirmation=NO` is the agent's withdrawal, never the person's rejection. |
-| G6 | Auditable, append-only corrections | Every request outcome is journaled outside the repository. Old misattributions are corrected by appended amendments that name the line and its hash. The person approves the amendments. No line is rewritten. |
-| G7 | No retrying a known failure | A client version seen at least twice declining its dialog faster than any person (under 250 ms) is sent to the page directly. One fast answer never changes how a client is asked. At most 6 new approval pages open per minute, and an open request for the same action and text is reused. |
+| G1 | The agent cannot approve through Praxis | An approval is created only from the client's protocol response (or the `praxis` CLI's terminal prompt). Tool arguments, command fields, files, chat text and the journal never become one. Approvals are objects only `user-approval.ts` issues (a `WeakSet`), so parsed JSON cannot pass for one. |
+| G2 | Nothing configurable weakens approval | No mode, page, file or environment variable stands in for the dialog. A shipped Runtime is built with `PRAXIS_BUNDLE_KIND="production"` as a compile-time constant, and every test switch (`PRAXIS_TEST_APPROVALS`, the test page, a lower answer time, the test browser, `PRAXIS_TEST_REVIEW_NO_BROWSER`) is inert in it. The doctor names any such variable it ignored. Settings that only make approval stricter (a longer minimum answer time) are taken from anywhere. |
+| G3 | An approval binds one action and its exact content | The subject digest is computed from the live state when the action runs. A changed plan has a different digest, so the old approval does not verify and the person is asked again. The preview fingerprint is checked before anyone is asked. A Quality fix binds the patch itself. |
+| G4 | Instant answers are not the person's | A dialog answer faster than 1000 ms is the client's own either way, `accept` included. It is journaled as `auto-answered`, and nothing runs. Timing works in this one direction only: it never shows that a person answered. |
+| G5 | A configured answer is not the person's | Before asking, and again after the answer, the Runtime looks for an `Elicitation` (or `ElicitationResult`) hook in every scope it can read: `.claude/settings.json` and `settings.local.json` of the working folder, the repository and every folder above them; the user's settings (the account's real home and `CLAUDE_CONFIG_DIR`); installed plugins' hook files; managed settings; agent and skill definitions; and a `--settings` file on the client's command line. If it finds one, the dialog is not asked (or its answer is discarded) and the action is refused, naming the file. Over-detection refuses; it never approves. |
+| G6 | Fresh and used once | An answer is usable for 10 minutes from the moment it was given, for one execution of one action. |
+| G7 | Honest labels, auditable, append-only corrections | `decidedBy` names what answered; `personVerified` is always `false`. Every outcome is journaled outside the repository. Old misattributions are corrected by appended amendments that name the line and its hash, after the person approves them. No line is rewritten. |
+| G8 | No retrying a known failure | A client version seen at least twice declining its dialog faster than any person is not asked again: the action is refused at once. Forgetting that note only makes Praxis ask again, which gets the same automatic answer. |
+| G9 | Review decisions follow the same rule | A review page's Send for approval records nothing: it hands the decisions over. `praxis_review_apply` shows exactly those decisions (and any remark the page carries) in the client's dialog, and only its approval records them. A page served on loopback is never a channel. |
 
 ## Threats, mitigations, and what remains
 
 | # | Threat | Mitigation | Residual risk |
 | --- | --- | --- | --- |
-| T1 | The agent says the user approved (`confirmation=YES`, approval-looking arguments, chat text) | G1: refused; undeclared arguments are refused outright | none through Praxis |
-| T2 | An approval reused for different content, or replayed | G2, G3 | none known through Praxis. The binding is only as complete as each action's subject: every protected action's subject is built from the live state, and the Quality fix subject now includes the patch. |
-| T3 | The client answers its own dialog: the Desktop Code tab's `decline` in milliseconds, or an `Elicitation` hook that auto-accepts | G4: recorded as `auto-answered` by the client; the page asks instead | a client that fakes a slow answer (a hook that sleeps, a malicious host) is believed: Praxis has to trust the client to show its own dialog |
-| T4 | The agent opens or clicks the approval page through Praxis | The secret link goes from the Runtime to the browser through a short-lived file only the person's account can read. Results carry only the request id. The skills forbid opening it. | none through the approval tools; but see T17: Praxis runs repository code, which can read that file |
-| T5 | **An agent operates the browser that shows the page** (Claude in Chrome controls the person's real Chrome: it can see the tab and click Approve) | Praxis cannot detect browser automation. Set *Browser for approval pages* (`PRAXIS_APPROVAL_BROWSER`) to a browser no agent controls (for example Safari when Claude in Chrome runs in Chrome). The page strips its secret from the address bar on load. The skills forbid it. | **real**: with automation connected to that browser, the page is consent only for an agent that follows its instructions. The Desktop Code tab's built-in browser pane is a separate browser and cannot reach the page without the link. |
-| T6 | **An agent with a shell on the person's account** (Desktop Code tab, CLI) | none that holds against a determined agent | **real, and not specific to the page**: such an agent can read the short-lived link file or the browser's history, request the page with a forged `Origin` header (that check stops browsers, not `curl`), edit Praxis's state or code, or skip Praxis and run `git` or Jira itself. The client dialog does not stop this either. Praxis approval is a consent and workflow mechanism, not a security boundary against a program running as the person. |
-| T7 | Another web page or local program posts a decision (CSRF, DNS rebinding) | `Host` must be `127.0.0.1:<port>` or `localhost:<port>`; `Origin` must be the page's own; a per-load token in a custom header (which forces a CORS preflight the server never grants); JSON only; a separate port from the review pages | a local program with the token: see T6 |
-| T8 | Clickjacking: the page framed under something else | `frame-ancestors 'none'`, `X-Frame-Options: DENY` | none known |
-| T9 | Plan text that injects markup or script into the page | everything is escaped server-side; a CSP with a per-page script nonce; no inline handlers; no images or remote resources | none known |
-| T10 | The secret leaks (now with tombstones: a used request stays until it expires, so a late browser sees "already approved there"; once the link has been used twice only Reject is taken; no decision is taken within 3 s of the first load, in time for the person's own browser load to reveal a racing opener; the decision must carry the binding cookie) | not in the process list (a file, not an argument), not in tool results or diagnostics; `Referrer-Policy: no-referrer`; stripped from the address bar after load. **The link is single-use**: its first load binds the page to that browser with an HttpOnly, `SameSite=Strict` cookie for that request (a reload uses it), so a copy from the browser's history or the hand-over file opens nothing later; the file is deleted after 15 s | an agent with a shell that reads the hand-over file and loads the link **before** the browser does holds the page. That race is not prevented, but it is detected: the person's tab says the page was "already opened somewhere else", the agent's result reports `linkUsedAgain`, and the decision's evidence says so (see T6) |
-| T11 | An agent floods the person with pages (a retry loop, or calls in parallel) | G7: 6 new pages per minute; an open request for the same action is reused, including by calls that start at the same moment | the person may still be asked more than they like; the skills tell the agent not to loop |
-| T12 | A misleading request (the content was written by the agent: a commit message, a story's text, a patch) | the page and the dialog show the action Praxis computed from the live state, never a summary written by the agent: the story or decision text, the patch of a Quality fix, the files and their hashes for a commit; anything too long to show in full is refused | a commit is identified by file names and content hashes, not shown as a diff; the person has to read what is shown |
-| T13 | A look-alike page made by the agent | clicking it changes nothing in Praxis (it has no token); results come only from Praxis | the person may be misled about whether something ran; Praxis's result says what really happened |
-| T14 | Earlier journal entries that blame the person | G6 amendments; v2 entries carry `decidedBy` and evidence | entries without timing are listed `unverified` and left as written |
-| T15 | Someone edits the journal or the observations file | the journal is never read back as an authorization, and a reader applies an amendment only when its rule allows exactly that correction (a rejection can never be amended into an approval); the observations file can only switch a client between its dialog and the page | editing the observations file can move a client from its dialog to the page, which is the weaker channel when an agent controls the browser (T5); the journal is a record for an honest system, not tamper-proof storage (see T6) |
-| T16 | Cowork runs the agent in a sandbox | a Runtime inside the sandbox cannot open a page in the person's browser: it answers `APPROVAL_CLIENT_UI_REQUIRED` (nothing runs, nobody rejected) | see [desktop-approvals.md](desktop-approvals.md) for which Cowork setup works |
+| T1 | The agent says the user approved (`confirmation=YES`, approval-looking arguments, chat text, a forged `via`) | G1: refused; undeclared arguments are refused outright | none through Praxis |
+| T2 | An approval reused for different content, or replayed | G3, G6 | none known through Praxis |
+| T3 | The client answers its own dialog: the Desktop Code tab's `decline` in milliseconds | G4, G8: recorded as the client's; nothing runs; nobody is said to have rejected it | none: the action stays blocked in that client |
+| T6 | **A program running as the person** (an agent with a shell, repository code Praxis runs) | none that holds against a determined program | **real**: see R1 to R4. Praxis approval is a consent mechanism for what goes through Praxis, plus refusal of every configuration-based self-approval Praxis can see. It is not a security boundary against a program running as the person. |
+| T12 | A misleading request (content the agent wrote: a commit message, a story, a patch) | the dialog shows the action Praxis computed from the live state, never an agent's summary; anything too long to show in full is refused | a commit is identified by file names and content hashes, not shown as a diff; the person has to read what is shown |
+| T14 | Earlier journal entries that blame the person | G7 amendments; v2 entries carry `decidedBy` and evidence | entries without timing are listed `unverified` and left as written |
+| T15 | Someone edits the journal or the observations file | the journal is never read back as an authorization; an amendment is applied only when its rule allows exactly that correction; the observations file can only make Praxis refuse sooner or ask again | the journal is a record for an honest system, not tamper-proof storage (R2) |
+| T17 | Repository code that Praxis runs (Quality checks, `.praxis/quality/adapter.mjs`) | unsandboxed by design (`docs/workflow-stages.md`) | that code has a shell's power (T6) |
+| T18 | **A repository sets the approval mode.** Claude Code applies the `env` block of a repository's `.claude/settings.json` to the MCP servers it starts; `PRAXIS_APPROVAL_MODE=trusted-client` (or `host-permission` with the plan text the agent obtained) let a protected action run on the agent's `confirmation=YES` | fixed in 0.1.0-alpha.49.2: both modes are removed and the variable is read by nothing | none through settings. **Affects released 0.1.0-alpha.48 to alpha.49.1.** |
+| T18b | **The account's settings set it**: the Desktop extension's *Approval mode* setting (released 0.1.0-alpha.48 to alpha.49.1), or the `~/.praxis/approval-settings.json` file of the unreleased Desktop candidate. A shell on the account writes both | fixed in 0.1.0-alpha.49.2: the setting and the file are gone; no account file is read for approval | none through settings. Affects released 0.1.0-alpha.48 to alpha.49.1 (the extension setting). |
+| T18c | **A repository makes the review page's secret link readable**: a test variable made the Runtime write the link into the repository, where the agent could read it and post the user's review decisions | fixed in 0.1.0-alpha.49.2: the shipped Runtime never writes the link anywhere, and a page's Save records nothing anyway (G9) | none. Affects released 0.1.0-alpha.48 to alpha.49.1. |
+| T19 | **A page served on this computer is operated by the agent** (a browser it controls, its own "browser" program, a shell with the link) | the approval page and review-page Save are no longer channels in a shipped Runtime (G9) | none through pages. Affected only the unreleased Desktop candidate. |
+| T20 | **A configured answer to the dialog**: an `Elicitation` hook in repository, user, plugin or managed settings, or an agent definition, answers the dialog; a hook that waits a second defeats the answer-time rule | G5 | a hook Praxis cannot see (a scope it does not read, a client launched by the agent): R1. **Affects released 0.1.0-alpha.48 to alpha.49.1** in Claude Code. |
+| T21 | Test switches in the environment (test approvals, a lower answer time, the test page) | G2 | none in a shipped Runtime |
 
-| T17 | **Repository code that Praxis runs on the agent's behalf.** Quality checks and `.praxis/quality/adapter.mjs` run as the person, unsandboxed, during verification and some previews (`docs/workflow-stages.md`: "not a security boundary"). An agent that can only write files (Cowork's mounted folders, Chat with a file-writing extension) can write such code and have Praxis run it | the earliest-decision time and the single-use link below narrow the page race; nothing else in this design | **real, found by the second independent review and reproduced**: that code has a shell's power (T6). It can read the hand-over file, load the page first, and post Approve. In Chat and Cowork, "no shell" therefore holds only while the agent cannot write repository files that Praxis runs. Closing it needs project code run in an OS sandbox that cannot reach the page or the hand-over file, or user verification on the page (below). |
-| T18 | **A repository sets the approval settings** through Claude Code: Claude Code applies the `env` block of a repository's `.claude/settings.json` to the MCP servers it starts. A repository could have switched on Trusted Client (`PRAXIS_APPROVAL_MODE=trusted-client`), sent the page to its own program (`PRAXIS_APPROVAL_BROWSER`), or set the answer-time rule to 0 | verified with Claude Code 2.1.314, then fixed: for a Runtime started by Claude Code (the Code tab, Cowork, the CLI), settings that weaken approval come only from `~/.praxis/approval-settings.json` in the account's real home (not `$HOME`; owned by the person; not group- or world-writable). Environment values of those names are ignored, and the doctor lists them. The Desktop extension takes them from its own settings, which a repository cannot reach. Settings that make approval stricter are taken from anywhere | **this affects the released alpha.48 to alpha.49.1**: a repository the person trusts could switch on Trusted Client there. `PRAXIS_STATE_HOME` can still be moved by a repository; it moves the journal (an audit record, never an authorization) |
+### What remains: the boundary this version does not provide
+
+| # | Path | Why Praxis cannot close it on the person's computer |
+| --- | --- | --- |
+| R1 | The agent starts the Runtime under an MCP client of its own and answers the dialog itself, at a person's pace | the client is a program running as the person; Praxis cannot tell it from the person's client |
+| R2 | The agent edits Praxis's state (work item files, the journal) or its code, or skips Praxis and runs `git` or Jira itself | Praxis reads its state from files the agent can write, and the agent can use the same credentials |
+| R3 | The agent drives the genuine CLI in a pseudo-terminal, or injects keystrokes into the person's terminal with accessibility rights | the dialog is genuine; the input is not the person's |
+| R4 | Repository code Praxis runs (T17) | it runs as the person |
+
+Each needs an authority outside the account: see the end of this page. Until one exists, Praxis states these limits instead of claiming a guarantee, and in every client where it has no dialog to ask, protected actions, the acts only a person may perform included, are refused.
 
 ## Comparing the channels honestly
 
-| Channel | The agent cannot approve through Praxis | Holds against browser automation in the shown browser | Holds against a shell on the account | Label |
-| --- | --- | --- | --- | --- |
-| CLI approval dialog | yes | yes (it is not in a browser) | no | `client-ui` |
-| Praxis approval page | yes | **no** (see T5) | no | `approval-page` |
-| Review page Save | yes | no | no | trust `review-page` |
-| Host permission prompt (opt-in) | no, if "always allow" is set | not applicable | no | `host-prompt` |
-| Trusted Client (opt-in) | no: a standing permission | not applicable | no | `trusted-client` |
-
-In the work item's approval records, an approval-page approval has the same trust class as a review-page Save (`review-page`): a person's click in a page the Runtime served on loopback and opened itself. It is never counted as `independent-human`, which is reserved for a client's own dialog.
+| Channel | Taken in 0.1.0-alpha.49.2? | The agent cannot approve through Praxis | Holds against a configured answer | Holds against a program running as the person | Label |
+| --- | --- | --- | --- | --- | --- |
+| The client's own dialog (Claude Code CLI) | **yes** | yes | yes where Praxis can see the configuration (G5) | no (R1, R3) | `client-ui`, trust `client-response` |
+| The Desktop Code tab's dialog | no: it answers by itself | | | | `auto-answered` |
+| Approval page, review-page Save | **no** | | | no | earlier records: `approval-page`, `review-page` |
+| Host permission prompt (`planText`) | **no** | no | | no | earlier records: `host-prompt` |
+| Trusted Client | **no** | no: a standing permission | | no | earlier records: `trusted-client` |
 
 ## Review
 
-An independent review of this design found that one click could approve two parallel calls, and that a page decision could be reused for a different text or a different Quality fix patch with the same subject. It also found that a mixed call could mislabel a host-prompt approval as a page approval, and that one fast answer from a person could change how their client is asked from then on. All of these are fixed and covered by `desktop-approval.test.ts`; G2, G3, G4 and G7 above describe the behaviour as fixed.
-
-A second independent review re-checked those fixes (all fixed or, for the amendment reader, completed afterwards) and found T17 and T18, the earlier claim that Chat cannot reach the page, and smaller issues: a browser name that cannot be honoured outside macOS, an amendment applied to the wrong kind of entry, a page decision with no minimum time, two Jira writes approved by fingerprint only, and wording that still named a person. All are fixed or stated here.
+Two independent reviews of the earlier Desktop candidate found, among others, that repository settings could switch on Trusted Client (T18). The fix of that candidate moved the setting into the account's home and the Desktop extension settings; a third review of the trust boundary rejected that, because an agent with a shell writes those files too. It also showed that a repository's `Elicitation` hook answers the dialog (T20), that the review page's link could be made readable (T18c), and that a page served on loopback cannot carry a decision against such an agent (T19). 0.1.0-alpha.49.2 is the result: one channel, every configurable weakening removed, configured answers refused, and the limits above stated.
 
 ## What would be stronger (not implemented here)
 
-- **User verification on the page** (WebAuthn with a platform authenticator: Touch ID, Windows Hello). Browser automation cannot pass it, which closes T5. It does not close T6, because an agent with a shell can still change Praxis or bypass it. Praxis removed a WebAuthn-based approval service earlier, and adding this back is a product decision.
-- **Project code in an OS sandbox** (Seatbelt on macOS, namespaces on Linux) with no access to the hand-over file or loopback, killed with its whole process tree. This closes T17 for the page.
-- **A separate trust domain**: a different OS account, or a hosted approval service the agent's account cannot reach. Only this closes T6.
+Independently authenticated human authorization needs an authority the agent's account cannot reach. A design that would provide it:
+
+- An **approval authority outside the account**: a different OS account, a hosted service, or a phone app paired once by the person. It shows the action and its digest, and signs `(action, subject digest, nonce, expiry)` with a key the agent's account never holds.
+- A **user-verifying authenticator** at that authority (a passkey with user verification: Touch ID, Windows Hello, a hardware key), so a decision needs the person's presence, not a click.
+- A **Runtime that verifies the signature** before it runs the action, with the verifying key pinned at install time by the person, outside the reach of the agent's account.
+
+This closes R1 and R3 for actions taken through Praxis. R2 (bypassing Praxis with the same credentials) needs the credentials themselves held by that authority (for example a Git host that requires the signed approval). Praxis removed a native approval service earlier; bringing such an authority back is a product decision, and until then protected actions stay blocked wherever the client's dialog is not available.
