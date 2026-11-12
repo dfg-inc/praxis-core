@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { assertSecurityStateOutside, decisionLogPath, repositoryIdentity, type ApprovalLabels, type DecidedBy, type DecisionLogEntry, type DecisionOutcome } from "./user-approval.js";
+import { adoptLegacyDecisionLog, assertSecurityStateOutside, decisionLogPath, repositoryIdentity, type ApprovalLabels, type DecidedBy, type DecisionLogEntry, type DecisionOutcome } from "./user-approval.js";
 
 /**
  * Reading the decision journal back, and correcting it without rewriting it.
@@ -59,6 +59,7 @@ const lineHash = (raw: string): string => `sha256:${createHash("sha256").update(
 
 export function readDecisionJournal(repo: string): JournalLine[] {
   assertSecurityStateOutside(repo);
+  adoptLegacyDecisionLog(repo);
   const path = decisionLogPath(repo);
   if (!existsSync(path)) return [];
   const raws = readFileSync(path, "utf8").split("\n");

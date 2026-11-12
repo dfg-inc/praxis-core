@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, chmodSync, constants as fsConstants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { DecisionKind } from "./authority.js";
@@ -449,6 +449,22 @@ export function decisionLogPath(repo: string): string {
 }
 
 /**
+ * Journals written before 0.1.0-alpha.49.3 were named after the path as the caller spelled it (sha256(path.resolve(repo)),
+ * 16 hex characters). The first time a repository's journal is used, such a file in the same home is copied to the
+ * repository's journal and the old file is left as it was, so the review (praxis_approval_journal) and its amendments still
+ * see the earlier entries. The journal is a log, never evidence: where an old line came from decides nothing.
+ */
+export function adoptLegacyDecisionLog(repo: string): void {
+  const path = decisionLogPath(repo);
+  if (existsSync(path)) return;
+  const legacy = join(dirname(path), `${createHash("sha256").update(resolve(repo)).digest("hex").slice(0, 16)}.jsonl`);
+  if (!existsSync(legacy)) return;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  copyFileSync(legacy, path, fsConstants.COPYFILE_EXCL);
+  chmodSync(path, 0o600);
+}
+
+/**
  * Best effort: the journal is for the user's later review; a write failure never changes a decision. Never written inside
  * the repository being operated on (obtainUserApproval refuses the action before that).
  */
@@ -456,6 +472,7 @@ export function logDecision(repo: string | undefined, entry: DecisionLogEntry & 
   if (!repo) return;
   try {
     if (securityStateInsideRepository(repo)) return;
+    adoptLegacyDecisionLog(repo);
     const path = decisionLogPath(repo);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     appendFileSync(path, `${JSON.stringify({ v: 2, ...entry, personVerified: false, independentlyVerified: false, repository: repositoryIdentity(repo).root })}\n`, { mode: 0o600 });

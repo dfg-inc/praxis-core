@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { appendDecisionAmendments, auditDecisionJournal, effectiveDecisions, readDecisionJournal } from "./decision-journal.js";
 import { decisionLogPath } from "./user-approval.js";
@@ -147,5 +148,24 @@ describe("amending without rewriting", () => {
     expect(lines.at(-1)).toMatchObject({ line: 7, unreadable: true });
     const findings = auditDecisionJournal(lines, { roundTrips: TRIPS, minAnswerMs: 1000 });
     expect(findings.every((f) => f.corrected?.decision !== "approved")).toBe(true);
+  });
+});
+
+describe("journals written before 0.1.0-alpha.49.3", () => {
+  it("are adopted once, by copy, under the repository's key: the review still sees them and the old file is untouched", () => {
+    const path = decisionLogPath(repo);
+    const legacy = join(dirname(path), `${createHash("sha256").update(resolve(repo)).digest("hex").slice(0, 16)}.jsonl`);
+    const text = readFileSync(path, "utf8");
+    rmSync(path);
+    writeFileSync(legacy, text);
+    const lines = readDecisionJournal(repo);
+    expect(lines.filter((l) => l.entry)).toHaveLength(Object.keys(OLD).length);
+    expect(readFileSync(path, "utf8")).toBe(text);
+    const findings = auditDecisionJournal(lines, { roundTrips: TRIPS, minAnswerMs: 1000 });
+    expect(appendDecisionAmendments(repo, findings, "test").appended).toBe(2);
+    expect(readFileSync(legacy, "utf8")).toBe(text);
+    // once adopted, the repository's journal is the one kept: a changed old file is not copied again
+    appendFileSync(legacy, `${JSON.stringify({ ...OLD.approved, at: "2026-11-01T00:00:00.000Z" })}\n`);
+    expect(readDecisionJournal(repo).filter((l) => l.entry)).toHaveLength(Object.keys(OLD).length);
   });
 });
