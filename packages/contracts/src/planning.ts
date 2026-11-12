@@ -15,6 +15,7 @@ import {
   sorted,
   integrityProblem,
   isTrusted,
+  outstandingIntegrity,
   prototypeFingerprint,
   requirementsFingerprint,
   storiesFingerprint,
@@ -1324,7 +1325,8 @@ export function phaseGates(rawState: WorkflowState, to: Phase): GateResult {
   const coverageOk = () => {
     const coverage = analyzeStoryCoverage(state);
     if (coverage.ok) return;
-    for (const w of rawState.waivers) needTrusted(subjectKey("waiver", w.id));
+    const outstanding = new Set(outstandingIntegrity(rawState).map((e) => e.key));
+    for (const w of rawState.waivers) if (outstanding.has(subjectKey("waiver", w.id))) needTrusted(subjectKey("waiver", w.id));
     const asClaimed = analyzeStoryCoverage(claimed);
     need(asClaimed.ok, `coverage gaps: ${asClaimed.gaps.map((g) => g.reason).concat(asClaimed.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
   };
@@ -1474,7 +1476,7 @@ export function nextStep(rawState: WorkflowState): NextStep {
   const phase = state.phase;
   const progress = reviewProgress(state);
   const open = state.openQuestions;
-  const untrusted = Object.values(annotationOf(rawState)?.subjects ?? {}).filter((s) => s.status === "unverified" || s.status === "invalid");
+  const untrusted = outstandingIntegrity(rawState);
   const base = {
     phase,
     blockers: [
@@ -1565,7 +1567,17 @@ export function nextStep(rawState: WorkflowState): NextStep {
  * keep "html-review" on the decisions recorded that way; nothing new is recorded with it. Nothing an agent puts in a command
  * stands in for the channel: the command's own via field is replaced by what the Runtime verified.
  */
-export type ReviewChannel = { via: "approved"; approval: UserApproval; batch: ReadonlyArray<Record<string, unknown>> };
+export type ReviewChannel = {
+  via: "approved";
+  approval: UserApproval;
+  batch: ReadonlyArray<Record<string, unknown>>;
+  /**
+   * Digest of the work item as stored when the dialog was built (the Runtime's persisted-state digest). Part of what the approval
+   * binds: the Runtime applies the batch only to exactly that state, read once under the workflow lock, so the content the
+   * dialog showed is the content each ledger record binds (no criterion added or changed between the dialog and the write).
+   */
+  baseState?: string;
+};
 
 export const REVIEW_DECISION_ACTION = "review-decisions";
 
@@ -1575,19 +1587,20 @@ function withoutVia(command: Record<string, unknown>): Record<string, unknown> {
   return rest;
 }
 
-/** What the user approves when the decisions come through the client's dialog: the exact commands, canonical. */
-export function reviewBatchSubject(batch: ReadonlyArray<Record<string, unknown>>): string {
-  return canonicalText(batch.map(withoutVia));
+/** What the user approves when the decisions come through the client's dialog: the exact commands, canonical, and the state they were shown against. */
+export function reviewBatchSubject(batch: ReadonlyArray<Record<string, unknown>>, baseState?: string): string {
+  const commands = batch.map(withoutVia);
+  return canonicalText(baseState === undefined ? commands : { commands, baseState });
 }
 
 /** What the user is asked when the decisions of a review come through the client's dialog. */
-export function reviewApprovalRequest(batch: ReadonlyArray<Record<string, unknown>>, summary: string): ApprovalRequest {
+export function reviewApprovalRequest(batch: ReadonlyArray<Record<string, unknown>>, summary: string, baseState?: string): ApprovalRequest {
   return {
     action: REVIEW_DECISION_ACTION,
     kind: "requirement_acceptance",
     summary,
     description: batch.map((c) => `- ${String(c.action)}${c.decisions ? ` (${(c.decisions as unknown[]).length} requirement(s))` : ""}`).join("\n"),
-    subject: reviewBatchSubject(batch),
+    subject: reviewBatchSubject(batch, baseState),
     risks: ["These decisions record that you accepted or rejected the reviewed items; later stages rely on them."],
   };
 }
@@ -1619,7 +1632,7 @@ export function isUserDecision(command: { action: string } & Record<string, unkn
 
 function verifiedVia(command: PlanningCommand, channel: ReviewChannel | undefined): "approved" | null {
   if (!channel || channel.via !== "approved") return null;
-  verifyUserApproval(channel.approval, { action: REVIEW_DECISION_ACTION, subject: reviewBatchSubject(channel.batch) });
+  verifyUserApproval(channel.approval, { action: REVIEW_DECISION_ACTION, subject: reviewBatchSubject(channel.batch, channel.baseState) });
   const mine = canonicalText(withoutVia(command as unknown as Record<string, unknown>));
   if (!channel.batch.some((item) => canonicalText(withoutVia(item)) === mine)) {
     throw new WorkflowError("USER_DECISION_REQUIRED", "this decision is not part of what the user approved");

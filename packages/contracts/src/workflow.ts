@@ -10,7 +10,7 @@ import { PLANNING_ACTIONS, PlanningCommandSchemas, acceptanceStatus, applyPlanni
 import { humanActContent } from "./human-acts.js";
 import { ApprovalRecordSchema, describeApproval, trustOfApproval, type ApprovalRecord, type ApprovalSubject } from "./approval-audit.js";
 import { verifyUserApproval, type UserApproval } from "./user-approval.js";
-import { clearIntegrity, enforcedMode, integrityProblem, isTrusted, subjectKey, trustedView } from "./acceptance-integrity.js";
+import { clearIntegrity, contentDigest, criterionContent, decisionContent, enforcedMode, integrityProblem, isTrusted, serviceContent, storyContent, subjectKey, trustedView } from "./acceptance-integrity.js";
 import { isUserDecision, verifyUserChannel, type ReviewChannel } from "./planning.js";
 import {
   ReviewMarkSchema,
@@ -606,7 +606,7 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
     // refused at preview, before the user is asked: a client reads the current revision and fingerprint (praxis_workflow_inspect, view stories) instead of guessing one
     if (story.revision !== command.revision) throw new WorkflowError("STORY_REVISION", `story ${command.id} is at revision ${story.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view stories)`);
     if (contentFingerprint !== command.contentFingerprint) throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view stories)`);
-    const content = humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint });
+    const content = humanActContent("confirm-story", storyActSubject(story));
     return {
       action: "confirm-story",
       targetId: story.id,
@@ -616,6 +616,7 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
       summary: `Confirm Story ${story.id} revision ${story.revision}`,
       description: [
         `Story ${story.id} (revision ${story.revision}) for requirement(s) ${story.requirementIds.join(", ")}.`,
+        story.title ? `Title: ${story.title}` : "",
         `As ${story.actor}: ${story.narrative}`,
         `Objective: ${story.objective}`,
         `User value: ${story.userValue}`,
@@ -627,8 +628,9 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
         `Business rules:\n${bullet(story.businessRules)}`,
         `Acceptance criteria:\n${bullet(story.acceptanceCriteria.map((c) => `${c.id}: Given ${c.given}; When ${c.when}; Then ${c.then}`))}`,
         `Expected results:\n${bullet(story.expectedResults)}`,
+        `What the user can do (capabilities): ${story.capabilities.join(", ") || "(none declared)"}`,
         `Content fingerprint: ${contentFingerprint}`,
-      ].join("\n"),
+      ].filter(Boolean).join("\n"),
       risks: ["Confirming records that you accept this behavior as written. It does not authorize implementation, commits or pushes."],
     };
   }
@@ -638,7 +640,7 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
     const contentFingerprint = decisionContentFingerprint(decision);
     if (decision.revision !== command.revision) throw new WorkflowError("DECISION_REVISION", `decision ${command.id} is at revision ${decision.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view decisions)`);
     if (contentFingerprint !== command.contentFingerprint) throw new WorkflowError("DECISION_FINGERPRINT", `decision ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view decisions)`);
-    const content = humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint });
+    const content = humanActContent("confirm-decision", decisionActSubject(decision));
     return {
       action: "confirm-decision",
       targetId: decision.id,
@@ -658,12 +660,13 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
   }
   if (command.action === "revise-acceptance") {
     // The user approves the exact rewording. A repeat of the stored text asks for nothing; an unknown id is the reducer's error to report.
-    const rows: Array<{ id: string; requirementId: string; revision: number; status: string; comment?: string; from: string; to: string }> = [];
+    const rows: Array<{ id: string; requirementId: string; revision: number; status: string; comment?: string; from: string; to: string; contentDigest: string }> = [];
     for (const edit of command.edits) {
       const owner = state.requirements.find((r) => r.status !== "superseded" && r.acceptanceCriteria.some((c) => c.id === edit.id));
       const criterion = owner?.acceptanceCriteria.find((c) => c.id === edit.id);
       if (!owner || !criterion) return null;
-      if (criterion.statement.trim() !== edit.statement.trim()) rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...(criterion.review.comment ? { comment: criterion.review.comment } : {}), from: criterion.statement, to: edit.statement.trim() });
+      // contentDigest: the old wording as the decision ledger records it, so the approval is for exactly what it takes back
+      if (criterion.statement.trim() !== edit.statement.trim()) rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...(criterion.review.comment ? { comment: criterion.review.comment } : {}), from: criterion.statement, to: edit.statement.trim(), contentDigest: contentDigest(criterionContent(owner.id, criterion)) });
     }
     if (rows.length === 0) return null;
     const content = humanActContent("revise-acceptance", { workItemId: state.workItem.id, edits: rows });
@@ -712,6 +715,18 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
   return null;
 }
 
+/**
+ * What an approval of a human act binds. Besides the fingerprint a client sends, the exact content digest the decision ledger
+ * records for the subject (acceptance-integrity.ts): a file changed between the dialog and the write (even in a field the old
+ * fingerprint did not cover) no longer matches the approval, so nothing is recorded for content the user was not shown.
+ */
+function storyActSubject(story: WorkflowState["stories"][number]): Record<string, unknown> {
+  return { storyId: story.id, revision: story.revision, contentFingerprint: storyContentFingerprint(story), contentDigest: contentDigest(storyContent(story)) };
+}
+function decisionActSubject(decision: WorkflowState["decisions"][number]): Record<string, unknown> {
+  return { decisionId: decision.id, revision: decision.revision, contentFingerprint: decisionContentFingerprint(decision), contentDigest: contentDigest(decisionContent(decision)) };
+}
+
 export function decisionContentFingerprint(decision: {
   id: string;
   statement: string;
@@ -739,6 +754,7 @@ export function serviceApprovalSubject(
     serviceId: service.id,
     status: service.status,
     serviceDigest: fingerprintPayload(rest),
+    contentDigest: contentDigest(serviceContent(service)),
     implementation: state.implementationUnits
       .filter((unit) => unit.serviceId === service.id && !unit.stale)
       .map((unit) => ({ id: unit.id, path: unit.path, summary: unit.summary }))
@@ -1616,7 +1632,7 @@ function applyWorkflowCommandCore(
     }
     verifyUserApproval(options.userApproval, {
       action: "confirm-decision",
-      subject: humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint }),
+      subject: humanActContent("confirm-decision", decisionActSubject(decision)),
     });
     const decisions = state.decisions.map((item) => (item.id === decision.id ? { ...item, confirmed: true } : item));
     let confirmed: WorkflowState = clearIntegrity({ ...state, decisions }, [subjectKey("decision", decision.id)]);
@@ -1763,7 +1779,7 @@ function applyWorkflowCommandCore(
     }
     verifyUserApproval(options.userApproval, {
       action: "confirm-story",
-      subject: humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint }),
+      subject: humanActContent("confirm-story", storyActSubject(story)),
     });
     const stories = state.stories.map((item) =>
       item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" as const } : item,
