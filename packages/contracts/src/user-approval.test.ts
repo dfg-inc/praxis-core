@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -201,11 +201,12 @@ describe("decisions are journaled outside the repository", () => {
       expect(rows.map((r) => r.decision)).toEqual(["approved", "rejected", "unavailable", "withdrawn", "dismissed", "auto-answered"]);
       // the channel that answered, never "the user": Praxis cannot tell a person from automation driving that channel
       expect(rows.map((r) => r.decidedBy)).toEqual(["client-dialog", "client-dialog", "nobody", "agent", "client-dialog", "client"]);
-      expect(rows.filter((r) => r.decidedBy === "client-dialog").every((r) => r.personVerified === false)).toBe(true);
+      expect(rows.every((r) => r.personVerified === false && r.independentlyVerified === false)).toBe(true);
       expect(rows.every((r) => r.v === 2)).toBe(true);
       expect(rows[1].reason).toBe("not now");
       expect(rows[5].evidence).toEqual({ latencyMs: 12 });
-      expect(rows[0].repository).toBe(repo);
+      // the repository's real path, however the caller spelled it
+      expect(rows[0].repository).toBe(realpathSync(repo));
       expect(JSON.stringify(rows)).not.toMatch(/unverified/);
     } finally {
       rmSync(repo, { recursive: true, force: true });
