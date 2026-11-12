@@ -325,7 +325,7 @@ describe("revoke and supersede: the latest decision wins", () => {
     expect(reopened.ledger.at(-1)).toMatchObject({ decision: "revoke", subject: { kind: "criterion", id: "REQ-ORD-001-AC-01" } });
     // git checkout of the earlier file: it still claims the acceptance, with the record id of the revoked acceptance
     const rolledBack = read(before.state, reopened.ledger);
-    expect(annotationOf(rolledBack)!.subjects["criterion:REQ-ORD-001-AC-01"]).toMatchObject({ status: "invalid", reason: expect.stringMatching(/latest decision recorded for it is a revoke/) });
+    expect(annotationOf(rolledBack)!.subjects["criterion:REQ-ORD-001-AC-01"]).toMatchObject({ status: "invalid", reason: expect.stringMatching(/a later decision on this computer, on any branch or worktree, took this content back \(revoke/) });
     // accepted again: a new record, and that one counts
     const again = step(reopened, { action: "review-requirements", via: "approved", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "accepted" }] }] }, "user");
     expect(annotationOf(read(again.state, again.ledger))!.subjects["criterion:REQ-ORD-001-AC-01"]!.status).toBe("accepted");
@@ -350,10 +350,13 @@ describe("revoke and supersede: the latest decision wins", () => {
     expect(annotationOf(read(confirmed.state, confirmed.ledger))!.subjects["story:US-ORD-001"]!.status).toBe("accepted");
   });
 
-  it("returning to an earlier phase revokes the later phase acceptances", () => {
-    let w = legitimate();
-    w = step(w, { action: "return-to-phase", to: "story_plan", reason: "rethink" });
-    expect(w.ledger.filter((e) => e.decision === "revoke").map((e) => e.subject.id)).toContain("stories_review");
+  it("an agent returning to an earlier phase records the withdrawal as information, not as a decision against what was accepted", () => {
+    const before = legitimate();
+    const w = step(before, { action: "return-to-phase", to: "story_plan", reason: "rethink" });
+    // 0.1.0-alpha.49.3 review: only the person takes content back (reject, or revoke in a write they approved); the ledger is shared
+    // by every branch and worktree, so an agent's withdrawal must not invalidate another copy of the accepted content
+    expect(w.ledger.filter((e) => e.subject.id === "stories_review").map((e) => e.decision)).toEqual(["accept", "supersede"]);
+    expect(annotationOf(read(before.state, w.ledger))!.subjects["phase:stories_review"]!.status).toBe("accepted");
   });
 });
 
