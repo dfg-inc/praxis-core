@@ -1,7 +1,29 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import { WorkflowError } from "./errors.js";
 import { canonicalText } from "./human-acts.js";
+import {
+  ACCEPTANCE_INVALID,
+  ACCEPTANCE_UNVERIFIED,
+  activeRequirements,
+  activeStories,
+  annotationOf,
+  clearIntegrity,
+  contractsFingerprint,
+  currentFingerprint,
+  enforcedMode,
+  fingerprint16,
+  sorted,
+  integrityProblem,
+  isTrusted,
+  prototypeFingerprint,
+  requirementsFingerprint,
+  storiesFingerprint,
+  storyPlanFingerprint,
+  stripIntegrity,
+  subjectKey,
+  trustedView,
+  untrustedClaim,
+} from "./acceptance-integrity.js";
 import { verifyUserApproval, type ApprovalRequest, type UserApproval } from "./user-approval.js";
 import { evaluateEvidence } from "./quality-model.js";
 import { RepositoryIdSchema, RequirementIdSchema, StoryIdSchema } from "./ids.js";
@@ -49,127 +71,43 @@ const iso = (now: Now) => (now ?? new Date()).toISOString();
 
 export type PlanningResult = { state: WorkflowState; duplicate: boolean; result: unknown };
 
-// --- fingerprints: what a user's acceptance is bound to -----------------------------------------------------------
+// --- fingerprints: what a user's acceptance is bound to (acceptance-integrity.ts) ----------------------------------
 
-function sorted(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sorted);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([, v]) => v !== undefined)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => [k, sorted(v)]),
-    );
-  }
-  return value;
-}
-const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(sorted(value))).digest("hex").slice(0, 16);
-
-const activeRequirements = (state: WorkflowState) => state.requirements.filter((r) => r.status !== "superseded");
+const hash = fingerprint16;
 const inScope = (state: WorkflowState) => activeRequirements(state).filter((r) => r.scope === "in");
-const activeStories = (state: WorkflowState) => state.stories.filter((s) => s.status !== "superseded" && s.status !== "excluded");
-
-/** Content of the requirements a user reviews (not their review marks, so marking does not invalidate acceptance). */
-export function requirementsFingerprint(state: WorkflowState): string {
-  return hash(
-    activeRequirements(state).map((r) => ({
-      id: r.id,
-      statement: r.statement,
-      scope: r.scope,
-      ac: r.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement })),
-    })),
-  );
-}
-
-/** What the user agrees to when they agree a contract: its content, not its status. */
-export function contractsFingerprint(state: WorkflowState): string {
-  return hash(state.contracts.map(({ status: _s, agreement: _a, everAgreed: _e, ...content }) => content));
-}
+export { contractsFingerprint, currentFingerprint, prototypeFingerprint, requirementsFingerprint, storiesFingerprint, storyPlanFingerprint };
 
 /**
- * Interaction fields added after alpha.49 default to empty. An empty value is dropped before hashing, so a prototype saved
- * before they existed keeps the fingerprint its acceptance was recorded with (no silent "changed since you accepted it").
+ * An acceptance counts only while the artifact still has the content the user accepted, and (for a work item read from a
+ * file) only while the decision ledger backs it: unverified and invalid are what acceptance-integrity.ts found.
  */
-const EMPTY_ELEMENT_DEFAULTS: Record<string, unknown> = { options: [], filters: [], detailFields: [], tabs: [], related: [], required: false };
-function withoutEmptyDefaults(prototype: Omit<Prototype, "feedback" | "history" | "status" | "revision">): unknown {
-  const { datasets, scenarios, limitations, screens, ...rest } = prototype;
-  const out: Record<string, unknown> = { ...rest };
-  if (datasets?.length) out.datasets = datasets;
-  if (scenarios?.length) out.scenarios = scenarios;
-  if (limitations?.length) out.limitations = limitations;
-  out.screens = screens.map((screen) => ({
-    ...screen,
-    elements: screen.elements.map((element) => {
-      const kept: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(element)) {
-        if (value === undefined) continue;
-        const dflt = EMPTY_ELEMENT_DEFAULTS[key];
-        if (key in EMPTY_ELEMENT_DEFAULTS && JSON.stringify(dflt) === JSON.stringify(value)) continue;
-        kept[key] = value;
-      }
-      return kept;
-    }),
-  }));
-  return out;
-}
-
-export function prototypeFingerprint(prototype: Prototype | undefined): string {
-  if (!prototype) return "none";
-  const { feedback: _f, history: _h, status: _s, revision: _r, ...content } = prototype;
-  return hash(withoutEmptyDefaults(content));
-}
-
-export function storyPlanFingerprint(plan: StoryPlan | undefined): string {
-  if (!plan) return "none";
-  // Detailing a planned story does not change the plan the user agreed to; excluding one does.
-  return hash(
-    plan.entries.map(({ review: _r, status, excludedReason, ...entry }) => ({ ...entry, excluded: status === "excluded", ...(status === "excluded" && excludedReason !== undefined ? { excludedReason } : {}) })),
-  );
-}
-
-export function storiesFingerprint(state: WorkflowState): string {
-  return hash(
-    activeStories(state).map((s) => ({
-      id: s.id,
-      revision: s.revision,
-      requirementIds: s.requirementIds,
-      narrative: s.narrative,
-      ac: s.acceptanceCriteria,
-      happyPath: s.happyPath,
-      alternatives: s.alternatives,
-      negative: s.negative,
-      edgeCases: s.edgeCases,
-      businessRules: s.businessRules,
-      expectedResults: s.expectedResults,
-    })),
-  );
-}
-
-export function currentFingerprint(state: WorkflowState, phase: AcceptablePhase): string {
-  if (phase === "requirements_review") return requirementsFingerprint(state);
-  if (phase === "prototype") return prototypeFingerprint(state.prototype);
-  if (phase === "story_plan") return storyPlanFingerprint(state.storyPlan);
-  return storiesFingerprint(state);
-}
-
-/** An acceptance counts only while the artifact still has the content the user accepted. */
-export function acceptanceStatus(state: WorkflowState, phase: AcceptablePhase): "missing" | "accepted" | "stale" {
+export function acceptanceStatus(state: WorkflowState, phase: AcceptablePhase): "missing" | "accepted" | "stale" | "unverified" | "invalid" {
   const acceptance = state.phaseAcceptance[phase] as (typeof state.phaseAcceptance)[string] | undefined;
   if (!acceptance) return "missing";
-  return (acceptance as { fingerprint?: string }).fingerprint === currentFingerprint(state, phase) ? "accepted" : "stale";
+  if ((acceptance as { fingerprint?: string }).fingerprint !== currentFingerprint(state, phase)) return "stale";
+  const untrusted = untrustedClaim(state, subjectKey("phase", phase));
+  return untrusted ? (untrusted.status === "invalid" ? "invalid" : untrusted.status === "stale" ? "stale" : "unverified") : "accepted";
 }
 
+/** Only behind a verified decision of this call: the acceptance it records counts in memory and goes to the ledger. */
 function recordAcceptance(state: WorkflowState, phase: AcceptablePhase, via: "html-review" | "approved" | "chat" | "system", now: Now): WorkflowState {
   const revision =
     phase === "prototype" ? (state.prototype?.revision ?? 0) : phase === "story_plan" ? (state.storyPlan?.revision ?? 0) : state.workItem.revision;
-  return {
-    ...state,
-    phaseAcceptance: {
-      ...state.phaseAcceptance,
-      [phase]: { revision, at: iso(now), via, fingerprint: currentFingerprint(state, phase) },
+  return clearIntegrity(
+    {
+      ...state,
+      phaseAcceptance: {
+        ...state.phaseAcceptance,
+        [phase]: { revision, at: iso(now), via, fingerprint: currentFingerprint(state, phase) },
+      },
     },
-  };
+    [subjectKey("phase", phase)],
+  );
 }
+
+/** A criterion's decision as it counts: an acceptance the ledger does not back is undecided. */
+const effectiveReview = (state: WorkflowState, criterion: { id: string; review: { status: "pending" | "accepted" | "rejected" } }) =>
+  criterion.review.status === "accepted" && !isTrusted(state, subjectKey("criterion", criterion.id)) ? "pending" : criterion.review.status;
 
 function touch(state: WorkflowState, now: Now, note?: string): WorkflowState {
   const revision = state.workItem.revision + 1;
@@ -369,7 +307,8 @@ export type CoverageReport = {
 };
 
 export function analyzeStoryCoverage(state: WorkflowState): CoverageReport {
-  const waivers = state.waivers;
+  // a waiver closes a gap only when the user's decision to waive it is backed by the decision ledger
+  const waivers = state.waivers.filter((w) => isTrusted(state, subjectKey("waiver", w.id)));
   const waived = (kind: string, requirementId?: string) =>
     waivers.some((w) => w.kind === kind && (w.requirementId === undefined || w.requirementId === requirementId));
   const stories = activeStories(state);
@@ -667,6 +606,8 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
   const changed: string[] = [];
   const summary: string[] = [];
   const acceptanceChanges: Array<Record<string, unknown>> = [];
+  /** Criteria the user decided in this call through the verified channel: their new claim counts and goes to the ledger. */
+  const redecided: string[] = [];
   let contentChanged = false;
   for (const decision of command.decisions) {
     const current = requirementOf(next, decision.requirementId);
@@ -715,7 +656,9 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
       }
       if (ac.status !== undefined || ac.comment !== undefined) {
         const old = criterion.review;
-        const statusChanged = ac.status !== undefined && ac.status !== old.status;
+        // an acceptance the decision ledger does not back counts as undecided, so deciding it (again) is a real decision
+        const statusChanged = ac.status !== undefined && ac.status !== effectiveReview(state, criterion);
+        if (statusChanged && command.via === "approved") redecided.push(subjectKey("criterion", criterion.id));
         const nextComment = ac.comment !== undefined ? (ac.comment === "" ? undefined : ac.comment) : old.comment;
         const commentChanged = ac.comment !== undefined && nextComment !== old.comment;
         if (commentChanged && command.via === "chat" && old.comment && (old.commentVia === "html-review" || old.commentVia === "approved" || (old.commentVia === undefined && old.via !== undefined && old.via !== "chat"))) {
@@ -780,7 +723,7 @@ function applyRequirementDecisions(state: WorkflowState, command: Extract<Planni
     // nothing differs from what is stored: no revision, no history line, no new state
     return { state, duplicate: true, result: { changedRequirementIds: [], noChange: true, reviewProgress: reviewProgress(state), accepted: acceptanceStatus(state, "requirements_review") === "accepted" } };
   }
-  next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ")}`);
+  next = touch(clearIntegrity(next, redecided), now, `requirements reviewed (${command.via}): ${summary.join("; ")}`);
   // The user ticking every criterion IS the acceptance of the review: no second checkbox is needed.
   const marked = command.decisions.some((d) => d.acceptance.some((a) => a.status !== undefined));
   if (marked && (command.via === "html-review" || command.via === "approved") && reviewProgress(next).complete && acceptanceStatus(next, "requirements_review") !== "accepted") {
@@ -806,10 +749,13 @@ function markDownstreamStale(state: WorkflowState, requirementId: string, now: N
   };
 }
 
+/** Criteria as they count: an acceptance the decision ledger does not back is undecided (and counted as unverified). */
 export function reviewProgress(state: WorkflowState) {
   const reqs = inScope(state);
   const criteria = reqs.flatMap((r) => r.acceptanceCriteria);
-  const count = (status: string) => criteria.filter((c) => c.review.status === status).length;
+  const statusOf = (c: (typeof criteria)[number]) => effectiveReview(state, c);
+  const count = (status: string) => criteria.filter((c) => statusOf(c) === status).length;
+  const unverified = criteria.filter((c) => c.review.status === "accepted" && statusOf(c) !== "accepted").length;
   return {
     requirements: reqs.length,
     deferred: activeRequirements(state).filter((r) => r.scope === "deferred").length,
@@ -818,7 +764,8 @@ export function reviewProgress(state: WorkflowState) {
     accepted: count("accepted"),
     rejected: count("rejected"),
     pending: count("pending"),
-    complete: criteria.length > 0 && criteria.every((c) => c.review.status === "accepted") && reqs.every((r) => r.acceptanceCriteria.length > 0),
+    ...(unverified > 0 ? { unverifiedAcceptances: unverified } : {}),
+    complete: criteria.length > 0 && criteria.every((c) => statusOf(c) === "accepted") && reqs.every((r) => r.acceptanceCriteria.length > 0),
   };
 }
 
@@ -1293,7 +1240,13 @@ export function phaseIndex(phase: Phase): number {
   return PHASES.indexOf(phase);
 }
 
-export type GateResult = { ok: boolean; missing: string[]; warnings: string[] };
+export type GateResult = {
+  ok: boolean;
+  missing: string[];
+  warnings: string[];
+  /** Acceptances this gate needed that the work item claims but the decision ledger does not back (ACCEPTANCE_UNVERIFIED / ACCEPTANCE_INVALID). */
+  integrity?: Array<{ code: string; subject: string; status: string }>;
+};
 
 /** What must be true before the work item may enter `to`. Gates are enforced in guided mode and reported in classic mode. */
 /** Services that can never be ordered because they depend on each other. */
@@ -1313,24 +1266,67 @@ function implementationOrderOf(state: WorkflowState): string[] {
   return ids.filter((id) => !done.has(id));
 }
 
-export function phaseGates(state: WorkflowState, to: Phase): GateResult {
+export function phaseGates(rawState: WorkflowState, to: Phase): GateResult {
+  // Every condition is judged on what the decision ledger backs (acceptance-integrity.ts): a claim in the file that it does
+  // not back counts as not given, and the refusal names it with its code so the user knows what to accept again.
+  const state = trustedView(rawState);
   const missingItems: string[] = [];
   const warnings: string[] = [];
+  const integrity: NonNullable<GateResult["integrity"]> = [];
   const reqs = inScope(state);
   const need = (condition: boolean, text: string) => {
     if (!condition) missingItems.push(text);
+  };
+  /** Reports a claim the ledger does not back (unverified or invalid) with its code; true when it did. A stale claim is not reported here: it counts as not given. */
+  const needTrusted = (key: string): boolean => {
+    const problem = integrityProblem(rawState, key);
+    if (!problem) return false;
+    if (!integrity.some((i) => i.subject === key)) integrity.push({ code: problem.code, subject: problem.subject, status: problem.status });
+    missingItems.push(problem.text);
+    return true;
+  };
+  const phaseAccepted = (phase: AcceptablePhase, text: string) => {
+    const status = acceptanceStatus(rawState, phase);
+    if (status === "unverified" || status === "invalid") needTrusted(subjectKey("phase", phase));
+    else need(status === "accepted", text);
+  };
+  // what the file claims, every claim taken at its word: a condition it meets fails only for integrity, and says so
+  const claimed = stripIntegrity(rawState);
+  const criteriaAccepted = (text: string) => {
+    const flagged = new Set<string>();
+    for (const r of inScope(rawState)) for (const c of r.acceptanceCriteria) if (c.review.status === "accepted" && needTrusted(subjectKey("criterion", c.id))) flagged.add(c.id);
+    const criteria = reqs.flatMap((r) => r.acceptanceCriteria);
+    need(criteria.length > 0 && reqs.every((r) => r.acceptanceCriteria.length > 0) && criteria.every((c) => c.review.status === "accepted" || flagged.has(c.id)), text);
   };
   const kind = state.workItem.kind;
   const STALE_LABEL: Record<string, string> = { requirements_review: "the requirements", prototype: "the prototype", story_plan: "the story plan", stories_review: "the stories" };
   // an acceptance the user gave stands only while the content is the same: a later change must be accepted again before work moves on
   const upstreamFresh = (phases: AcceptablePhase[]) => {
-    for (const phase of phases) need(acceptanceStatus(state, phase) !== "stale", `${STALE_LABEL[phase]} changed after you accepted ${phase === "story_plan" ? "it" : "them"}: review and accept again`);
+    for (const phase of phases) {
+      const status = acceptanceStatus(rawState, phase);
+      if (status === "unverified" || status === "invalid") needTrusted(subjectKey("phase", phase));
+      else need(status !== "stale", `${STALE_LABEL[phase]} changed after you accepted ${phase === "story_plan" ? "it" : "them"}: review and accept again`);
+    }
   };
   // Reviewing a story and confirming its behaviour are two decisions: Quality compares the code with the CONFIRMED behaviour. A story
   // edited after its confirmation is unconfirmed again, so this is checked at every later gate, not only the first.
   const confirmedStories = () => {
-    const unconfirmed = activeStories(state).filter((st) => !st.confirmedBehavior);
+    const flagged = new Set<string>();
+    for (const st of activeStories(rawState)) if (st.confirmedBehavior && needTrusted(subjectKey("story", st.id))) flagged.add(st.id);
+    const unconfirmed = activeStories(state).filter((st) => !st.confirmedBehavior && !flagged.has(st.id));
     need(unconfirmed.length === 0, `every story confirmed by the user (confirm-story): ${unconfirmed.map((st) => st.id).join(", ")} still ${unconfirmed.length === 1 ? "needs" : "need"} it`);
+  };
+  const contractsAgreed = (suffix: string) => {
+    const flagged = new Set<string>();
+    for (const contract of rawState.contracts) if (contract.status === "agreed" && needTrusted(subjectKey("contract", contract.id))) flagged.add(contract.id);
+    for (const contract of state.contracts) if (!flagged.has(contract.id)) need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user${suffix}`);
+  };
+  const coverageOk = () => {
+    const coverage = analyzeStoryCoverage(state);
+    if (coverage.ok) return;
+    for (const w of rawState.waivers) needTrusted(subjectKey("waiver", w.id));
+    const asClaimed = analyzeStoryCoverage(claimed);
+    need(asClaimed.ok, `coverage gaps: ${asClaimed.gaps.map((g) => g.reason).concat(asClaimed.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
   };
   switch (to) {
     case "requirements_review":
@@ -1338,29 +1334,32 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
       need(reqs.every((r) => r.acceptanceCriteria.length > 0), "every in-scope requirement needs acceptance criteria");
       break;
     case "prototype":
-      need(acceptanceStatus(state, "requirements_review") === "accepted", "requirements accepted by the user (every criterion) and unchanged since");
+      phaseAccepted("requirements_review", "requirements accepted by the user (every criterion) and unchanged since");
       // a criterion the user rejected or reopened after accepting keeps the gate shut (marks are not content, so the fingerprint does not show it)
-      need(reviewProgress(state).complete, `every criterion accepted (${reviewProgress(state).rejected} rejected, ${reviewProgress(state).pending} pending)`);
+      criteriaAccepted(`every criterion accepted (${reviewProgress(state).rejected} rejected, ${reviewProgress(state).pending} pending)`);
       if (kind !== "feature") need(state.impact !== undefined, `${kind} work needs the existing behaviour and impact recorded first (record-impact)`);
       break;
     case "story_plan":
-      need(acceptanceStatus(state, "requirements_review") === "accepted", "requirements accepted and unchanged since");
-      need(reviewProgress(state).complete, "every criterion accepted (one was rejected or reopened since)");
-      need(acceptanceStatus(state, "prototype") === "accepted" || state.waivers.some((w) => w.kind === "prototype"), "prototype accepted (or an explicit waiver with a reason)");
+      phaseAccepted("requirements_review", "requirements accepted and unchanged since");
+      criteriaAccepted("every criterion accepted (one was rejected or reopened since)");
+      if (acceptanceStatus(rawState, "prototype") !== "accepted" && !state.waivers.some((w) => w.kind === "prototype")) {
+        const claimedWaiver = rawState.waivers.filter((w) => w.kind === "prototype");
+        for (const w of claimedWaiver) needTrusted(subjectKey("waiver", w.id));
+        if (claimedWaiver.length === 0) phaseAccepted("prototype", "prototype accepted (or an explicit waiver with a reason)");
+      }
       break;
     case "stories_review": {
-      need(acceptanceStatus(state, "story_plan") === "accepted", "story plan agreed and unchanged since");
+      phaseAccepted("story_plan", "story plan agreed and unchanged since");
       const plan = state.storyPlan?.entries.filter((e) => e.status !== "excluded") ?? [];
       const detailed = plan.filter((e) => activeStories(state).some((s) => s.id === e.id));
       need(plan.length > 0 && detailed.length === plan.length, `every planned story needs detailed content (${plan.length - detailed.length} still planned)`);
       break;
     }
     case "architecture": {
-      need(acceptanceStatus(state, "stories_review") === "accepted", "stories reviewed and accepted, unchanged since");
+      phaseAccepted("stories_review", "stories reviewed and accepted, unchanged since");
       upstreamFresh(["requirements_review", "prototype", "story_plan"]);
       confirmedStories();
-      const coverage = analyzeStoryCoverage(state);
-      need(coverage.ok, `coverage gaps: ${coverage.gaps.map((g) => g.reason).concat(coverage.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
+      coverageOk();
       break;
     }
     case "development":
@@ -1373,7 +1372,7 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
         if (repo && repo.status !== "inspected") warnings.push(`repository ${repo.id} has not been inspected`);
       }
       for (const service of state.services) for (const dep of service.dependsOn) if (!state.services.some((s) => s.id === dep)) missingItems.push(`service ${service.id} depends on unknown ${dep}`);
-      for (const contract of state.contracts) need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user: implementation across services waits for it`);
+      contractsAgreed(": implementation across services waits for it");
       const cyc = implementationOrderOf(state);
       need(cyc.length === 0, `services depend on each other in a cycle: ${cyc.join(", ")}`);
       for (const repo of state.repositories) {
@@ -1384,12 +1383,12 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
     case "quality": {
       upstreamFresh(["requirements_review", "prototype", "story_plan", "stories_review"]);
       confirmedStories();
-      for (const contract of state.contracts) need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user (it was changed after implementation started?)`);
+      contractsAgreed(" (it was changed after implementation started?)");
       for (const service of state.services) need(state.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
       break;
     }
     case "delivery":
-      for (const contract of state.contracts) need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user`);
+      contractsAgreed("");
       need(state.verdicts.some((v) => v.scope === "feature" && v.verdict !== "FAIL" && !v.stale), "a current feature verdict that is not FAIL");
       // a recorded verdict is a snapshot: delivery is judged on what the evidence says NOW (a criterion revised or a result that was only attested since changes it)
       const evidence = evaluateEvidence(state);
@@ -1398,13 +1397,18 @@ export function phaseGates(state: WorkflowState, to: Phase): GateResult {
       // A feature verdict is only as good as the services under it: each one needs its own implementation and a passing verdict.
       for (const service of state.services) {
         need(state.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
-        need(service.status === "approved" || service.status === "completed" || state.verdicts.some((v) => v.scope === "service" && v.scopeId === service.id && v.verdict !== "FAIL" && !v.stale), `service ${service.id} has no current non-FAIL verdict`);
+        const passing = state.verdicts.some((v) => v.scope === "service" && v.scopeId === service.id && v.verdict !== "FAIL" && !v.stale);
+        if (!passing && service.status !== "approved" && service.status !== "completed") {
+          const raw = rawState.services.find((s) => s.id === service.id);
+          if (raw && (raw.status === "approved" || raw.status === "completed")) needTrusted(subjectKey("service", service.id));
+        }
+        need(service.status === "approved" || service.status === "completed" || passing, `service ${service.id} has no current non-FAIL verdict`);
       }
       break;
     default:
       break;
   }
-  return { ok: missingItems.length === 0, missing: missingItems, warnings };
+  return { ok: missingItems.length === 0, missing: missingItems, warnings, ...(integrity.length ? { integrity } : {}) };
 }
 
 function advancePhase(state: WorkflowState, command: Extract<PlanningCommand, { action: "advance-phase" }>, now: Now): PlanningResult {
@@ -1413,19 +1417,25 @@ function advancePhase(state: WorkflowState, command: Extract<PlanningCommand, { 
   // The steps in between must hold too: a gate is not skipped by jumping over it.
   const failures: Array<{ phase: Phase; missing: string[] }> = [];
   const warnings: string[] = [];
+  const integrity: NonNullable<GateResult["integrity"]> = [];
   for (let i = phaseIndex(from) + 1; i <= phaseIndex(command.to); i += 1) {
     const gate = phaseGates(state, PHASES[i]);
     warnings.push(...gate.warnings);
     if (!gate.ok) failures.push({ phase: PHASES[i], missing: gate.missing });
+    for (const item of gate.integrity ?? []) if (!integrity.some((x) => x.subject === item.subject)) integrity.push(item);
   }
-  if (failures.length > 0 && state.mode === "guided") {
-    throw missing("PHASE_GATE", `cannot enter ${command.to}: ${failures.map((f) => `${f.phase} needs ${f.missing.join("; ")}`).join(" | ")}`, { failures });
+  // classic (gates reported, not enforced) only when that choice is backed by the decision ledger
+  if (failures.length > 0 && enforcedMode(state) === "guided") {
+    // when the only thing missing is acceptances the ledger does not back, the refusal carries their code
+    const onlyIntegrity = failures.every((f) => f.missing.every((m) => m.startsWith(`${ACCEPTANCE_UNVERIFIED}:`) || m.startsWith(`${ACCEPTANCE_INVALID}:`)));
+    const code = onlyIntegrity ? (integrity.some((i) => i.code === ACCEPTANCE_INVALID) ? ACCEPTANCE_INVALID : ACCEPTANCE_UNVERIFIED) : "PHASE_GATE";
+    throw missing(code, `cannot enter ${command.to}: ${failures.map((f) => `${f.phase} needs ${f.missing.join("; ")}`).join(" | ")}`, { failures, ...(integrity.length ? { integrity } : {}) });
   }
   const entry = { at: iso(now), kind: "advance" as const, from, to: command.to, reason: command.reason ?? "", invalidated: [] };
   let next = touch({ ...state, phase: command.to, phaseHistory: [...state.phaseHistory, entry].slice(-200) }, now, `phase ${from} -> ${command.to}`);
   // The session log is what a new chat reads first: moving between stages is always worth a line in it.
   next = { ...next, sessionLog: [...next.sessionLog, { at: iso(now), summary: `moved from ${from} to ${command.to}${command.reason ? `: ${command.reason}` : ""}`, nextAction: nextStep(next).summary }].slice(-200) };
-  return { state: next, duplicate: false, result: { phase: command.to, gatesMissing: failures, warnings: [...new Set(warnings)], enforced: state.mode === "guided" } };
+  return { state: next, duplicate: false, result: { phase: command.to, gatesMissing: failures, warnings: [...new Set(warnings)], enforced: enforcedMode(state) === "guided" } };
 }
 
 function returnToPhase(state: WorkflowState, command: Extract<PlanningCommand, { action: "return-to-phase" }>, now: Now): PlanningResult {
@@ -1458,12 +1468,22 @@ export type NextStep = {
   blockers: string[];
 };
 
-/** Deterministic: the same state always gives the same next step. */
-export function nextStep(state: WorkflowState): NextStep {
+/** Deterministic: the same state always gives the same next step. Judged on what the decision ledger backs. */
+export function nextStep(rawState: WorkflowState): NextStep {
+  const state = trustedView(rawState);
   const phase = state.phase;
   const progress = reviewProgress(state);
   const open = state.openQuestions;
-  const base = { phase, blockers: [...state.blockers] };
+  const untrusted = Object.values(annotationOf(rawState)?.subjects ?? {}).filter((s) => s.status === "unverified" || s.status === "invalid");
+  const base = {
+    phase,
+    blockers: [
+      ...state.blockers,
+      ...(untrusted.length
+        ? [`${untrusted.length} acceptance(s) in this work item are not backed by a Praxis decision record on this computer (${untrusted.map((s) => `${s.label}: ${s.status}`).slice(0, 6).join("; ")}${untrusted.length > 6 ? "; ..." : ""}); they do not count until the user accepts them again in the review`]
+        : []),
+    ],
+  };
   switch (phase) {
     case "request":
     case "discovery":
@@ -1518,7 +1538,7 @@ export function nextStep(state: WorkflowState): NextStep {
         tools: ["praxis_review_render", "praxis_workflow_inspect"],
         skills: ["praxis-ba:stories-review"],
         userDecision: coverage.ok,
-        blockers: [...state.blockers, ...(coverage.ok ? [] : ["coverage gaps"])],
+        blockers: [...base.blockers, ...(coverage.ok ? [] : ["coverage gaps"])],
       };
     }
     case "architecture": {
@@ -1677,14 +1697,18 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
       const ids = command.requirementIds ?? inScope(state).map((r) => r.id as string);
       for (const id of ids) requirementOf(state, id);
       let next = state;
+      // undecided includes an acceptance the decision ledger does not back: accepting all decides it again, as shown in the dialog
+      const undecided = (c: Requirement["acceptanceCriteria"][number]) => effectiveReview(state, c) === "pending";
+      const decided = activeRequirements(state).filter((r) => ids.includes(r.id) && r.scope === "in").flatMap((r) => r.acceptanceCriteria.filter(undecided).map((c) => subjectKey("criterion", c.id)));
       next = {
         ...next,
         requirements: next.requirements.map((r) =>
           ids.includes(r.id) && r.scope === "in" && r.status !== "superseded"
-            ? { ...r, status: "approved" as const, acceptanceCriteria: r.acceptanceCriteria.map((c) => (c.review.status === "pending" ? { ...c, review: { ...c.review, status: "accepted" as const, at: iso(now), via: command.via } } : c)) }
+            ? { ...r, status: "approved" as const, acceptanceCriteria: r.acceptanceCriteria.map((c) => (undecided(c) ? { ...c, review: { ...c.review, status: "accepted" as const, at: iso(now), via: command.via } } : c)) }
             : r,
         ),
       };
+      if (command.via === "approved") next = clearIntegrity(next, decided);
       const progress = reviewProgress(next);
       if (progress.complete) next = recordAcceptance(next, "requirements_review", command.via, now);
       next = touch(next, now, `requirements accepted (${command.via}); ${progress.accepted}/${progress.criteria} criteria`);
@@ -1794,7 +1818,7 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
       const live = state.storyPlan.entries.filter((e) => e.status !== "excluded");
       if (live.length === 0) throw missing("PLAN_EMPTY", "the story plan has no stories");
       const coverage = analyzeStoryCoverage(state);
-      if (state.mode === "guided" && !coverage.ok) {
+      if (enforcedMode(state) === "guided" && !coverage.ok) {
         throw missing("PLAN_COVERAGE_GAPS", `the plan does not cover what the requirements imply: ${[...coverage.gaps.map((g) => g.reason), ...coverage.requirementsWithoutStories.map((id) => `${id} has no story`)].join("; ")}. Add stories or waive a gap with a reason.`, { coverage });
       }
       const rejected = live.filter((e) => e.review.status === "rejected").map((e) => e.id);
@@ -1967,7 +1991,7 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
       const progress = storyReviewProgress(state);
       if (!progress.complete) throw missing("STORIES_NOT_REVIEWED", `stories are not fully reviewed: ${progress.accepted}/${progress.items} items accepted, ${progress.rejected} rejected, ${progress.pending} pending`, { progress });
       const coverage = analyzeStoryCoverage(state);
-      if (state.mode === "guided" && !coverage.ok) throw missing("STORIES_COVERAGE_GAPS", `coverage gaps remain: ${[...coverage.gaps.map((g) => g.reason), ...coverage.requirementsWithoutStories.map((id) => `${id} has no story`), ...coverage.storiesOutOfScope.map((id) => `${id} is out of scope`)].join("; ")}`, { coverage });
+      if (enforcedMode(state) === "guided" && !coverage.ok) throw missing("STORIES_COVERAGE_GAPS", `coverage gaps remain: ${[...coverage.gaps.map((g) => g.reason), ...coverage.requirementsWithoutStories.map((id) => `${id} has no story`), ...coverage.storiesOutOfScope.map((id) => `${id} is out of scope`)].join("; ")}`, { coverage });
       const next = recordAcceptance(state, "stories_review", command.via, now);
       return { state: touch(next, now, "stories accepted by the reviewer"), duplicate: false, result: { accepted: true, progress, coverage } };
     }
@@ -2005,7 +2029,8 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
       const kept = previous?.status === "agreed" && !agreedNow && stripped(previous) === stripped(contract);
       const next1 = { ...contract, ...(agreedNow || previous?.everAgreed ? { everAgreed: true } : {}), status: agreedNow || kept ? ("agreed" as const) : ("proposed" as const), ...(agreedNow ? { agreement: { at: iso(now), via: command.via === "approved" ? ("approved" as const) : ("html-review" as const) } } : kept && previous?.agreement ? { agreement: previous.agreement } : {}) };
       const contracts = [...state.contracts.filter((c) => c.id !== contract.id), next1];
-      return { state: touch({ ...state, contracts }, now, `contract ${contract.id} set`), duplicate: false, result: { contractId: contract.id } };
+      const agreedState = agreedNow && verified === "approved" ? clearIntegrity({ ...state, contracts }, [subjectKey("contract", contract.id)]) : { ...state, contracts };
+      return { state: touch(agreedState, now, `contract ${contract.id} set`), duplicate: false, result: { contractId: contract.id } };
     }
     case "remove-contract": {
       const doomed = state.contracts.find((c) => c.id === command.id);
@@ -2034,11 +2059,14 @@ export function applyPlanningCommand(state: WorkflowState, rawCommand: PlanningC
       return { state: touch({ ...state, waivers: [...state.waivers, waiver] }, now, `waived ${command.kind}${command.requirementId ? ` for ${command.requirementId}` : ""}: ${command.reason}`), duplicate: false, result: { waiverId: waiver.id } };
     }
     case "set-mode": {
-      if (state.mode === command.mode) return { state, duplicate: true, result: { mode: state.mode, unchanged: true } };
-      const report = modeSwitchReport(state, command.mode);
-      const note = { at: iso(now), summary: `mode changed from ${state.mode} to ${command.mode}${command.reason ? `: ${command.reason}` : ""}`, nextAction: nextStep({ ...state, mode: command.mode }).summary };
-      const next = touch({ ...state, mode: command.mode, sessionLog: [...state.sessionLog, note].slice(-200) }, now, `mode ${state.mode} -> ${command.mode}`);
-      return { state: next, duplicate: false, result: { from: state.mode, to: command.mode, report } };
+      // the mode in force: a classic choice the decision ledger does not back is guided, so the user can make it again
+      const from = enforcedMode(state);
+      if (from === command.mode) return { state, duplicate: true, result: { mode: from, unchanged: true } };
+      const report = modeSwitchReport({ ...state, mode: from }, command.mode);
+      const chosen = command.mode === "classic" && verified === "approved" ? clearIntegrity(state, [subjectKey("mode", "mode")]) : state;
+      const note = { at: iso(now), summary: `mode changed from ${from} to ${command.mode}${command.reason ? `: ${command.reason}` : ""}`, nextAction: nextStep({ ...chosen, mode: command.mode }).summary };
+      const next = touch({ ...chosen, mode: command.mode, sessionLog: [...state.sessionLog, note].slice(-200) }, now, `mode ${from} -> ${command.mode}`);
+      return { state: next, duplicate: false, result: { from, to: command.mode, report } };
     }
     case "set-work-item-kind":
       return { state: touch({ ...state, workItem: { ...state.workItem, kind: command.kind } }, now, `work item kind: ${command.kind}`), duplicate: state.workItem.kind === command.kind, result: { kind: command.kind } };

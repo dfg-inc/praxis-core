@@ -1,5 +1,6 @@
 import { analyzeStoryCoverage, acceptanceStatus, nextStep, reviewProgress, storyReviewProgress, type NextStep } from "./planning.js";
 import type { WorkflowState } from "./workflow.js";
+import { trustedView } from "./acceptance-integrity.js";
 
 /**
  * What a new chat needs to continue a work item. Built only from Praxis records, so it never claims to restore the earlier
@@ -27,7 +28,9 @@ export type ResumeBriefing = {
   notRestored: string;
 };
 
-export function buildResumeBriefing(state: WorkflowState): ResumeBriefing {
+export function buildResumeBriefing(rawState: WorkflowState): ResumeBriefing {
+  // what a new chat is told was decided is what the decision ledger backs (acceptance-integrity.ts)
+  const state = trustedView(rawState);
   const coverage = analyzeStoryCoverage(state);
   return {
     workItem: { id: state.workItem.id, title: state.workItem.title, kind: state.workItem.kind ?? "feature", mode: state.mode, request: state.history[0]?.note ?? "" },
@@ -102,7 +105,8 @@ export type RepositoryProgress = {
   verified: boolean;
 };
 
-export function repositoryProgress(state: WorkflowState): RepositoryProgress[] {
+export function repositoryProgress(rawState: WorkflowState): RepositoryProgress[] {
+  const state = trustedView(rawState);
   return state.repositories.map((repo) => {
     const services = state.services.filter((s) => s.repositoryId === repo.id);
     const current = (serviceId: string) => state.implementationUnits.some((u) => u.serviceId === serviceId && !u.stale);
@@ -136,7 +140,9 @@ export type RepositoryBrief = {
   forQuality: string[];
 };
 
-export function buildRepositoryBrief(state: WorkflowState, repositoryId: string): RepositoryBrief {
+export function buildRepositoryBrief(rawState: WorkflowState, repositoryId: string): RepositoryBrief {
+  // readiness and the services it waits for count only approvals and agreements the decision ledger backs
+  const state = trustedView(rawState);
   const repo = state.repositories.find((r) => r.id === repositoryId);
   if (!repo) throw new Error(`repository ${repositoryId} is not registered in this work item`);
   const services = state.services.filter((s) => s.repositoryId === repo.id);
