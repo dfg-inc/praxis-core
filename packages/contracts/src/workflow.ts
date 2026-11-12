@@ -10,6 +10,7 @@ import { PLANNING_ACTIONS, PlanningCommandSchemas, acceptanceStatus, applyPlanni
 import { humanActContent } from "./human-acts.js";
 import { ApprovalRecordSchema, describeApproval, trustOfApproval, type ApprovalRecord, type ApprovalSubject } from "./approval-audit.js";
 import { verifyUserApproval, type UserApproval } from "./user-approval.js";
+import { clearIntegrity, contentDigest, criterionContent, decisionContent, enforcedMode, integrityProblem, isTrusted, serviceContent, storyContent, subjectKey, trustedView } from "./acceptance-integrity.js";
 import { isUserDecision, verifyUserChannel, type ReviewChannel } from "./planning.js";
 import {
   ReviewMarkSchema,
@@ -605,7 +606,7 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
     // refused at preview, before the user is asked: a client reads the current revision and fingerprint (praxis_workflow_inspect, view stories) instead of guessing one
     if (story.revision !== command.revision) throw new WorkflowError("STORY_REVISION", `story ${command.id} is at revision ${story.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view stories)`);
     if (contentFingerprint !== command.contentFingerprint) throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view stories)`);
-    const content = humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint });
+    const content = humanActContent("confirm-story", storyActSubject(story));
     return {
       action: "confirm-story",
       targetId: story.id,
@@ -615,6 +616,7 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
       summary: `Confirm Story ${story.id} revision ${story.revision}`,
       description: [
         `Story ${story.id} (revision ${story.revision}) for requirement(s) ${story.requirementIds.join(", ")}.`,
+        story.title ? `Title: ${story.title}` : "",
         `As ${story.actor}: ${story.narrative}`,
         `Objective: ${story.objective}`,
         `User value: ${story.userValue}`,
@@ -626,8 +628,9 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
         `Business rules:\n${bullet(story.businessRules)}`,
         `Acceptance criteria:\n${bullet(story.acceptanceCriteria.map((c) => `${c.id}: Given ${c.given}; When ${c.when}; Then ${c.then}`))}`,
         `Expected results:\n${bullet(story.expectedResults)}`,
+        `What the user can do (capabilities): ${story.capabilities.join(", ") || "(none declared)"}`,
         `Content fingerprint: ${contentFingerprint}`,
-      ].join("\n"),
+      ].filter(Boolean).join("\n"),
       risks: ["Confirming records that you accept this behavior as written. It does not authorize implementation, commits or pushes."],
     };
   }
@@ -637,7 +640,7 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
     const contentFingerprint = decisionContentFingerprint(decision);
     if (decision.revision !== command.revision) throw new WorkflowError("DECISION_REVISION", `decision ${command.id} is at revision ${decision.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view decisions)`);
     if (contentFingerprint !== command.contentFingerprint) throw new WorkflowError("DECISION_FINGERPRINT", `decision ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view decisions)`);
-    const content = humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint });
+    const content = humanActContent("confirm-decision", decisionActSubject(decision));
     return {
       action: "confirm-decision",
       targetId: decision.id,
@@ -657,12 +660,13 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
   }
   if (command.action === "revise-acceptance") {
     // The user approves the exact rewording. A repeat of the stored text asks for nothing; an unknown id is the reducer's error to report.
-    const rows: Array<{ id: string; requirementId: string; revision: number; status: string; comment?: string; from: string; to: string }> = [];
+    const rows: Array<{ id: string; requirementId: string; revision: number; status: string; comment?: string; from: string; to: string; contentDigest: string }> = [];
     for (const edit of command.edits) {
       const owner = state.requirements.find((r) => r.status !== "superseded" && r.acceptanceCriteria.some((c) => c.id === edit.id));
       const criterion = owner?.acceptanceCriteria.find((c) => c.id === edit.id);
       if (!owner || !criterion) return null;
-      if (criterion.statement.trim() !== edit.statement.trim()) rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...(criterion.review.comment ? { comment: criterion.review.comment } : {}), from: criterion.statement, to: edit.statement.trim() });
+      // contentDigest: the old wording as the decision ledger records it, so the approval is for exactly what it takes back
+      if (criterion.statement.trim() !== edit.statement.trim()) rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...(criterion.review.comment ? { comment: criterion.review.comment } : {}), from: criterion.statement, to: edit.statement.trim(), contentDigest: contentDigest(criterionContent(owner.id, criterion)) });
     }
     if (rows.length === 0) return null;
     const content = humanActContent("revise-acceptance", { workItemId: state.workItem.id, edits: rows });
@@ -685,7 +689,8 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
   if (command.action === "set-service") {
     const approving = command.service.status === "approved" || command.service.status === "completed";
     const previous = state.services.find((item) => item.id === command.service.id);
-    if (!approving || (previous && fingerprintPayload(previous) === fingerprintPayload(command.service))) return null;
+    // an approval the decision ledger does not back is no approval: the same service again asks the user again
+    if (!approving || (previous && fingerprintPayload(previous) === fingerprintPayload(command.service) && isTrusted(state, subjectKey("service", previous.id)))) return null;
     const subject = serviceApprovalSubject(state, command.service);
     const content = humanActContent("approve-service", subject);
     const verdicts = state.verdicts.filter((v) => !v.stale && v.scope === "service" && v.scopeId === command.service.id);
@@ -708,6 +713,18 @@ export function humanActRequest(state: WorkflowState, command: WorkflowCommand):
     };
   }
   return null;
+}
+
+/**
+ * What an approval of a human act binds. Besides the fingerprint a client sends, the exact content digest the decision ledger
+ * records for the subject (acceptance-integrity.ts): a file changed between the dialog and the write (even in a field the old
+ * fingerprint did not cover) no longer matches the approval, so nothing is recorded for content the user was not shown.
+ */
+function storyActSubject(story: WorkflowState["stories"][number]): Record<string, unknown> {
+  return { storyId: story.id, revision: story.revision, contentFingerprint: storyContentFingerprint(story), contentDigest: contentDigest(storyContent(story)) };
+}
+function decisionActSubject(decision: WorkflowState["decisions"][number]): Record<string, unknown> {
+  return { decisionId: decision.id, revision: decision.revision, contentFingerprint: decisionContentFingerprint(decision), contentDigest: contentDigest(decisionContent(decision)) };
 }
 
 export function decisionContentFingerprint(decision: {
@@ -737,6 +754,7 @@ export function serviceApprovalSubject(
     serviceId: service.id,
     status: service.status,
     serviceDigest: fingerprintPayload(rest),
+    contentDigest: contentDigest(serviceContent(service)),
     implementation: state.implementationUnits
       .filter((unit) => unit.serviceId === service.id && !unit.stale)
       .map((unit) => ({ id: unit.id, path: unit.path, summary: unit.summary }))
@@ -887,7 +905,7 @@ export function resumeWorkflow(state: WorkflowState): {
   };
 }
 
-export function featureReadiness(state: WorkflowState): {
+export function featureReadiness(rawState: WorkflowState): {
   ready: boolean;
   serviceStatus: Record<string, WorkflowStage>;
   /** Services that depend on something not done, or on something that is not a service of this work item. */
@@ -895,6 +913,8 @@ export function featureReadiness(state: WorkflowState): {
   /** Dependencies named by a service that no service of this work item provides. */
   unknownDependencies: string[];
 } {
+  // an approval counts only when the decision ledger backs it (acceptance-integrity.ts)
+  const state = trustedView(rawState);
   const serviceStatus: Record<string, WorkflowStage> = {};
   for (const service of state.services) serviceStatus[service.id] = service.status;
   const done = (status: WorkflowStage) => status === "approved" || status === "completed";
@@ -1026,7 +1046,9 @@ export type RequirementEvidence =
  * executed PASS (see quality-model.ts). Used by record-verification, quality-check, verify-stories and feature-verdict, so their
  * requirement verdicts cannot diverge.
  */
-export function requirementEvidence(state: WorkflowState, requirementId: string): RequirementEvidence {
+export function requirementEvidence(rawState: WorkflowState, requirementId: string): RequirementEvidence {
+  // a story confirmation counts only when the decision ledger backs it
+  const state = trustedView(rawState);
   const cov = requirementCoverage(state, requirementId);
   if (cov.noEvidence) return { status: "missing", reasons: ["missing independent evidence", ...cov.reasons.filter((r) => r.includes("older revision"))] };
   const scenarios = state.coverage.filter((e) => e.requirementId === requirementId && cov.criteria.some((c) => c.scenarios.includes(e.scenarioId)));
@@ -1547,7 +1569,9 @@ function applyWorkflowCommandCore(
     }
     const previous = state.services.find((service) => service.id === command.service.id);
     const approving = command.service.status === "approved" || command.service.status === "completed";
-    const unchanged = previous !== undefined && fingerprintPayload(previous) === fingerprintPayload(command.service);
+    // a stored approval the decision ledger does not back is not kept as "unchanged": approving it again asks the user
+    const unchanged = previous !== undefined && fingerprintPayload(previous) === fingerprintPayload(command.service) && (!approving || isTrusted(state, subjectKey("service", previous.id)));
+    let approved = false;
     if (approving && !unchanged) {
       // Marking a service approved is an act of authority, not a progress note: it needs the user's approval bound
       // to this service as recorded and the implementation under it.
@@ -1561,12 +1585,14 @@ function applyWorkflowCommandCore(
         action: "approve-service",
         subject: humanActContent("approve-service", serviceApprovalSubject(state, command.service)),
       });
+      approved = true;
     }
     const services = [
       ...state.services.filter((service) => service.id !== command.service.id),
       command.service,
     ];
-    return { state: { ...state, services }, duplicate: false, result: featureReadiness({ ...state, services }) };
+    const next = approved ? clearIntegrity({ ...state, services }, [subjectKey("service", command.service.id)]) : { ...state, services };
+    return { state: next, duplicate: false, result: featureReadiness(next) };
   }
   if (command.action === "clarify") {
     const asked = questionsToAsk(command.questions);
@@ -1606,10 +1632,10 @@ function applyWorkflowCommandCore(
     }
     verifyUserApproval(options.userApproval, {
       action: "confirm-decision",
-      subject: humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint }),
+      subject: humanActContent("confirm-decision", decisionActSubject(decision)),
     });
     const decisions = state.decisions.map((item) => (item.id === decision.id ? { ...item, confirmed: true } : item));
-    let confirmed: WorkflowState = { ...state, decisions };
+    let confirmed: WorkflowState = clearIntegrity({ ...state, decisions }, [subjectKey("decision", decision.id)]);
     if (confirmed.stage === "clarification_required" && TRANSITIONS[confirmed.stage].includes("ready")) {
       confirmed = { ...transition(confirmed, "ready", `decision ${command.id} confirmed`), decisions };
     }
@@ -1647,7 +1673,7 @@ function applyWorkflowCommandCore(
     return { state: next, duplicate: false, result: { decisionId: command.id, confirmed: command.confirmed, revision: recorded.revision, contentFingerprint: decisionContentFingerprint(recorded) } };
   }
   if (command.action === "record-implementation") {
-    if (state.mode === "guided" && !state.services.some((s) => s.id === command.serviceId)) {
+    if (enforcedMode(state) === "guided" && !state.services.some((s) => s.id === command.serviceId)) {
       throw new WorkflowError("SERVICE_NOT_FOUND", `service ${command.serviceId} is not part of this work item (set-service first): an implementation record needs a service`);
     }
     const implementationUnits = [
@@ -1686,9 +1712,11 @@ function applyWorkflowCommandCore(
     if (state.stories.some((story) => story.id === command.id && story.status !== "superseded")) {
       throw new WorkflowError("DUPLICATE_STORY", `story ${command.id} already exists`);
     }
-    if (state.mode === "guided") {
+    if (enforcedMode(state) === "guided") {
       // Detailed stories come after an agreed plan, one per planned line: no dozens of stories before the plan is checked.
       const entry = state.storyPlan?.entries.find((item) => item.id === command.id);
+      const planIntegrity = integrityProblem(state, subjectKey("phase", "story_plan"));
+      if (planIntegrity && acceptanceStatus(state, "story_plan") !== "stale") throw new WorkflowError(planIntegrity.code, planIntegrity.text, { subject: planIntegrity.subject });
       if (acceptanceStatus(state, "story_plan") !== "accepted") {
         throw new WorkflowError("STORY_PLAN_NOT_AGREED", "write and agree the story plan first (set-story-plan, then agree-story-plan); detailed stories follow the agreed plan");
       }
@@ -1751,12 +1779,12 @@ function applyWorkflowCommandCore(
     }
     verifyUserApproval(options.userApproval, {
       action: "confirm-story",
-      subject: humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint }),
+      subject: humanActContent("confirm-story", storyActSubject(story)),
     });
     const stories = state.stories.map((item) =>
       item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" as const } : item,
     );
-    return { state: { ...state, stories }, duplicate: false, result: { storyId: story.id, confirmedBehavior: true } };
+    return { state: clearIntegrity({ ...state, stories }, [subjectKey("story", story.id)]), duplicate: false, result: { storyId: story.id, confirmedBehavior: true } };
   }
   if (command.action === "verify-stories" || command.action === "prepare-fix") {
     throw new WorkflowError(
@@ -1868,7 +1896,7 @@ function applyWorkflowCommandCore(
       });
     }
     for (const requirementId of [...new Set(incoming.map((scenario) => scenario.requirementId))]) {
-      const cov = requirementCoverage(next, requirementId);
+      const cov = requirementCoverage(trustedView(next), requirementId);
       if (cov.noEvidence) continue;
       const evidence = requirementEvidence(next, requirementId);
       if (evidence.status !== "executed") continue;
@@ -1886,7 +1914,7 @@ function applyWorkflowCommandCore(
       });
     }
     // the feature result is the same computation feature-verdict uses over the evidence; readiness (approvals) is added there
-    const evaluation = evaluateEvidence(next);
+    const evaluation = evaluateEvidence(trustedView(next));
     const verdictId = `V-STORY-${next.verdicts.length + 1}`;
     next = recordVerdict(next, {
       id: verdictId,
@@ -1972,7 +2000,8 @@ function applyWorkflowCommandCore(
           role: command.sourceRole,
         })),
       decisions: state.decisions.map((d) => d.id),
-      decisionRecords: state.decisions.map((d) => ({ ...d })),
+      // a confirmation is handed on only when the decision ledger backs it
+      decisionRecords: trustedView(state).decisions.map((d) => ({ ...d })),
       assumptions: carried.assumptions,
       openQuestions: carried.openQuestions,
       risks: carried.risks,
@@ -2091,7 +2120,9 @@ export function effectiveServices(state: WorkflowState): Service[] {
   });
 }
 
-export function evaluateFeature(state: WorkflowState): { verdict: QualityVerdict; gaps: string[]; evidence: FeatureEvaluation; readinessGaps: string[] } {
+export function evaluateFeature(rawState: WorkflowState): { verdict: QualityVerdict; gaps: string[]; evidence: FeatureEvaluation; readinessGaps: string[] } {
+  // confirmations and approvals count only when the decision ledger backs them (acceptance-integrity.ts)
+  const state = trustedView(rawState);
   const evidence = evaluateEvidence(state);
   const readinessGaps: string[] = [];
   for (const service of state.services) {

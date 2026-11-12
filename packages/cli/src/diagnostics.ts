@@ -37,11 +37,23 @@ export type ApprovalReport = {
   mode: "client-ui" | "no-dialog";
   /** Stated plainly, including what does not work. */
   note: string;
-  /** Where decisions are journaled (outside the repository). */
+  /** Where decisions are journaled (outside the repository): a log for review, never evidence of an approval. */
   decisionLog: string;
+  /** Always false: a dialog answer is never verified identity, and no independent approval authority exists. */
+  personVerified: false;
+  independentlyVerified: false;
+  /** Set when Praxis's security state would be inside the repository: then it is neither read nor written, and protected actions are refused. */
+  stateInsideRepository?: string;
 };
 
-import { approvalModeReport, decisionLogPath } from "@praxis/contracts";
+/** The credential variables this server inherited, by name only, and what that means (praxis_doctor credentialExposure). */
+export type CredentialExposureReport = {
+  inheritedCredentialVariables: string[];
+  note: string;
+  jira: { credentialInInheritedEnvironment: boolean; independentlyApproved: false; reason: string };
+};
+
+import { approvalModeReport, decisionLogPath, securityStateInsideRepository } from "@praxis/contracts";
 
 const present = (value: string | undefined): boolean => Boolean(value && value.trim());
 
@@ -116,7 +128,38 @@ export function providerDiagnostics(
 
 export function approvalDiagnostics(_env: NodeJS.ProcessEnv, repo?: string): ApprovalReport {
   const report = approvalModeReport();
-  return { mode: report.mode, note: report.note, decisionLog: repo ? decisionLogPath(repo) : "~/.praxis/decisions/<repository id>.jsonl" };
+  let decisionLog = "<account home>/.praxis/decisions/<repository key>.jsonl";
+  let inside: string | undefined;
+  try {
+    if (repo) {
+      decisionLog = decisionLogPath(repo);
+      inside = securityStateInsideRepository(repo);
+    }
+  } catch (error) {
+    decisionLog = `unavailable: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  return { mode: report.mode, note: report.note, decisionLog, personVerified: false, independentlyVerified: false, ...(inside ? { stateInsideRepository: inside } : {}) };
+}
+
+/**
+ * Names only: never a value, a length or a prefix. Redaction keeps these values out of Praxis's own output; it cannot take
+ * them out of an environment that was already inherited, and everything started the same way has them.
+ */
+export function credentialExposure(names: string[]): CredentialExposureReport {
+  const jira = names.includes("PRAXIS_JIRA_TOKEN");
+  return {
+    inheritedCredentialVariables: [...names].sort(),
+    note: names.length
+      ? `This server inherited ${[...names].sort().join(", ")} from the process that started it. Any process started the same way, an agent's shell included, can read these variables; Praxis cannot remove them from an environment that was already inherited. What Praxis does: it replaces their values with [REDACTED:<NAME>] in everything it outputs, and it does not hand them to the repository code it starts (tests, quality checks, git hooks), so they are not in that code's own environment or in what it logs from it. That is hygiene, not a boundary: any program running as you, repository code Praxis starts included, can read this server's own environment (ps -E on macOS, /proc/<pid>/environ on Linux), and that includes a token the Claude Desktop extension settings gave only to this server. In a terminal client the token usually also comes from the shell that started everything.`
+      : "No credential variable is in the environment this server inherited.",
+    jira: {
+      credentialInInheritedEnvironment: jira,
+      independentlyApproved: false,
+      reason: jira
+        ? "PRAXIS_JIRA_TOKEN is in the environment this server inherited: any process started the same way, the agent's shell included, can read it and call Jira directly, without Praxis or its approval dialog. A Jira write through Praxis is approved only in the client's dialog, which is not independent of the agent."
+        : "No independent approval authority exists in this release: a Jira write through Praxis is approved only in the client's dialog, which is not independent of the agent.",
+    },
+  };
 }
 
 export function doctorNextSteps(input: {
@@ -167,6 +210,11 @@ export function doctorNextSteps(input: {
     if (report.state === "partial") {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
+  }
+  if (input.approval.stateInsideRepository) {
+    steps.push(
+      `Praxis's security state (the decision journal and ledger) would be inside this repository (${input.approval.stateInsideRepository}), where the repository's contents can edit it. It is neither read nor written there, and protected actions are refused. Operate on a repository that does not contain your account's .praxis folder.`,
+    );
   }
   if (input.approval.mode === "no-dialog") {
     steps.push(

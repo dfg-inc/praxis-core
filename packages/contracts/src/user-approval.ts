@@ -1,25 +1,28 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { appendFileSync, chmodSync, constants as fsConstants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { userInfo } from "node:os";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { DecisionKind } from "./authority.js";
 
 /**
  * User approval: the whole authorization model.
  *
- *   Action -> Preview -> the user approves or rejects -> Execute -> Result.
+ *   Action -> Preview -> the client's approval dialog answers approve or reject -> Execute -> Result.
  *
- * The person who uses Praxis decides, in the interface of their MCP client. Praxis asks through the client's own
- * elicitation dialog (the client shows the preview and returns Approve / Reject / Dismiss). That answer arrives as a
- * protocol response to the server, not as a tool argument, so an agent cannot write it.
+ * Praxis asks through the MCP client's own elicitation dialog (the client shows the preview and returns Approve / Reject /
+ * Dismiss). That answer arrives as a protocol response to the server, not as a tool argument, so an agent cannot write it
+ * through Praxis's tools.
  *
  * An answer in that dialog is a client response: Praxis knows the client's dialog answered, not who or what answered it. It
- * is not independently authenticated human authorization, and nothing on the user's computer can provide that (an agent with
- * a shell on the same account can reach every file, setting and loopback page). So no other channel stands in for the dialog:
- * not the agent's confirmation, not a page Praxis serves, not a setting in a repository, the environment or the account's
- * files. A client that cannot show the dialog (or answers it without showing it, as the Claude Desktop Code tab does) gets
- * the protected action NOT executed. Read-only functionality and the agent's own notes keep working.
+ * is not verified approval by a person, and nothing on the user's computer can provide that: a program running as the user
+ * (T-same-user) can start its own MCP client that declares the dialog and answers it (R1), or change the installed Runtime.
+ * No local check stops that, and Praxis does not claim otherwise. Every approval, result and journal entry therefore says
+ * which channel answered (`channel`, `decidedBy`) and that neither a person nor an independent authority verified it
+ * (`personVerified: false`, `independentlyVerified: false`). No other channel stands in for the dialog: not the agent's
+ * confirmation, not a page Praxis serves, not a setting in a repository, the environment or the account's files. A client
+ * that cannot show the dialog (or answers it without showing it, as the Claude Desktop Code tab does) gets the protected
+ * action NOT executed. Read-only functionality and the agent's own notes keep working.
  *
  * What an approval is bound to: one action and one subject (the exact content shown in the preview). An approval
  * for another action, or for the same action after its content changed, does not verify. Rejection and dismissal
@@ -67,21 +70,23 @@ export type ApprovalRequest = {
 export type AnswerEvidence = { latencyMs?: number; requestId?: string; via?: string; client?: string; /** When the person decided, if that was before the answer was used (the approval page). */ decidedAt?: string };
 
 /**
- * approve / reject / dismiss: the user's answer in the client's dialog or the approval page.
- * unavailable: there was no way to ask the person on this connection, so nobody decided. `automatic` says the client
- * answered by itself (for example `decline` a few milliseconds after it was asked, with no dialog on screen): that is the
- * client's answer, never the user's. The request is then handled as a client with no dialog, never as a yes or a no.
+ * approve / reject / dismiss: what the channel that was asked answered (the client's dialog; in the test source only, the
+ * approval page). It is the channel's answer: Praxis cannot tell whether a person or automation produced it.
+ * unavailable: there was no way to ask on this connection, so nobody decided. `automatic` says the client answered by
+ * itself (for example `decline` a few milliseconds after it was asked, with no dialog on screen): that is the client's
+ * answer, never the user's. The request is then handled as a client with no dialog, never as a yes or a no.
  */
 export type AskAnswer = {
   answer: "approve" | "reject" | "dismiss" | "unavailable";
   reason?: string;
   evidence?: AnswerEvidence;
   automatic?: "accept" | "decline" | "cancel";
-  /** The channel wrote this decision to the journal when it was made (the approval page logs the click itself). */
+  /** The channel wrote this decision to the journal itself (the test-source approval page logs its click). */
   journaled?: true;
   /**
-   * Which channel actually answered, when a channel hands some requests to another (Trusted Client and host-permission
-   * hand acts only a person may perform to the approval page). The approval is labelled with this, never with the wrapper's.
+   * Which channel actually answered, when a channel hands a request to another (in the test source, the client dialog hands
+   * a client that answers by itself to the approval page). The approval is labelled with this, never with the wrapper's.
+   * (Trusted Client and host-permission, which did this in 0.1.0-alpha.48 to alpha.49.1, are removed.)
    */
   channel?: ApprovalChannelKind;
 };
@@ -101,10 +106,22 @@ export type UserApproval = Readonly<{
   subjectDigest: string;
   decision: "approved";
   channel: ApprovalChannelKind;
+  /** The channel that answered, as the journal names it (client-dialog, terminal-prompt ...). Never a person. */
+  decidedBy: DecidedBy;
+  /** Always false: Praxis cannot verify that a person, rather than automation, answered the channel. */
+  personVerified: false;
+  /** Always false: no approval authority independent of the user's own computer exists in this release. */
+  independentlyVerified: false;
   assurance: ApprovalAssurance;
   decidedAt: string;
   reason?: string;
 }>;
+
+/** The labels every approval record, journal entry and protected-action result carries. */
+export type ApprovalLabels = { channel: ApprovalChannelKind | "none"; decidedBy: DecidedBy; personVerified: false; independentlyVerified: false };
+
+/** A dialog answer is never verified identity: these two are false on everything Praxis records or returns. */
+export const approvalLabels = (channel: ApprovalChannelKind | "none", decidedBy: DecidedBy): ApprovalLabels => ({ channel, decidedBy, personVerified: false, independentlyVerified: false });
 
 // A UserApproval is only real if this module made it. Parsed JSON, a tool argument or a look-alike object is not in
 // this set, so no data an agent can send is ever mistaken for an approval.
@@ -117,13 +134,16 @@ const assuranceOf = (channel: ApprovalChannelKind): ApprovalAssurance =>
 
 /**
  * Codes for an action that did not run, one per outcome, so none is mistaken for another:
- *   APPROVAL_REJECTED            the user rejected it (in a dialog or the approval page)
- *   APPROVAL_DISMISSED           the user closed the dialog without deciding
+ *   APPROVAL_REJECTED            the channel that was asked answered reject (the client's dialog; the approval page in the
+ *                                test source only)
+ *   APPROVAL_DISMISSED           the dialog was closed without a decision
  *   APPROVAL_WITHDRAWN           the agent stopped it (confirmation=NO): no decision of the user is claimed
- *   APPROVAL_PENDING             the approval page is open and nobody has decided yet
+ *   APPROVAL_PENDING             the test-source approval page is open and nobody has decided yet (a shipped Runtime has no page)
  *   APPROVAL_TIMED_OUT           a dialog was shown and nobody answered in time
  *   APPROVAL_EXPIRED             an answer or a page request is too old to use
- *   APPROVAL_CLIENT_UI_REQUIRED  there is no way to ask the user here (no dialog, or the client answered by itself)
+ *   APPROVAL_CLIENT_UI_REQUIRED  there is no way to ask here (no dialog, or the client answered by itself)
+ *   DECISION_LEDGER_UNAVAILABLE  Praxis's security state (decision journal, decision ledger) has no safe location: it would
+ *                                be inside the repository being operated on, or the account home cannot be determined
  *   APPROVAL_SCOPE_MISMATCH / APPROVAL_TOO_LARGE / APPROVAL_REQUIRED  Praxis refused before asking
  */
 export type ApprovalErrorCode =
@@ -136,7 +156,8 @@ export type ApprovalErrorCode =
   | "APPROVAL_SCOPE_MISMATCH"
   | "APPROVAL_EXPIRED"
   | "APPROVAL_TIMED_OUT"
-  | "APPROVAL_TOO_LARGE";
+  | "APPROVAL_TOO_LARGE"
+  | "DECISION_LEDGER_UNAVAILABLE";
 
 /** Standalone (no dependency on workflow.ts, which depends on this file). Carries the same `code` as WorkflowError. */
 export class ApprovalError extends Error {
@@ -184,6 +205,9 @@ export function createUserApproval(input: {
     subjectDigest: subjectDigest(input.request.subject),
     decision: "approved" as const,
     channel: input.channel,
+    decidedBy: decidedByFor(input.channel),
+    personVerified: false as const,
+    independentlyVerified: false as const,
     assurance: assuranceOf(input.channel),
     decidedAt: (input.now ?? new Date()).toISOString(),
     ...(input.reason ? { reason: input.reason } : {}),
@@ -212,14 +236,21 @@ export function approvalsGivenInThisCall(): readonly UserApproval[] {
 }
 
 /** What a diagnostic can say about how approvals will be obtained right now. */
-export function approvalModeReport(): { mode: "client-ui" | "no-dialog"; note: string } {
+export function approvalModeReport(): { mode: "client-ui" | "no-dialog"; note: string; personVerified: false; independentlyVerified: false } {
   const channel = currentApprovalChannel();
   if (channel && channel.kind !== "host-permission" && channel.kind !== "trusted-client" && channel.kind !== "approval-page") {
-    return { mode: "client-ui", note: "Protected actions are approved or rejected in the client's own dialog: a client response, which the agent cannot write through Praxis. It is not independently authenticated: Praxis cannot prove that a person, rather than automation, answered." };
+    return {
+      mode: "client-ui",
+      note: "Protected actions run only when the client's own approval dialog answers approve for exactly that action. That answer is a client response, which the agent cannot write through Praxis's tools; it is not verified approval by a person: Praxis cannot tell whether a person or automation answered, and a program running as the user can run its own MCP client and answer it.",
+      personVerified: false,
+      independentlyVerified: false,
+    };
   }
   return {
     mode: "no-dialog",
-    note: "This client cannot show an approval dialog (no MCP elicitation support). Read-only tools and previews work; protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed, because nothing the agent says can stand in for the user's approval. Use a client that supports elicitation.",
+    note: "This client cannot show an approval dialog (no MCP elicitation support). Read-only tools and previews work; protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed, because nothing the agent says can stand in for an answer in the client's dialog. Use a client that supports elicitation.",
+    personVerified: false,
+    independentlyVerified: false,
   };
 }
 
@@ -228,10 +259,11 @@ export function approvalModeReport(): { mode: "client-ui" | "no-dialog"; note: s
 /**
  * What happened to one request, in the journal. Only approved / rejected / dismissed came from a channel that answered, and
  * then decidedBy names that channel (client-dialog, terminal-prompt; approval-page in earlier versions and the test source)
- * and personVerified is false: Praxis knows which channel answered, never that a person (rather than automation driving that
- * channel) did. Entries written
- * before journal v2 have no decidedBy; see decision-journal.ts for how they are read and amended.
- *   pending        the approval page is open, nobody decided yet
+ * and personVerified and independentlyVerified are false: Praxis knows which channel answered, never that a person (rather
+ * than automation driving that channel) did. Entries written before journal v2 have no decidedBy; see decision-journal.ts
+ * for how they are read and amended.
+ *   pending        the test-source approval page is open, nobody decided yet
+ *   refused        also: Praxis's security state would be inside the repository (DECISION_LEDGER_UNAVAILABLE)
  *   timed-out      a dialog was shown and nobody answered in time
  *   expired        a page request or an answer became too old to use
  *   withdrawn      the agent stopped the action (confirmation=NO)
@@ -260,9 +292,12 @@ export type DecisionLogEntry = {
   channel: ApprovalChannelKind | "none";
   /** Journal format: 2 adds decidedBy and evidence. Absent on entries written before. */
   v?: 2;
+  /** Always written since journal v2; absent only on older entries. */
   decidedBy?: DecidedBy;
   /** Always false when present: Praxis cannot verify that a person, rather than automation, answered a user channel. */
   personVerified?: false;
+  /** Always false when present (written since 0.1.0-alpha.49.3): no independent approval authority exists. */
+  independentlyVerified?: false;
   evidence?: AnswerEvidence;
   reason?: string;
   /** The repository the decision was about (kept in the entry, not in the repository). */
@@ -272,24 +307,218 @@ export type DecisionLogEntry = {
 const decidedByFor = (channel: ApprovalChannelKind): DecidedBy =>
   channel === "trusted-client" ? "trusted-client" : channel === "host-permission" ? "host-prompt" : channel === "approval-page" ? "approval-page" : channel === "terminal-prompt" ? "terminal-prompt" : "client-dialog";
 
+// --- where security state lives -------------------------------------------------------------------------------------
+
 /**
- * Where the decision journal lives: in the user's own Praxis home (PRAXIS_STATE_HOME, default ~/.praxis), one file per
- * repository, never inside the repository, so it can neither be committed nor edited as part of the project.
+ * The home of Praxis's security state (the decision journal here; the decision ledger): `<account home>/.praxis`, with the
+ * account home read from the OS account database (os.userInfo), never from HOME or PRAXIS_STATE_HOME.
+ *
+ * Tier: T-repo. A repository's `.claude/settings.json` `env` block (and an `.mcp.json` server entry) reaches the Runtime's
+ * environment, so no environment variable may move this location in a shipped bundle. The test override PRAXIS_STATE_HOME
+ * is honoured only when the build is not a shipped one (PRAXIS_BUNDLE_KIND is the constant "production" there, the same
+ * gate as createUserApproval). It does not stop T-sandboxed-agent from reading these files, nor T-same-user from writing
+ * them: anything stored on the user's account is writable by a program running as the user.
+ *
+ * Throws when the account home cannot be read from the account database (callers fail closed).
  */
-export function decisionLogPath(repo: string): string {
-  const root = resolve(repo);
-  const home = process.env.PRAXIS_STATE_HOME?.trim() || join(homedir(), ".praxis");
-  const id = createHash("sha256").update(root).digest("hex").slice(0, 16);
-  return join(home, "decisions", `${id}.jsonl`);
+export function securityStateHome(): string {
+  if (process.env.PRAXIS_BUNDLE_KIND !== "production") {
+    const override = process.env.PRAXIS_STATE_HOME?.trim();
+    if (override) return resolve(override);
+  }
+  const home = userInfo().homedir;
+  if (!home) throw new ApprovalError("DECISION_LEDGER_UNAVAILABLE", "the account home cannot be read from the OS account database, so Praxis has no place for its security state");
+  return join(home, ".praxis");
 }
 
-/** Best effort: the journal is for the user's later review; a write failure never changes a decision. */
-export function logDecision(repo: string | undefined, entry: DecisionLogEntry): void {
+const realOrResolved = (path: string): string => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+};
+
+/** The nearest existing ancestor's real path, plus the rest: a location that does not exist yet still resolves through links. */
+function realLocation(path: string): string {
+  const rest: string[] = [];
+  let current = resolve(path);
+  for (;;) {
+    try {
+      return join(realpathSync(current), ...rest);
+    } catch {
+      const up = dirname(current);
+      if (up === current) return resolve(path);
+      rest.unshift(basename(current));
+      current = up;
+    }
+  }
+}
+
+/**
+ * The common directory of a linked worktree whose `.git` file is `dotGit`, or undefined. Git's own layout is required, all
+ * of it resolved through links: the `.git` file names a git directory that is a direct child of
+ * `<common directory>/worktrees/`, that git directory's `commondir` names the common directory, and its `gitdir` back-pointer
+ * names this very `.git` file. A back-pointer alone proves nothing: a planted `.git` file can name a git directory the
+ * planter wrote, back-pointer included (T-repo: an archive or a pull request; T-sandboxed-agent: any folder it can write).
+ * Requiring the git directory to sit under the other repository's own `worktrees/` means only someone who can already write
+ * that repository's git directory can join it.
+ */
+export function linkedWorktreeCommonDir(dotGit: string): string | undefined {
+  try {
+    const named = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, "utf8"))?.[1];
+    if (!named) return undefined;
+    const gitDir = realpathSync(resolve(dirname(dotGit), named));
+    const common = realpathSync(resolve(gitDir, readFileSync(join(gitDir, "commondir"), "utf8").trim()));
+    if (dirname(gitDir) !== join(common, "worktrees")) return undefined;
+    const back = realpathSync(resolve(gitDir, readFileSync(join(gitDir, "gitdir"), "utf8").trim()));
+    return back === realpathSync(dotGit) ? common : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The account's home from the OS account database, through links; undefined when it cannot be read. */
+function accountHomeReal(): string | undefined {
+  try {
+    const home = userInfo().homedir;
+    return home ? realpathSync(home) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export type RepositoryIdentity = {
+  key: string;
+  kind: "git" | "directory";
+  /** The real path the caller's path resolves to. */
+  real: string;
+  /** The work tree that holds the `.git` entry (git), or the real path (directory). */
+  root: string;
+  /** What the key is computed from: the git common directory, or the real path. */
+  basis: string;
+  /** The folders that are "the repository" for the inside-the-repository rule. */
+  roots: string[];
+};
+
+/**
+ * The repository a path belongs to, independent of how the caller spelled it. Walking up from the real path, the first
+ * `.git` entry decides:
+ *   - a `.git` directory: its real path is the git common directory (a `commondir` file inside it is not followed);
+ *   - a `.git` file: a linked worktree only when linkedWorktreeCommonDir confirms it, keyed by that common directory;
+ *   - anything else (a `.git` file that is not a confirmed worktree, a submodule, a link, a special file): the path is keyed
+ *     as a plain directory, and the walk stops there.
+ * The walk never reaches the account's home folder (`accountHome`, default: from the OS account database): a dotfiles
+ * repository at home must neither join every project under it into one key nor make the security state at `~/.praxis` look
+ * "inside the repository" for all of them. Outside git, the key is the real path. The runtime's decision ledger uses this
+ * same function, so the decision journal and the ledger name one repository alike.
+ */
+export function repositoryIdentity(repo: string, options: { accountHome?: string } = {}): RepositoryIdentity {
+  const real = realOrResolved(repo);
+  const home = options.accountHome !== undefined ? realOrResolved(options.accountHome) : accountHomeReal();
+  const directory = (): RepositoryIdentity => ({ key: createHash("sha256").update(`dir:${real}`).digest("hex"), kind: "directory", real, root: real, basis: real, roots: [real] });
+  for (let dir = real; ; ) {
+    if (home !== undefined && dir === home) return directory();
+    const dotGit = join(dir, ".git");
+    let st: ReturnType<typeof lstatSync> | undefined;
+    try {
+      st = lstatSync(dotGit);
+    } catch {
+      st = undefined;
+    }
+    if (st) {
+      const common = st.isDirectory() ? realOrResolved(dotGit) : st.isFile() ? linkedWorktreeCommonDir(dotGit) : undefined;
+      if (!common) return directory();
+      const mainTree = basename(common) === ".git" ? dirname(common) : undefined;
+      return {
+        key: createHash("sha256").update(`git:${common}`).digest("hex"),
+        kind: "git",
+        real,
+        root: dir,
+        basis: common,
+        roots: [...new Set([real, dir, common, ...(mainTree ? [mainTree] : [])])],
+      };
+    }
+    const up = dirname(dir);
+    if (up === dir) return directory();
+    dir = up;
+  }
+}
+
+/** A key for one repository: sha256 of the real path of its git common directory (or of its real path outside git). */
+export const repositoryKey = (repo: string): string => repositoryIdentity(repo).key;
+
+const within = (child: string, parent: string): boolean => child === parent || child.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`);
+
+/**
+ * The security state home when it resolves inside the repository being operated on (through links too), else undefined.
+ * Tier: T-repo and T-sandboxed-agent: either can write the repository, so state kept there is theirs to edit. Reads and
+ * writes of security state there are refused, not only protected actions.
+ */
+export function securityStateInsideRepository(repo: string, home?: string, options: { accountHome?: string } = {}): string | undefined {
+  let location: string;
+  try {
+    location = realLocation(home ?? securityStateHome());
+  } catch {
+    return undefined; // no home at all is reported by securityStateHome's own refusal
+  }
+  return repositoryIdentity(repo, options).roots.some((root) => within(location, root)) ? location : undefined;
+}
+
+/** Throws DECISION_LEDGER_UNAVAILABLE when Praxis has no safe place for security state for this repository. */
+export function assertSecurityStateOutside(repo: string): string {
+  const home = securityStateHome();
+  const inside = securityStateInsideRepository(repo, home);
+  if (inside) {
+    throw new ApprovalError(
+      "DECISION_LEDGER_UNAVAILABLE",
+      `Praxis's security state (the decision journal and ledger) would be inside the repository being operated on (${inside}), where the repository's own contents can edit it. It is neither read nor written there, and protected actions are refused. Nothing was changed.`,
+      { executed: false, outcome: "refused", ...approvalLabels("none", "praxis"), stateHome: inside },
+    );
+  }
+  return home;
+}
+
+/**
+ * Where the decision journal lives: `<security state home>/decisions/<repository key>.jsonl`, outside the repository, keyed
+ * by the repository's identity (repositoryKey), not by how the caller spelled the path. The journal is a log for the
+ * user's later review, never evidence: nothing in Praxis reads it to decide whether an action may run.
+ */
+export function decisionLogPath(repo: string): string {
+  return join(securityStateHome(), "decisions", `${repositoryKey(repo)}.jsonl`);
+}
+
+/**
+ * Journals written before 0.1.0-alpha.49.3 were named after the path as the caller spelled it (sha256(path.resolve(repo)),
+ * 16 hex characters). The first time a repository's journal is used, such a file in the same home is copied to the
+ * repository's journal and the old file is left as it was, so the review (praxis_approval_journal) and its amendments still
+ * see the earlier entries. Only the file for this exact spelling is adopted: older journals of other worktrees or other
+ * spellings are not merged, because an amendment names its entry by line number and hash within its own file, and merging
+ * would break that (documented in docs/user-approval.md). The journal is a log, never evidence: where an old line came from
+ * decides nothing.
+ */
+export function adoptLegacyDecisionLog(repo: string): void {
+  const path = decisionLogPath(repo);
+  if (existsSync(path)) return;
+  const legacy = join(dirname(path), `${createHash("sha256").update(resolve(repo)).digest("hex").slice(0, 16)}.jsonl`);
+  if (!existsSync(legacy)) return;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  copyFileSync(legacy, path, fsConstants.COPYFILE_EXCL);
+  chmodSync(path, 0o600);
+}
+
+/**
+ * Best effort: the journal is for the user's later review; a write failure never changes a decision. Never written inside
+ * the repository being operated on (obtainUserApproval refuses the action before that).
+ */
+export function logDecision(repo: string | undefined, entry: DecisionLogEntry & { decidedBy: DecidedBy }): void {
   if (!repo) return;
   try {
+    if (securityStateInsideRepository(repo)) return;
+    adoptLegacyDecisionLog(repo);
     const path = decisionLogPath(repo);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    appendFileSync(path, `${JSON.stringify({ v: 2, ...entry, repository: resolve(repo) })}\n`, { mode: 0o600 });
+    appendFileSync(path, `${JSON.stringify({ v: 2, ...entry, personVerified: false, independentlyVerified: false, repository: repositoryIdentity(repo).root })}\n`, { mode: 0o600 });
   } catch {
     /* ignore */
   }
@@ -299,7 +528,7 @@ export function logDecision(repo: string | undefined, entry: DecisionLogEntry): 
 
 /** Where the person answered, in words for a result message. */
 const whereAsked = (kind: ApprovalChannelKind): string =>
-  kind === "approval-page" ? "the Praxis approval page" : kind === "terminal-prompt" ? "the terminal prompt" : "the client's approval dialog";
+  kind === "approval-page" ? "the Praxis approval page (test source)" : kind === "terminal-prompt" ? "the terminal prompt" : "the client's approval dialog";
 
 /** The journal outcome for a refusal a channel raised itself, so a timeout or an open page is never logged as a "no". */
 const OUTCOME_OF_CODE: Partial<Record<ApprovalErrorCode, { decision: DecisionOutcome; decidedBy: DecidedBy }>> = {
@@ -310,13 +539,15 @@ const OUTCOME_OF_CODE: Partial<Record<ApprovalErrorCode, { decision: DecisionOut
 };
 
 /**
- * Gets the user's decision for exactly this request, or throws before anything runs. Every refusal carries
- * `details.outcome` and `details.decidedBy`, and the journal records the same, so a caller never has to guess:
+ * Gets the answer of the client's approval dialog for exactly this request, or throws before anything runs. Every refusal
+ * carries `details.outcome`, `details.channel`, `details.decidedBy`, `personVerified: false` and `independentlyVerified:
+ * false`, and the journal records the same, so a caller never has to guess:
  *   rejected in a user channel             -> APPROVAL_REJECTED   (decidedBy that channel, with its evidence)
  *   the dialog was closed without deciding -> APPROVAL_DISMISSED  (decidedBy that channel; not a rejection)
  *   confirmation=NO                        -> APPROVAL_WITHDRAWN  (decidedBy "agent"; never recorded as the user's)
  *   nobody could be asked / client answered by itself -> APPROVAL_CLIENT_UI_REQUIRED (decidedBy "nobody" / "client")
- *   the approval page is open              -> APPROVAL_PENDING    (raised by that channel; decidedBy "nobody")
+ *   the test-source approval page is open  -> APPROVAL_PENDING    (raised by that channel; decidedBy "nobody")
+ *   security state inside the repository   -> DECISION_LEDGER_UNAVAILABLE (decidedBy "praxis"; nobody is asked)
  * `confirmation` is the agent's own argument: "NO" withdraws the request (it can only stop things); "YES" never approves
  * anything, it only says the agent wants to apply what was previewed.
  */
@@ -327,8 +558,17 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
     throw new ApprovalError(
       "APPROVAL_WITHDRAWN",
       `${request.summary} was withdrawn by the agent (confirmation=NO). Nothing was changed. This is not recorded as the user's decision: Praxis has no evidence of one.`,
-      { executed: false, outcome: "withdrawn", decidedBy: "agent", rejected: false, dismissed: false },
+      { executed: false, outcome: "withdrawn", ...approvalLabels("none", "agent"), rejected: false, dismissed: false },
     );
+  }
+  // Fails closed before anyone is asked: state the repository can edit is no place to record what was decided (T-repo).
+  if (options.repo) {
+    try {
+      assertSecurityStateOutside(options.repo);
+    } catch (error) {
+      if (error instanceof ApprovalError) Object.assign(error.details, previewDetails(request));
+      throw error;
+    }
   }
   const channel = currentApprovalChannel();
   let answer: AskAnswer | undefined;
@@ -346,20 +586,23 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
           logDecision(options.repo, { ...base, ...known, channel: raisedBy, ...(evidence ? { evidence } : {}), reason: error.message.slice(0, 200) });
         }
         error.details.outcome ??= known.decision;
+        error.details.channel ??= raisedBy;
         error.details.decidedBy ??= known.decidedBy;
+        error.details.personVerified = false;
+        error.details.independentlyVerified = false;
         error.details.executed ??= false;
         delete error.details.journaled;
         throw error;
       }
       logDecision(options.repo, { ...base, decision: "refused", decidedBy: "praxis", channel: channel.kind, reason: error instanceof Error ? error.message : String(error) });
-      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, { ...previewDetails(request), outcome: "refused", decidedBy: "praxis" });
+      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, { ...previewDetails(request), outcome: "refused", ...approvalLabels(channel.kind, "praxis") });
     }
   }
   if (channel && answer && answer.answer !== "unavailable") {
     // labelled with the channel that answered, not the one that was asked (a wrapper may hand a request on)
     const answeredBy = answer.channel ?? channel.kind;
     const decidedBy = decidedByFor(answeredBy);
-    const said = { channel: answeredBy, decidedBy, personVerified: false as const, ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}) };
+    const said = { ...approvalLabels(answeredBy, decidedBy), ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}) };
     if (answer.answer === "approve") {
       // an approval given earlier (a click in the page) ages from that click, not from when it is used
       const clicked = answer.evidence?.decidedAt ? new Date(answer.evidence.decidedAt) : undefined;
@@ -370,7 +613,7 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
     }
     const dismissed = answer.answer === "dismiss";
     if (!answer.journaled) logDecision(options.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", ...said });
-    const details = { executed: false, outcome: dismissed ? "dismissed" : "rejected", decidedBy, personVerified: false, channel: answeredBy, ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}), rejected: !dismissed, dismissed };
+    const details = { executed: false, outcome: dismissed ? "dismissed" : "rejected", ...approvalLabels(answeredBy, decidedBy), ...(answer.evidence ? { evidence: answer.evidence } : {}), ...(answer.reason ? { reason: answer.reason } : {}), rejected: !dismissed, dismissed };
     if (dismissed) {
       throw new ApprovalError("APPROVAL_DISMISSED", `${request.summary} was not run: ${whereAsked(answeredBy)} was closed without a decision. Nothing was changed. This is not a rejection; ask the user whether to try again.`, details);
     }
@@ -380,18 +623,19 @@ export async function obtainUserApproval(request: ApprovalRequest, options: { co
   const why = automatic
     ? `the client answered "${automatic}" ${answer?.evidence?.latencyMs ?? "?"} ms after it was asked, faster than a person can read the request${answer?.reason ? ` (${answer.reason})` : ""}; that is the client's answer, not the user's`
     : answer?.reason ?? "this client cannot show an approval dialog (no MCP elicitation support)";
+  const unansweredChannel = answer?.channel ?? channel?.kind ?? "none";
   logDecision(options.repo, {
     ...base,
     decision: automatic ? "auto-answered" : "unavailable",
     decidedBy: automatic ? "client" : "nobody",
-    channel: answer?.channel ?? channel?.kind ?? "none",
+    channel: unansweredChannel,
     ...(answer?.evidence ? { evidence: answer.evidence } : {}),
     reason: why.slice(0, 300),
   });
   throw new ApprovalError(
     "APPROVAL_CLIENT_UI_REQUIRED",
-    `${request.summary} was NOT executed, and nobody rejected it: Praxis could not ask the user (${why}). Show the user the preview below. It can be applied where Praxis can ask: a client whose approval dialog is shown (for example the Claude Code CLI in a terminal). The agent's or the user's text in chat, a page and any setting are not accepted as approval, and trying again here gives the same answer. Read-only tools still work.`,
-    { ...previewDetails(request), outcome: automatic ? "auto-answered" : "unavailable", decidedBy: automatic ? "client" : "nobody", ...(answer?.evidence ? { evidence: answer.evidence } : {}), ...(automatic ? { automatic } : {}) },
+    `${request.summary} was NOT executed, and nobody rejected it: Praxis could not ask through a client dialog (${why}). Show the user the preview below. It can be applied where Praxis can ask: a client whose approval dialog is shown (for example the Claude Code CLI in a terminal). The agent's or the user's text in chat, a page and any setting are not accepted as approval, and trying again here gives the same answer. Read-only tools still work.`,
+    { ...previewDetails(request), outcome: automatic ? "auto-answered" : "unavailable", ...approvalLabels(unansweredChannel, automatic ? "client" : "nobody"), ...(answer?.evidence ? { evidence: answer.evidence } : {}), ...(automatic ? { automatic } : {}) },
   );
 }
 
@@ -412,11 +656,11 @@ export function verifyUserApproval(approval: UserApproval | undefined, expected:
     throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `this approval is for ${approval.action}, not ${expected.action}`);
   }
   if (approval.subjectDigest !== subjectDigest(expected.subject)) {
-    throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `this approval is not for ${expected.action} as it is now: the content differs from what the user approved`);
+    throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `this approval is not for ${expected.action} as it is now: the content differs from what the approval dialog showed`);
   }
   const age = (expected.now ?? new Date()).getTime() - Date.parse(approval.decidedAt);
   if (!Number.isFinite(age) || age > USER_APPROVAL_TTL_MS || age < -60_000) {
-    throw new ApprovalError("APPROVAL_EXPIRED", "the user's approval is too old; ask again");
+    throw new ApprovalError("APPROVAL_EXPIRED", "the approval is too old; ask again");
   }
   return approval;
 }
@@ -432,7 +676,7 @@ export function hasMutationLease(): boolean {
 /** Lowest-level writers call this: a direct call outside an approved action throws before any write. */
 export function requireMutationLease(): void {
   if (!lease.getStore()) {
-    throw new ApprovalError("APPROVAL_REQUIRED", "direct mutation is not authorized: the user has not approved it. It must run through a Praxis apply tool, after the user's approval");
+    throw new ApprovalError("APPROVAL_REQUIRED", "direct mutation is not authorized: no approval was given for it. It must run through a Praxis apply tool, after the client's approval dialog approves it");
   }
 }
 

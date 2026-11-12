@@ -10,6 +10,7 @@ import {
   type DeveloperToQualityHandoff,
   type PraxisWorkPackage,
   type WorkPackageClaim,
+  repositoryCodeEnv,
 } from "@praxis/contracts";
 import { authorizeJira, hasMutationLease, jiraMutation } from "./mutation-auth.js";
 import type { JiraProvider } from "./provider.js";
@@ -149,7 +150,8 @@ export function runProjectVerification(repo: string): ProjectVerification {
     cwd: repo,
     shell: true,
     encoding: "utf8",
-    env: process.env,
+    // the repository's own test command: repository code, not handed the Runtime's credentials (hygiene: contracts child-env.ts)
+    env: repositoryCodeEnv(),
   });
   const stdout = `${r.stdout ?? ""}${r.stderr ?? ""}`;
   const exitCode = r.status ?? 1;

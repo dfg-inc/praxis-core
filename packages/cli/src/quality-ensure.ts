@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import net from "node:net";
+import { redactCredentials, repositoryCodeEnv } from "@praxis/contracts";
 import { createRequire } from "node:module";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -151,7 +152,7 @@ function qlog(msg: string): void {
 }
 
 function safeErrorMessage(raw: unknown): string {
-  const text = raw instanceof Error ? raw.message : String(raw ?? "");
+  const text = redactCredentials(raw instanceof Error ? raw.message : String(raw ?? ""));
   return text
     .replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>")
     .replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>")
@@ -190,6 +191,17 @@ export function isElectronHelperExecutable(execPath: string): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * The Quality service runs the repository's tests (npm test, the .project test command), so it starts with the allowlisted
+ * environment for repository code plus its own PRAXIS_QUALITY_* settings, and is not handed the Runtime's credentials: it
+ * calls no remote service and needs none. Hygiene, not a boundary (contracts child-env.ts): code running as the user can
+ * still read the Runtime's own environment. A worker thread gets the same copy.
+ */
+export function qualityServiceEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const own = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string" && /^PRAXIS_(QUALITY_[A-Z0-9_]+|SQL_WASM)$/.test(entry[0])));
+  return repositoryCodeEnv({ ...own, ...extra });
 }
 
 export function parentExecPath(): string {
@@ -605,7 +617,7 @@ export function probeSqliteWithExecutable(
   const r = spawnSync(execPath, [...extraArgs, "-e", SQLITE_PROBE_SOURCE], {
     encoding: "utf8",
     timeout: 5000,
-    env: { ...process.env, ...extraEnv },
+    env: qualityServiceEnv(extraEnv),
   });
   const parsed = parseProbeJson(r.stdout);
   const spawnError = r.error ? safeErrorMessage(r.error.message) : undefined;
@@ -1019,7 +1031,7 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
 
   if (runtime.mode === "worker") {
     qlog("quality.spawn skipped; starting Quality worker in the MCP runtime");
-    const workerEnv: NodeJS.ProcessEnv = { ...process.env, ...runtime.extraEnv };
+    const workerEnv: NodeJS.ProcessEnv = qualityServiceEnv(runtime.extraEnv);
     delete workerEnv.PORT;
     workerEnv.PRAXIS_QUALITY_PORT = String(port);
     workerEnv.PRAXIS_QUALITY_DB = db;
@@ -1080,7 +1092,7 @@ async function ensureQualityOnce(opts: { repo: string }): Promise<QualityEnsureR
       exitCode = code;
     });
   } else {
-    const env: NodeJS.ProcessEnv = { ...process.env, ...runtime.extraEnv };
+    const env: NodeJS.ProcessEnv = qualityServiceEnv(runtime.extraEnv);
     delete env.PORT;
     env.PRAXIS_QUALITY_PORT = String(port);
     env.PRAXIS_QUALITY_DB = db;

@@ -1,4 +1,4 @@
-import { requireMutationLease } from "@praxis/contracts";
+import { assertCredentialSource, CredentialSourceError, requireMutationLease } from "@praxis/contracts";
 import { VCS_CODES, VcsError } from "./errors.js";
 import { tokenConfigured } from "./redact.js";
 import type { CiStatus, MergeRequestInfo, RemoteRepositoryInfo, VcsProvider } from "./provider.js";
@@ -78,7 +78,21 @@ export function validateGithubApiUrl(raw: string | undefined): GithubApiUrlValid
   }
 }
 
+/**
+ * The token and the API URL it is sent to, paired here and only here. Both must come from the operator: a repository file
+ * that sets either refuses the token before any request is built (credential-source.ts; T-repo).
+ */
+export function githubCredentialSource(): void {
+  try {
+    assertCredentialSource("github");
+  } catch (error) {
+    if (error instanceof CredentialSourceError) throw new VcsError(VCS_CODES.CREDENTIAL_SOURCE_UNTRUSTED, error.message, error.details);
+    throw error;
+  }
+}
+
 export function loadGithubConfig(env: NodeJS.ProcessEnv = process.env): GithubConfig {
+  githubCredentialSource();
   const token = env.PRAXIS_GITHUB_TOKEN?.trim() ?? "";
   if (!tokenConfigured(token)) {
     throw new VcsError(
@@ -119,6 +133,7 @@ export function createGithubProvider(opts?: {
   fetchImpl?: FetchLike;
   env?: NodeJS.ProcessEnv;
 }): VcsProvider {
+  if (!opts?.config) githubCredentialSource();
   const config =
     opts?.config ??
     (opts?.fetchImpl

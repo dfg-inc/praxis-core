@@ -3,6 +3,7 @@ import { PROTOTYPE_CSS, PROTOTYPE_SCRIPT, renderPrototypeBody } from "./prototyp
 import { fingerprintFor, planEntryBase, reviewStamp, workStateStamp, type ReviewView } from "./review-submission.js";
 import { reviewProgress, storyReviewProgress, analyzeStoryCoverage, acceptanceStatus } from "./planning.js";
 import type { WorkflowState } from "./workflow.js";
+import { outstandingIntegrity, trustedView, type SubjectKind } from "./acceptance-integrity.js";
 
 /**
  * Standard, reproducible HTML reviews. Each page is a self-contained file: server-rendered content, inline CSS and a small
@@ -238,13 +239,27 @@ function marks(name: string, current: string, labels = { accepted: "Accept", rej
 }
 
 
+/**
+ * Acceptances the work item file claims that the decision ledger on this computer does not back. The page shows those items as
+ * undecided (it renders trustedView), and says why, so the user decides them again with the content in front of them.
+ */
+function integrityBanner(rawState: WorkflowState, kinds: readonly SubjectKind[]): string {
+  const untrusted = outstandingIntegrity(rawState).filter((s) => kinds.includes(s.kind));
+  if (untrusted.length === 0) return "";
+  return `<div class="stale" data-integrity><strong>${untrusted.length} acceptance(s) in this work item are not backed by a Praxis decision record on this computer.</strong> They are shown as undecided: decide them again if you agree. ${untrusted
+    .slice(0, 12)
+    .map((s) => `${esc(s.label)} (${esc(s.status)})`)
+    .join("; ")}${untrusted.length > 12 ? "; ..." : ""}</div>`;
+}
+
 function staleBanner(state: WorkflowState, phase: "requirements_review" | "prototype" | "story_plan" | "stories_review"): string {
   return acceptanceStatus(state, phase) === "stale" ? `<div class="stale"><strong>Changed since you accepted it.</strong> The earlier acceptance no longer applies; review the changes and accept again.</div>` : "";
 }
 
 // --- requirements ------------------------------------------------------------------------------------------------
 
-export function renderRequirementsReview(state: WorkflowState, options: RenderReviewOptions = {}): string {
+export function renderRequirementsReview(rawState: WorkflowState, options: RenderReviewOptions = {}): string {
+  const state = trustedView(rawState);
   const all = state.requirements.filter((r) => r.status !== "superseded");
   const progress = reviewProgress(state);
   const decided = progress.accepted + progress.rejected;
@@ -280,7 +295,7 @@ ${criteria || `<p class="muted">No acceptance criteria yet.</p>`}
   ];
   const sections = groups.filter(([, , list]) => list.length).map(([, title, list]) => `<h2 class="grouph">${esc(title)} <span class="meta">${list.length}</span></h2>${list.map(card).join("")}`).join("");
   const chips = all.map((r) => `<a class="chip ${reqState(r)}" href="#req-${esc(r.id)}">${esc(r.id)}</a>`).join("");
-  const body = `${staleBanner(state, "requirements_review")}
+  const body = `${integrityBanner(rawState, ["criterion", "phase"])}${staleBanner(state, "requirements_review")}
 <div class="card summary"><div class="row" style="align-items:center"><div class="grow"><div class="bigcount"><strong>${decided}</strong> of ${progress.criteria} criteria decided</div>
 <div class="pbar" role="img" aria-label="${progress.accepted} accepted, ${progress.rejected} rejected, ${progress.pending} undecided"><span class="a" style="width:${pct(progress.accepted)}%"></span><span class="r" style="width:${pct(progress.rejected)}%"></span></div>
 <div class="meta">${progress.accepted} accepted · ${progress.rejected} rejected · ${progress.pending} undecided · ${progress.requirements} requirement(s) in scope · deferred / out ${progress.deferred} / ${progress.excluded}</div></div>
@@ -292,12 +307,13 @@ ${sections || `<p class="muted">No requirements yet.</p>`}`;
 
 // --- prototype ---------------------------------------------------------------------------------------------------
 
-export function renderPrototypeReview(state: WorkflowState, options: RenderReviewOptions = {}): string {
+export function renderPrototypeReview(rawState: WorkflowState, options: RenderReviewOptions = {}): string {
+  const state = trustedView(rawState);
   const proto = state.prototype;
   if (!proto) {
     return shell(state, "prototype", "Prototype review", `<p class="muted">There is no prototype yet. Ask Claude to build one from the accepted requirements.</p>`, {}, options, "");
   }
-  const { body, clientData } = renderPrototypeBody(state, proto, staleBanner(state, "prototype"));
+  const { body, clientData } = renderPrototypeBody(state, proto, `${integrityBanner(rawState, ["phase"])}${staleBanner(state, "prototype")}`);
   return shell(state, "prototype", "Prototype review", body, clientData, options, `<label class="marks"><input type="checkbox" id="accept-proto"> Accept this prototype</label>`, proto.kind === "ui");
 }
 
@@ -323,7 +339,8 @@ ${waived ? `<h3>Waived so far</h3><ul>${waived}</ul>` : ""}</section>`;
 
 // --- story plan --------------------------------------------------------------------------------------------------
 
-export function renderStoryPlanReview(state: WorkflowState, options: RenderReviewOptions = {}): string {
+export function renderStoryPlanReview(rawState: WorkflowState, options: RenderReviewOptions = {}): string {
+  const state = trustedView(rawState);
   const plan = state.storyPlan;
   if (!plan) return shell(state, "story-plan", "Story plan review", `<p class="muted">There is no story plan yet.</p>`, {}, options, "");
   const cards = plan.entries
@@ -345,7 +362,7 @@ ${out ? `<p class="meta">Excluded: ${esc(e.excludedReason ?? "")}</p><label clas
 <label class="meta">Comment<input type="text" data-f="comment" value="${esc(e.review.comment ?? "")}"></label></section>`;
     })
     .join("");
-  const body = `${staleBanner(state, "story_plan")}
+  const body = `${integrityBanner(rawState, ["phase", "waiver", "mode"])}${staleBanner(state, "story_plan")}
 <p>${pill(`revision ${plan.revision}`)} ${pill(plan.status, plan.status === "agreed" ? "ok" : "warn")} ${pill(`${plan.entries.length} planned stories`)}</p>
 ${gapsPanel(state)}
 ${cards}`;
@@ -354,7 +371,8 @@ ${cards}`;
 
 // --- stories -----------------------------------------------------------------------------------------------------
 
-export function renderStoriesReview(state: WorkflowState, options: RenderReviewOptions = {}): string {
+export function renderStoriesReview(rawState: WorkflowState, options: RenderReviewOptions = {}): string {
+  const state = trustedView(rawState);
   const stories = state.stories.filter((s) => s.status !== "superseded");
   const progress = storyReviewProgress(state);
   const cards = stories
@@ -386,7 +404,7 @@ ${out ? `<p class="meta">Excluded: ${esc(story.excludedReason ?? "")}</p><label 
 </section>`;
     })
     .join("");
-  const body = `${staleBanner(state, "stories_review")}
+  const body = `${integrityBanner(rawState, ["phase", "story", "waiver", "mode"])}${staleBanner(state, "stories_review")}
 <div class="card"><div class="kv"><span class="muted">Stories</span><span>${progress.stories}</span><span class="muted">Items</span><span>${progress.items}</span><span class="muted">Accepted</span><span>${progress.accepted}</span><span class="muted">Rejected</span><span>${progress.rejected}</span><span class="muted">Undecided</span><span>${progress.pending}</span></div>
 <p class="meta">Editing a story creates a new revision. Items you did not change keep their marks; an item whose text changed starts over, and so does the story's confirmation.</p></div>
 ${gapsPanel(state)}
@@ -396,7 +414,8 @@ ${cards || `<p class="muted">No stories yet.</p>`}`;
 
 // --- contracts ---------------------------------------------------------------------------------------------------
 
-export function renderContractsReview(state: WorkflowState, options: RenderReviewOptions = {}): string {
+export function renderContractsReview(rawState: WorkflowState, options: RenderReviewOptions = {}): string {
+  const state = trustedView(rawState);
   const cards = state.contracts
     .map((c) => {
       const agreed = c.status === "agreed";
@@ -407,7 +426,7 @@ export function renderContractsReview(state: WorkflowState, options: RenderRevie
 ${agreed ? "" : `<p class="meta">Agreeing lets implementation start in the services that use it. Changing the contract afterwards makes it proposed again.</p>`}</section>`;
     })
     .join("");
-  return shell(state, "contracts", "Contracts review", `<p class="meta">A contract is what services promise each other. The architect proposes it; only you agree it.</p>${cards || `<p class="muted">There are no contracts yet.</p>`}`, {}, options, "");
+  return shell(state, "contracts", "Contracts review", `${integrityBanner(rawState, ["contract"])}<p class="meta">A contract is what services promise each other. The architect proposes it; only you agree it.</p>${cards || `<p class="muted">There are no contracts yet.</p>`}`, {}, options, "");
 }
 
 export function renderReview(state: WorkflowState, view: ReviewView, options: RenderReviewOptions = {}): string {

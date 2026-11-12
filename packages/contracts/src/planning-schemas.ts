@@ -551,4 +551,11 @@ export const PlanningStateFields = {
   /** Earlier content of requirements, the prototype and the story plan (JSON text), so a revision never loses what it replaced. */
   artifactHistory: z.array(z.object({ kind: z.enum(["requirement", "prototype", "story-plan"]), id: z.string(), revision: z.number().int().positive(), at: z.string(), snapshot: z.string() })).default([]),
   updatedAt: z.string().optional(),
+  /**
+   * Next to each acceptance the file claims ("criterion:REQ-1-AC-01", "phase:prototype", "story:US-1" ...), the id of the
+   * decision-ledger record that backs it (acceptance-integrity.ts). Written only by the Runtime's store, never by a command.
+   * A claim without one is unverified; an id is evidence only together with the ledger outside the repository. Optional and
+   * absent until the first ledger-backed acceptance, so a 0.1.0-alpha.49.2 file reads unchanged (no version bump needed).
+   */
+  acceptanceActions: z.record(z.string(), z.string()).optional(),
 };

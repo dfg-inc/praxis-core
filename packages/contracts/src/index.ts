@@ -556,7 +556,14 @@ export {
   withApprovalChannel,
   currentApprovalChannel,
   approvalModeReport,
+  approvalLabels,
+  assertSecurityStateOutside,
   decisionLogPath,
+  linkedWorktreeCommonDir,
+  repositoryIdentity,
+  repositoryKey,
+  securityStateHome,
+  securityStateInsideRepository,
   approvalsGivenInThisCall,
   logDecision,
   hasMutationLease,
@@ -567,6 +574,7 @@ export {
 } from "./user-approval.js";
 export type {
   ApprovalErrorCode,
+  ApprovalLabels,
   ApprovalAssurance,
   ApprovalChannelKind,
   ApprovalRequest,
@@ -575,6 +583,7 @@ export type {
   DecidedBy,
   DecisionLogEntry,
   DecisionOutcome,
+  RepositoryIdentity,
   UserApproval,
   UserApprovalChannel,
 } from "./user-approval.js";
@@ -615,6 +624,7 @@ export {
   storyReviewProgress,
 } from "./planning.js";
 export type { CoverageGap, CoverageReport, GateResult, NextStep, PlanningCommand, PlanningResult, ReviewChannel } from "./planning.js";
+export * from "./acceptance-integrity.js";
 export { RepositoryIdSchema } from "./ids.js";
 export { SUPPORTED_WORKFLOW_VERSIONS } from "./workflow.js";
 export { ReviewMarkSchema, StoryCapabilitySchema, STORY_CAPABILITIES } from "./story.js";
@@ -645,3 +655,9 @@ export type { EvidenceSource } from "./story.js";
 
 export { ApprovalRecordSchema, ApprovalSubjectSchema, APPROVAL_TRUST, approvalSummary, currentTrust, describeApproval, trustOfApproval } from "./approval-audit.js";
 export type { ApprovalRecord, ApprovalSubject } from "./approval-audit.js";
+
+// Credential hygiene: value-based redaction, child environments, credential provenance (0.1.0-alpha.49.3).
+export { CREDENTIAL_VARIABLES, MIN_SECRET_LENGTH, containsCredential, inheritedCredentialVariables, redactCredentials, redactCredentialsDeep, registerCredential } from "./secret-redaction.js";
+export { gitEnv, repositoryCodeEnv } from "./child-env.js";
+export { CREDENTIAL_BINDINGS, CredentialSourceError, assertCredentialSource, credentialSourceReport, noteRepositoryDotenv, repositorySourcedVariables } from "./credential-source.js";
+export type { CredentialBinding, CredentialProvider } from "./credential-source.js";

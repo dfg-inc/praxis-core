@@ -11,7 +11,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { redactSecrets } from "./redact.js";
 import { parseRemoteUrl, type ParsedRemote } from "./git-url.js";
-import { requireMutationLease } from "@praxis/contracts";
+import { gitEnv as childGitEnv, requireMutationLease } from "@praxis/contracts";
 import { VCS_CODES, VcsError } from "./errors.js";
 
 export type GitRunResult = {
@@ -55,13 +55,12 @@ export type GitWorkingTree = {
 
 export type GitHookInfo = { name: string; executable: boolean };
 
+/**
+ * Git runs the repository's hooks, so it gets the allowlisted environment for repository code plus what git needs to reach
+ * a remote with the user's own setup, and is not handed the Runtime's tokens (hygiene, not a boundary: contracts child-env.ts).
+ */
 function gitEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    ...extra,
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_ASKPASS: process.env.GIT_ASKPASS ?? "",
-  };
+  return childGitEnv({ ...extra, GIT_TERMINAL_PROMPT: "0" });
 }
 
 export function runGit(

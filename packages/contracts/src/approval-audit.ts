@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { annotationOf, integrityReport, integritySummary } from "./acceptance-integrity.js";
 import type { UserApproval } from "./user-approval.js";
+import type { WorkflowState } from "./workflow.js";
 
 /**
  * A durable record of every decision that needed a person: what, which revision and content, when, through which channel,
@@ -70,16 +72,28 @@ export function describeApproval(approval: Pick<UserApproval, "channel" | "assur
 /** How a saved record's trust reads today: the earlier name for a dialog answer is the same class as client-response. */
 export const currentTrust = (trust: ApprovalRecord["trust"]): ApprovalRecord["trust"] => (trust === "independent-human" ? "client-response" : trust);
 
-/** Counts by trust, and the decisions that exist without any record. */
-export function approvalSummary(state: { approvals?: ApprovalRecord[]; stories: Array<{ id: string; revision: number; confirmedBehavior: boolean; status: string }>; decisions: Array<{ id: string; confirmed?: boolean }>; services: Array<{ id: string; status: string }> }) {
+/**
+ * Counts by trust, and the decisions that exist without any record. The approvals[] records live in the same repository file
+ * as the decisions, so on their own they prove nothing (T-repo can write both): for a work item read from a file, a record
+ * counts only when the decision ledger outside the repository carries the same approval, and a decision counts only when
+ * its own ledger record backs it (acceptance-integrity.ts). An in-memory state keeps the earlier cross-check.
+ */
+export function approvalSummary(state: WorkflowState) {
   const records = state.approvals ?? [];
-  const has = (action: string, type: ApprovalSubject["type"], id: string) => records.some((r) => r.action === action && r.subjects.some((s) => s.type === type && s.id === id));
-  const unverified = [
-    ...state.stories.filter((s) => s.confirmedBehavior && s.status !== "superseded" && !has("confirm-story", "story", s.id)).map((s) => `story ${s.id}`),
-    ...state.decisions.filter((d) => d.confirmed && !has("confirm-decision", "decision", d.id)).map((d) => `decision ${d.id}`),
-    ...state.services.filter((s) => (s.status === "approved" || s.status === "completed") && !has("approve-service", "service", s.id)).map((s) => `service ${s.id}`),
-  ];
-  const by = (trust: ApprovalRecord["trust"]) => records.filter((r) => currentTrust(r.trust) === trust).length;
+  const annotation = annotationOf(state);
+  const backed = (r: ApprovalRecord) => !annotation || annotation.records[r.id] === "accepted";
+  const counted = records.filter(backed);
+  const has = (action: string, type: ApprovalSubject["type"], id: string) => counted.some((r) => r.action === action && r.subjects.some((s) => s.type === type && s.id === id));
+  const unverified = annotation
+    ? integrityReport(state)
+        .filter((s) => s.status !== "accepted")
+        .map((s) => `${s.label}: ${s.status}`)
+    : [
+        ...state.stories.filter((s) => s.confirmedBehavior && s.status !== "superseded" && !has("confirm-story", "story", s.id)).map((s) => `story ${s.id}`),
+        ...state.decisions.filter((d) => d.confirmed && !has("confirm-decision", "decision", d.id)).map((d) => `decision ${d.id}`),
+        ...state.services.filter((s) => (s.status === "approved" || s.status === "completed") && !has("approve-service", "service", s.id)).map((s) => `service ${s.id}`),
+      ];
+  const by = (trust: ApprovalRecord["trust"]) => counted.filter((r) => currentTrust(r.trust) === trust).length;
   return {
     total: records.length,
     clientResponse: by("client-response"),
@@ -89,6 +103,9 @@ export function approvalSummary(state: { approvals?: ApprovalRecord[]; stories: 
     hostAttested: by("host-attested"),
     testOnly: by("test-only"),
     legacyIndependentHumanLabel: records.filter((r) => r.trust === "independent-human").length,
+    /** Records in the file that no decision-ledger record on this computer carries: they are not counted above. */
+    recordsWithoutLedger: records.length - counted.length,
     unverifiedProvenance: unverified,
+    ...integritySummary(state),
   };
 }
