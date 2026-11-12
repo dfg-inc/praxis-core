@@ -7,15 +7,17 @@
  * Runtime applies it at its output boundary: every tool result and error, the protocol stream, its stderr log lines and its
  * diagnostics log (praxis-runtime secret-redaction.ts). The CLI applies it to what it prints.
  *
- * What it stops (T-repo, and an agent that sees only Praxis's tool results, as in Claude Desktop Chat where the token is the
- * extension's own copy held by the server process): disclosure of a credential value into the model context through
- * Praxis's own output, for example a remote error body that echoes the Authorization header, a repository file or record
- * that contains the token, or an exception message.
+ * What it stops: the exact value, or a form listed above, reaching the model context through Praxis's own output by
+ * accident, for example a remote error body that echoes the Authorization header, a repository file or record that
+ * contains the token, or an exception message.
  *
- * What it does not stop: an agent that reads its own environment. Redaction does not remove a variable from an environment
- * that was already inherited; every process started the same way as this one (the agent's own shell included, in a terminal
- * client) has the same variables and can read them directly. praxis_doctor names them (credentialExposure). Values shorter
- * than MIN_SECRET_LENGTH are not redacted (they would mangle ordinary output); a real token is longer.
+ * What it does not stop: anything that reads the token itself. Redaction does not remove a variable from an environment that
+ * was already inherited; every process started the same way as this one (the agent's own shell included, in a terminal
+ * client) has the same variables, and any program running as the user, repository code Praxis starts included, can read
+ * this process's initial environment (`ps -E`, `/proc/<pid>/environ`) and print the token in a form redaction does not
+ * know (reversed, split, otherwise encoded). It is hygiene, not a boundary. praxis_doctor names the variables
+ * (credentialExposure). Values shorter than MIN_SECRET_LENGTH are not redacted (they would mangle ordinary output); a real
+ * token is longer.
  */
 
 export const CREDENTIAL_VARIABLES = [

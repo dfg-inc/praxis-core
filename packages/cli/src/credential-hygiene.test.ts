@@ -6,11 +6,13 @@
  *     handed the fake token's destination, never receives it. The control case shows it does when nothing is repository-set.
  *   - The Quality service, which runs the repository's tests, starts without any credential.
  */
+import { execFileSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { repositoryCodeEnv } from "@praxis/contracts";
 import { doctorOp, jiraSmokeOp, loadPraxisDotenv, redact } from "./operations.js";
 import { qualityServiceEnv } from "./quality-ensure.js";
 
@@ -121,6 +123,8 @@ describe("praxis_doctor names inherited credentials, never their values", () => 
     const report = (await doctorOp({ repo }, "test")) as Record<string, any>;
     expect(report.credentialExposure.inheritedCredentialVariables).toEqual(["GH_TOKEN", "PRAXIS_JIRA_TOKEN"]);
     expect(report.credentialExposure.note).toMatch(/an agent's shell included, can read these variables; Praxis cannot remove them/);
+    expect(report.credentialExposure.note).toMatch(/hygiene, not a boundary/);
+    expect(report.credentialExposure.note).not.toMatch(/has no shell to read it/);
     expect(report.credentialExposure.jira).toMatchObject({ credentialInInheritedEnvironment: true, independentlyApproved: false });
     expect(report.credentialSource.jira).toMatchObject({ trusted: false, repositoryVariables: ["PRAXIS_JIRA_BASE_URL"] });
     expect(report.approval).toMatchObject({ personVerified: false, independentlyVerified: false });
@@ -137,7 +141,7 @@ describe("praxis_doctor names inherited credentials, never their values", () => 
   });
 });
 
-describe("the Quality service runs the repository's tests without credentials", () => {
+describe("the Quality service runs the repository's tests without being handed credentials", () => {
   it("its environment keeps its own settings and drops every credential", () => {
     operatorJira();
     process.env.GH_TOKEN = "praxis-fake-token-gh-1";
@@ -148,5 +152,26 @@ describe("the Quality service runs the repository's tests without credentials", 
     expect(env.PATH).toBe(process.env.PATH);
     expect(JSON.stringify(env)).not.toMatch(/praxis-fake-token/);
     expect(Object.keys(env).filter((k) => /TOKEN|JIRA|GITHUB|GITLAB/.test(k))).toEqual([]);
+  });
+});
+
+describe("the allowlisted child environment is hygiene, not a boundary (what the docs say, checked)", () => {
+  it("a child started without the token cannot see it in its own environment, but can read its parent's", () => {
+    // the parent stands in for the Runtime: started with a token in its initial environment, as the Desktop extension does
+    const token = "praxis-fake-token-parent-env-5e5e";
+    const parentEnv = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir(), PRAXIS_JIRA_TOKEN: token };
+    const childEnv = repositoryCodeEnv({}, parentEnv);
+    expect(childEnv.PRAXIS_JIRA_TOKEN).toBeUndefined();
+    const reader =
+      process.platform === "darwin"
+        ? "ps -E -ww -o command= -p $PPID"
+        : process.platform === "linux"
+          ? "tr '\\0' '\\n' < /proc/$PPID/environ"
+          : "echo unsupported";
+    // the parent deletes the variable from process.env first: what the child reads is the parent's initial environment
+    const parent = `delete process.env.PRAXIS_JIRA_TOKEN; const { execFileSync } = require("node:child_process"); const env = JSON.parse(process.argv[1]); process.stdout.write(JSON.stringify({ own: execFileSync("/bin/sh", ["-c", "env"], { env, encoding: "utf8" }), parent: execFileSync("/bin/sh", ["-c", ${JSON.stringify(reader)}], { env, encoding: "utf8" }) }));`;
+    const seen = JSON.parse(execFileSync(process.execPath, ["-e", parent, JSON.stringify(childEnv)], { env: parentEnv, encoding: "utf8" })) as { own: string; parent: string };
+    expect(seen.own).not.toContain(token);
+    if (process.platform === "darwin" || process.platform === "linux") expect(seen.parent).toContain(token);
   });
 });

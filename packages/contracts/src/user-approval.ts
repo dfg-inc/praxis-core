@@ -355,54 +355,94 @@ function realLocation(path: string): string {
   }
 }
 
-/** The git directory a `.git` entry names: the folder itself, or the `gitdir:` of a worktree's `.git` file. */
-function gitDirOf(dotGit: string): string | undefined {
+/**
+ * The common directory of a linked worktree whose `.git` file is `dotGit`, or undefined. Git's own layout is required, all
+ * of it resolved through links: the `.git` file names a git directory that is a direct child of
+ * `<common directory>/worktrees/`, that git directory's `commondir` names the common directory, and its `gitdir` back-pointer
+ * names this very `.git` file. A back-pointer alone proves nothing: a planted `.git` file can name a git directory the
+ * planter wrote, back-pointer included (T-repo: an archive or a pull request; T-sandboxed-agent: any folder it can write).
+ * Requiring the git directory to sit under the other repository's own `worktrees/` means only someone who can already write
+ * that repository's git directory can join it.
+ */
+export function linkedWorktreeCommonDir(dotGit: string): string | undefined {
   try {
-    const st = lstatSync(dotGit);
-    if (st.isDirectory()) return dotGit;
-    if (st.isFile()) {
-      const named = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, "utf8"))?.[1];
-      return named ? resolve(dirname(dotGit), named) : undefined;
-    }
+    const named = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, "utf8"))?.[1];
+    if (!named) return undefined;
+    const gitDir = realpathSync(resolve(dirname(dotGit), named));
+    const common = realpathSync(resolve(gitDir, readFileSync(join(gitDir, "commondir"), "utf8").trim()));
+    if (dirname(gitDir) !== join(common, "worktrees")) return undefined;
+    const back = realpathSync(resolve(gitDir, readFileSync(join(gitDir, "gitdir"), "utf8").trim()));
+    return back === realpathSync(dotGit) ? common : undefined;
   } catch {
-    /* not a git entry */
+    return undefined;
   }
-  return undefined;
 }
 
+/** The account's home from the OS account database, through links; undefined when it cannot be read. */
+function accountHomeReal(): string | undefined {
+  try {
+    const home = userInfo().homedir;
+    return home ? realpathSync(home) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export type RepositoryIdentity = {
+  key: string;
+  kind: "git" | "directory";
+  /** The real path the caller's path resolves to. */
+  real: string;
+  /** The work tree that holds the `.git` entry (git), or the real path (directory). */
+  root: string;
+  /** What the key is computed from: the git common directory, or the real path. */
+  basis: string;
+  /** The folders that are "the repository" for the inside-the-repository rule. */
+  roots: string[];
+};
+
 /**
- * The repository a path belongs to, independent of how the caller spelled it: the git common directory (shared by every
- * worktree of one clone) found by walking up from the real path, or the real path itself for a folder outside git.
- * `roots` are the folders that are "the repository" for the inside-the-repository rule: the real path, the work tree
- * that contains it and the main work tree of a linked worktree.
+ * The repository a path belongs to, independent of how the caller spelled it. Walking up from the real path, the first
+ * `.git` entry decides:
+ *   - a `.git` directory: its real path is the git common directory (a `commondir` file inside it is not followed);
+ *   - a `.git` file: a linked worktree only when linkedWorktreeCommonDir confirms it, keyed by that common directory;
+ *   - anything else (a `.git` file that is not a confirmed worktree, a submodule, a link, a special file): the path is keyed
+ *     as a plain directory, and the walk stops there.
+ * The walk never reaches the account's home folder (`accountHome`, default: from the OS account database): a dotfiles
+ * repository at home must neither join every project under it into one key nor make the security state at `~/.praxis` look
+ * "inside the repository" for all of them. Outside git, the key is the real path. The runtime's decision ledger uses this
+ * same function, so the decision journal and the ledger name one repository alike.
  */
-export function repositoryIdentity(repo: string): { key: string; kind: "git" | "directory"; root: string; roots: string[] } {
+export function repositoryIdentity(repo: string, options: { accountHome?: string } = {}): RepositoryIdentity {
   const real = realOrResolved(repo);
-  let dir = real;
-  for (;;) {
-    const gitDir = gitDirOf(join(dir, ".git"));
-    if (gitDir) {
-      let common = gitDir;
-      try {
-        const named = readFileSync(join(gitDir, "commondir"), "utf8").trim();
-        if (named) common = resolve(gitDir, named);
-      } catch {
-        /* a main work tree: its git directory is the common one */
-      }
-      const commonReal = realOrResolved(common);
-      const mainTree = basename(commonReal) === ".git" ? dirname(commonReal) : undefined;
+  const home = options.accountHome !== undefined ? realOrResolved(options.accountHome) : accountHomeReal();
+  const directory = (): RepositoryIdentity => ({ key: createHash("sha256").update(`dir:${real}`).digest("hex"), kind: "directory", real, root: real, basis: real, roots: [real] });
+  for (let dir = real; ; ) {
+    if (home !== undefined && dir === home) return directory();
+    const dotGit = join(dir, ".git");
+    let st: ReturnType<typeof lstatSync> | undefined;
+    try {
+      st = lstatSync(dotGit);
+    } catch {
+      st = undefined;
+    }
+    if (st) {
+      const common = st.isDirectory() ? realOrResolved(dotGit) : st.isFile() ? linkedWorktreeCommonDir(dotGit) : undefined;
+      if (!common) return directory();
+      const mainTree = basename(common) === ".git" ? dirname(common) : undefined;
       return {
-        key: createHash("sha256").update(`git:${commonReal}`).digest("hex"),
+        key: createHash("sha256").update(`git:${common}`).digest("hex"),
         kind: "git",
+        real,
         root: dir,
-        roots: [...new Set([real, dir, ...(mainTree ? [mainTree] : [])])],
+        basis: common,
+        roots: [...new Set([real, dir, common, ...(mainTree ? [mainTree] : [])])],
       };
     }
     const up = dirname(dir);
-    if (up === dir) break;
+    if (up === dir) return directory();
     dir = up;
   }
-  return { key: createHash("sha256").update(`dir:${real}`).digest("hex"), kind: "directory", root: real, roots: [real] };
 }
 
 /** A key for one repository: sha256 of the real path of its git common directory (or of its real path outside git). */
@@ -415,14 +455,14 @@ const within = (child: string, parent: string): boolean => child === parent || c
  * Tier: T-repo and T-sandboxed-agent: either can write the repository, so state kept there is theirs to edit. Reads and
  * writes of security state there are refused, not only protected actions.
  */
-export function securityStateInsideRepository(repo: string, home?: string): string | undefined {
+export function securityStateInsideRepository(repo: string, home?: string, options: { accountHome?: string } = {}): string | undefined {
   let location: string;
   try {
     location = realLocation(home ?? securityStateHome());
   } catch {
     return undefined; // no home at all is reported by securityStateHome's own refusal
   }
-  return repositoryIdentity(repo).roots.some((root) => within(location, root)) ? location : undefined;
+  return repositoryIdentity(repo, options).roots.some((root) => within(location, root)) ? location : undefined;
 }
 
 /** Throws DECISION_LEDGER_UNAVAILABLE when Praxis has no safe place for security state for this repository. */
@@ -452,7 +492,10 @@ export function decisionLogPath(repo: string): string {
  * Journals written before 0.1.0-alpha.49.3 were named after the path as the caller spelled it (sha256(path.resolve(repo)),
  * 16 hex characters). The first time a repository's journal is used, such a file in the same home is copied to the
  * repository's journal and the old file is left as it was, so the review (praxis_approval_journal) and its amendments still
- * see the earlier entries. The journal is a log, never evidence: where an old line came from decides nothing.
+ * see the earlier entries. Only the file for this exact spelling is adopted: older journals of other worktrees or other
+ * spellings are not merged, because an amendment names its entry by line number and hash within its own file, and merging
+ * would break that (documented in docs/user-approval.md). The journal is a log, never evidence: where an old line came from
+ * decides nothing.
  */
 export function adoptLegacyDecisionLog(repo: string): void {
   const path = decisionLogPath(repo);

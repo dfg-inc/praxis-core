@@ -57,7 +57,7 @@ export type GitHookInfo = { name: string; executable: boolean };
 
 /**
  * Git runs the repository's hooks, so it gets the allowlisted environment for repository code plus what git needs to reach
- * a remote with the user's own setup (contracts child-env.ts), never the Runtime's tokens (T-repo, T-sandboxed-agent).
+ * a remote with the user's own setup, and is not handed the Runtime's tokens (hygiene, not a boundary: contracts child-env.ts).
  */
 function gitEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return childGitEnv({ ...extra, GIT_TERMINAL_PROMPT: "0" });

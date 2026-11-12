@@ -559,6 +559,7 @@ export {
   approvalLabels,
   assertSecurityStateOutside,
   decisionLogPath,
+  linkedWorktreeCommonDir,
   repositoryIdentity,
   repositoryKey,
   securityStateHome,
@@ -582,6 +583,7 @@ export type {
   DecidedBy,
   DecisionLogEntry,
   DecisionOutcome,
+  RepositoryIdentity,
   UserApproval,
   UserApprovalChannel,
 } from "./user-approval.js";

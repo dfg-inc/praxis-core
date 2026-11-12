@@ -3,18 +3,21 @@
  *
  * Praxis runs repository-controlled code: test, build and coverage commands from `.project`, `npm test`, the Quality
  * service's test runs, `.praxis/quality/checks.json` modules and `.praxis/quality/adapter.mjs`, and git, which runs the
- * repository's hooks. None of it gets the environment the Runtime inherited: it gets an allowlist (repositoryCodeEnv), so a
- * credential the Runtime holds (a Jira or GitHub token from the Claude Desktop extension settings, present only in the
- * server process) never reaches it, nor does anything else the allowlist does not name. Git gets the same allowlist plus
- * what git itself needs to reach a remote with the user's own git setup (gitEnv): the ssh-agent socket, the SSH and askpass
- * programs the user configured, git's own config location and identity. Git authenticates with the user's git credential
- * helper or ssh key, never with a token Praxis holds. API calls (Jira, GitHub, GitLab) are made by the Runtime itself, each
- * with only its own credential (credential-source.ts).
+ * repository's hooks. None of it is handed the environment the Runtime inherited: it gets an allowlist (repositoryCodeEnv),
+ * so the credentials the Runtime holds are not in the child's own environment, nor is anything else the allowlist does not
+ * name. Git gets the same allowlist plus what git itself needs to reach a remote with the user's own git setup (gitEnv): the
+ * ssh-agent socket, the SSH and askpass programs the user configured, git's own config location and identity. Git
+ * authenticates with the user's git credential helper or ssh key, never with a token Praxis holds. API calls (Jira, GitHub,
+ * GitLab) are made by the Runtime itself, each with only its own credential (credential-source.ts).
  *
- * Tier: T-repo and T-sandboxed-agent writing repository code that Praxis then runs: it does not receive the Runtime's
- * credentials. It does not stop T-same-user, nor an agent whose own shell inherited the same variables (in a terminal
- * client the token is usually in the shell that started everything; see praxis_doctor credentialExposure). Repository code
- * still runs as the user, with the user's files and network.
+ * This is hygiene, not a boundary. It keeps a token out of what the child inherits, and so out of anything that prints or
+ * logs its own environment (a failing test's dump, a build log, a crash report). It does not stop repository code from
+ * reading the token: the child runs as the same user and can read the Runtime's own initial environment
+ * (`ps -E -ww -p <pid>` on macOS, `/proc/<pid>/environ` on Linux), and that includes a token the Claude Desktop extension
+ * settings gave only to the Runtime. Deleting a variable from process.env does not change what those show (checked on
+ * macOS), so Praxis does not claim to remove it. Against T-repo and T-sandboxed-agent code that Praxis runs, and against
+ * T-same-user, the token stays readable; an agent's own shell also has whatever it inherited (see praxis_doctor
+ * credentialExposure). Repository code runs as the user, with the user's files and network.
  */
 
 /** Variables a child needs to run as the user's tools expect: program lookup, home, locale, terminal, temp, OS. */

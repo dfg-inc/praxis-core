@@ -150,7 +150,7 @@ export function runProjectVerification(repo: string): ProjectVerification {
     cwd: repo,
     shell: true,
     encoding: "utf8",
-    // the repository's own test command: repository code, never given the Runtime's credentials (contracts child-env.ts)
+    // the repository's own test command: repository code, not handed the Runtime's credentials (hygiene: contracts child-env.ts)
     env: repositoryCodeEnv(),
   });
   const stdout = `${r.stdout ?? ""}${r.stderr ?? ""}`;

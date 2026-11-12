@@ -726,7 +726,7 @@ function runAllowlisted(
     cwd,
     shell: true,
     encoding: "utf8",
-    // a build/test/coverage command from the repository's .project: repository code, never given the Runtime's credentials
+    // a build/test/coverage command from the repository's .project: repository code, not handed the Runtime's credentials (hygiene)
     env: repositoryCodeEnv(),
   });
   return { ok: (r.status ?? 1) === 0, stdout: `${r.stdout ?? ""}${r.stderr ?? ""}` };
