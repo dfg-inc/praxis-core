@@ -632,10 +632,11 @@ function asApprovalError(err: unknown): never {
 }
 
 /**
- * Action -> Preview -> the user approves or rejects -> Execute -> Result.
+ * Action -> Preview -> the client's approval dialog answers approve or reject -> Execute -> Result.
  *
- * The write runs only after the user's approval of exactly this action: asked in the MCP client's own dialog when the
- * client supports it. A client without one gets the preview and a clear refusal; nothing runs (see user-approval.ts). A stale preview is refused before the user is asked, so what they approve is what runs.
+ * The write runs only after the client's own approval dialog approves exactly this action (a client response, never a
+ * verified person: see user-approval.ts). A client without one gets the preview and a clear refusal; nothing runs. A stale
+ * preview is refused before the dialog is asked, so what was shown is what runs.
  */
 async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => Promise<T> | T): Promise<T> {
   // "NO" is the agent withdrawing the request: it is recorded as withdrawn (never as the user's rejection) and refused below.
@@ -1684,7 +1685,7 @@ export async function developerGitConnectPreviewOp(ctx: OpContext) {
   }
 }
 
-// --- request descriptions for secure Git authorization -----------------------------------------------------
+// --- request descriptions for Git approvals -----------------------------------------------------------------
 // Each one re-reads the live repository and refuses a stale preview, so what the owner is shown and what the
 // token binds is exactly what would run now.
 
