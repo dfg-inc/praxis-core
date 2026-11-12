@@ -210,7 +210,9 @@ export function phaseContent(state: WorkflowState, phase: AcceptablePhase): unkn
     case "story_plan":
       return { kind: "phase", phase, plan: state.storyPlan ? storyPlanContent(state.storyPlan) : null };
     default:
-      return { kind: "phase", phase, stories: activeStories(state).map((s) => contentDigest(storyReviewContent(s))) };
+      // the ledger binds what coverage reads too (title, capabilities); the 16-hex storiesFingerprint keeps its earlier fields so a
+      // saved stories acceptance does not turn stale on upgrade
+      return { kind: "phase", phase, stories: activeStories(state).map((s) => contentDigest({ ...storyReviewContent(s), title: s.title ?? null, capabilities: s.capabilities })) };
   }
 }
 
@@ -232,6 +234,8 @@ export const storyContent = (s: UserStory) => ({
   acceptanceCriteria: s.acceptanceCriteria,
   expectedResults: s.expectedResults,
   assumptionIds: s.assumptionIds,
+  title: s.title ?? null,
+  capabilities: s.capabilities,
 });
 
 type Decision = WorkflowState["decisions"][number];
@@ -323,7 +327,17 @@ export type LedgerReading =
   | { status: "available"; entries: readonly LedgerEntry[] }
   | { status: "unavailable" | "corrupt"; reason: string };
 
-export type SubjectIntegrity = { key: string; kind: SubjectKind; id: string; label: string; status: Exclude<IntegrityStatus, "proposed">; reason: string; actionId?: string };
+export type SubjectIntegrity = {
+  key: string;
+  kind: SubjectKind;
+  id: string;
+  label: string;
+  status: Exclude<IntegrityStatus, "proposed">;
+  reason: string;
+  actionId?: string;
+  /** The id appears more than once in the work item: no copy counts, and no decision in a call clears it. */
+  duplicate?: true;
+};
 
 export type IntegrityAnnotation = {
   ledger: LedgerReading["status"];
@@ -375,17 +389,17 @@ function judge(
   const recorded = subjectKey(entry.subject.kind, entry.subject.id);
   if (recorded !== subject.key) return { status: "invalid", reason: `decision record ${actionId} belongs to ${recorded}, not to this subject (copied)` };
   if (entry.decision !== "accept") return { status: "invalid", reason: `decision record ${actionId} is a ${entry.decision}, not an acceptance` };
-  const history = bySubject.get(subject.key) ?? [];
-  const latest = history[history.length - 1];
-  if (latest && latest.actionId !== entry.actionId) {
-    // the latest decision wins. A later revision or acceptance Praxis recorded for the content the file now has is a legitimate
-    // progression (stale); any other later decision contradicts the file's claim (invalid)
-    if ((latest.decision === "supersede" || latest.decision === "accept") && latest.contentDigest === subject.contentDigest) {
-      return { status: "stale", reason: `a later ${latest.decision === "accept" ? "acceptance" : "revision"} recorded by Praxis (${latest.at}) supersedes the acceptance this file references: accept it again` };
-    }
-    return { status: "invalid", reason: `the latest decision recorded for it is a ${latest.decision} (${latest.at}), which the file contradicts` };
+  const later = (bySubject.get(subject.key) ?? []).filter((e) => e.seq > entry.seq);
+  if (entry.contentDigest !== subject.contentDigest) {
+    // a revision Praxis recorded for exactly the content the file now has is a legitimate progression; anything else was changed outside Praxis
+    if (later.some((e) => e.decision === "supersede" && e.contentDigest === subject.contentDigest)) return { status: "stale", reason: "it was accepted for an earlier revision: accept it again" };
+    return { status: "invalid", reason: "its content changed after it was accepted, outside Praxis" };
   }
-  if (entry.contentDigest !== subject.contentDigest) return { status: "invalid", reason: "its content changed after it was accepted, outside Praxis" };
+  // The ledger is shared by every branch and worktree of the repository, so only a later decision of the person that took back
+  // THIS content counts against it: a rejection of it, or a revocation recorded for an approved rewording, rejection or
+  // withdrawal of it. A revision an agent made elsewhere (supersede) leaves other copies of the accepted content accepted.
+  const takenBack = later.find((e) => (e.decision === "reject" || (e.decision === "revoke" && e.approval !== null)) && e.contentDigest === subject.contentDigest);
+  if (takenBack) return { status: "invalid", reason: `a later decision on this computer, on any branch or worktree, took this content back (${takenBack.decision}, ${takenBack.at}): accept it again if it still applies` };
   return { status: "accepted", reason: `recorded by Praxis on this computer at ${entry.at} after ${entry.approval?.decidedBy ?? "an approval"} answered (a client response; not proof a person decided)` };
 }
 
@@ -401,17 +415,19 @@ export function evaluateIntegrity(state: WorkflowState, ledger: LedgerReading): 
   }
   const actions = state.acceptanceActions ?? {};
   const subjects: Record<string, SubjectIntegrity> = {};
-  for (const subject of acceptanceSubjects(state)) {
+  const all = acceptanceSubjects(state);
+  const copies = duplicateKeys(all);
+  for (const subject of all) {
     if (!subject.claimed) continue;
     const actionId = typeof actions[subject.key] === "string" ? actions[subject.key] : undefined;
-    const verdict = judge(subject, actionId, ledger, byAction, bySubject);
-    subjects[subject.key] = { key: subject.key, kind: subject.kind, id: subject.id, label: subject.label, ...verdict, ...(actionId ? { actionId } : {}) };
+    // the schema allows two items with one id; readers find() the first. No copy of a duplicated id counts, so a forged copy placed
+    // before a genuine one cannot borrow its record
+    const count = copies.get(subject.key);
+    const verdict = count ? { status: "invalid" as const, reason: `its id appears ${count} times in the work item (duplicate id): no copy counts until the duplicates are removed` } : judge(subject, actionId, ledger, byAction, bySubject);
+    subjects[subject.key] = { key: subject.key, kind: subject.kind, id: subject.id, label: subject.label, ...verdict, ...(actionId ? { actionId } : {}), ...(count ? { duplicate: true as const } : {}) };
   }
   const records: IntegrityAnnotation["records"] = {};
-  for (const record of state.approvals ?? []) {
-    const backed = entries.some((e) => e.approval && record.subjectDigest && e.approval.subjectDigest === record.subjectDigest && e.approval.decidedAt === record.at);
-    records[record.id] = backed ? "accepted" : "unverified";
-  }
+  for (const record of state.approvals ?? []) records[record.id] = recordBacked(record, entries) ? "accepted" : "unverified";
   return {
     ledger: ledger.status,
     ...(ledger.status !== "available" ? { ledgerReason: ledger.reason } : {}),
@@ -419,6 +435,30 @@ export function evaluateIntegrity(state: WorkflowState, ledger: LedgerReading): 
     records,
     independentVerification: "unavailable",
   };
+}
+
+/** Keys that more than one subject of the state uses, with how many. */
+function duplicateKeys(subjects: readonly AcceptanceSubject[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const s of subjects) counts.set(s.key, (counts.get(s.key) ?? 0) + 1);
+  return new Map([...counts].filter(([, n]) => n > 1));
+}
+
+const RECORD_SUBJECT_KINDS: Record<string, SubjectKind> = { story: "story", decision: "decision", service: "service", criterion: "criterion" };
+/**
+ * An approvals[] record of the file counts only when a ledger record carries the same approval (digest and time), for the same
+ * action, and about the subjects the record names: a record copied to another action or subject is not backed.
+ */
+function recordBacked(record: NonNullable<WorkflowState["approvals"]>[number], entries: readonly LedgerEntry[]): boolean {
+  if (!record.subjectDigest) return false;
+  const batchAction = record.action === "review-decisions" || record.action === "open-classic-work-item";
+  const same = entries.filter((e) => e.approval && e.approval.subjectDigest === record.subjectDigest && e.approval.decidedAt === record.at && (batchAction ? e.approval.action === "review-decisions" : e.approval.action === record.action));
+  if (same.length === 0) return false;
+  const named = record.subjects.filter((s) => RECORD_SUBJECT_KINDS[s.type]);
+  if (named.length === 0) return true;
+  const backedSubject = (s: (typeof named)[number]) => same.some((e) => e.subject.kind === RECORD_SUBJECT_KINDS[s.type] && e.subject.id === s.id);
+  // a human act names exactly what it decided; a review batch also names items whose marks are not ledger subjects
+  return batchAction ? named.some(backedSubject) : named.every(backedSubject);
 }
 
 // --- accessors: only "accepted" counts ----------------------------------------------------------------------------
@@ -441,9 +481,12 @@ export function untrustedClaim(state: WorkflowState, key: string): SubjectIntegr
  */
 export function clearIntegrity<T extends WorkflowState>(state: T, keys: readonly string[]): T {
   const annotation = annotationOf(state);
-  if (!annotation || !keys.some((key) => key in annotation.subjects)) return state;
+  if (!annotation) return state;
+  // a duplicated id stays invalid whatever is decided in this call: the decision cannot say which copy it was about
+  const clearable = keys.filter((key) => key in annotation.subjects && !annotation.subjects[key]!.duplicate);
+  if (clearable.length === 0) return state;
   const subjects = { ...annotation.subjects };
-  for (const key of keys) delete subjects[key];
+  for (const key of clearable) delete subjects[key];
   return withIntegrity(state, { ...annotation, subjects });
 }
 
@@ -482,6 +525,23 @@ export function trustedView<T extends WorkflowState>(state: T): T {
     ...(state.prototype && state.prototype.status === "accepted" && bad("phase", "prototype") ? { prototype: { ...state.prototype, status: "draft" as const } } : {}),
     ...(state.storyPlan && state.storyPlan.status === "agreed" && bad("phase", "story_plan") ? { storyPlan: { ...state.storyPlan, status: "draft" as const } } : {}),
   };
+}
+
+/**
+ * The claims the user still has to decide again: unverified or invalid ones. A waiver recorded before 0.1.0-alpha.49.3 cannot be
+ * removed, so once the same gap (kind and requirement) is waived again and that waiver is accepted, the old one stays in the file
+ * and in the report as it is (never trusted) but is no longer asked for.
+ */
+export function outstandingIntegrity(state: WorkflowState): SubjectIntegrity[] {
+  const annotation = annotationOf(state);
+  if (!annotation) return [];
+  const waivers = state.waivers ?? [];
+  const sameGap = (a: (typeof waivers)[number], b: (typeof waivers)[number]) => a.kind === b.kind && (a.requirementId ?? null) === (b.requirementId ?? null);
+  const replaced = (id: string) => {
+    const old = waivers.find((w) => w.id === id);
+    return old !== undefined && waivers.some((w) => w.id !== id && sameGap(w, old) && isTrusted(state, subjectKey("waiver", w.id)));
+  };
+  return Object.values(annotation.subjects).filter((e) => (e.status === "unverified" || e.status === "invalid") && !(e.kind === "waiver" && !e.duplicate && replaced(e.id)));
 }
 
 /** Per-subject integrity of every claim, for status and inspect. */
@@ -527,9 +587,12 @@ export type ApprovalCoverage = { covers(key: string): boolean };
  *   accept     a claim made in this call by a decision verified in this call (a new claim, or one a verified reducer
  *              re-made and cleared) that the approval of this call covers, unless the ledger already backs this content
  *   reject     a criterion the user rejected in this call
- *   supersede  a recorded acceptance whose content changed (a revision)
- *   revoke     a recorded acceptance that is no longer claimed with the same content (withdrawn, removed, reopened)
- * A write without an approval never produces accept or reject: a claim it makes stays unverified.
+ *   revoke     in a write the person approved: a recorded acceptance that is no longer claimed with the same content (the person
+ *              withdrew, reworded or replaced it), and the old wording of a criterion the person reworded; it takes back exactly
+ *              the content it names, on every branch and worktree
+ *   supersede  in an agent's write: a recorded acceptance whose claim went away or whose content was revised. It is information
+ *              (it makes a claim on the revised content "stale"), never a decision against the content that was accepted
+ * A write without an approval never produces accept, reject or revoke: a claim it makes stays unverified.
  */
 export function planLedgerEntries(pre: WorkflowState | null, post: WorkflowState, approval: ApprovalCoverage | null): PlannedLedgerEntry[] {
   const preAnnotation = annotationOf(pre);
@@ -538,27 +601,37 @@ export function planLedgerEntries(pre: WorkflowState | null, post: WorkflowState
   // claim look new, so that is refused instead
   if (pre && (!preAnnotation || !postAnnotation)) throw new WorkflowError(DECISION_LEDGER_UNAVAILABLE, "a write must start from a work item the store read and checked against the decision ledger");
   const before = new Map((pre ? acceptanceSubjects(pre) : []).map((s) => [s.key, s]));
-  const after = new Map(acceptanceSubjects(post).map((s) => [s.key, s]));
+  const afterList = acceptanceSubjects(post);
+  const after = new Map(afterList.map((s) => [s.key, s]));
+  const duplicated = duplicateKeys(afterList);
   const recorded = (key: string) => before.get(key)?.claimed === true && preAnnotation?.subjects[key]?.status === "accepted";
   const madeNow = (key: string) => !postAnnotation || !(key in postAnnotation.subjects);
   const out: PlannedLedgerEntry[] = [];
   const plan = (s: AcceptanceSubject, decision: LedgerDecision) => out.push({ key: s.key, subject: { kind: s.kind, id: s.id, ...(s.revision !== undefined ? { revision: s.revision } : {}) }, contentDigest: s.contentDigest, decision });
+  // what a recorded acceptance that changed becomes: the person's approved write takes the old content back, an agent's write only
+  // records that it was revised (with the new content, so a claim on it reads stale) or withdrawn
+  const withdrawn = (b: AcceptanceSubject, s: AcceptanceSubject | undefined) => (approval ? plan(b, "revoke") : plan(s && s.contentDigest !== b.contentDigest ? s : b, "supersede"));
   const criterionStatus = (state: WorkflowState | null, id: string) => state?.requirements.flatMap((r) => r.acceptanceCriteria).find((c) => c.id === id)?.review.status;
   for (const [key, s] of after) {
     const b = before.get(key);
+    const changed = b !== undefined && b.contentDigest !== s.contentDigest;
     if (s.claimed) {
-      if (recorded(key) && b!.contentDigest === s.contentDigest) continue;
-      if (madeNow(key) && !s.stale && approval?.covers(key)) plan(s, "accept");
-      else if (recorded(key)) plan(s, "supersede");
+      if (recorded(key) && !changed) continue;
+      // a duplicated id is never accepted: the decision cannot say which copy it was about
+      if (madeNow(key) && !s.stale && !duplicated.has(key) && approval?.covers(key)) plan(s, "accept");
+      else if (recorded(key)) withdrawn(b!, s);
       continue;
     }
-    if (s.kind === "criterion" && approval?.covers(key) && criterionStatus(post, s.id) === "rejected" && !(criterionStatus(pre, s.id) === "rejected" && b?.contentDigest === s.contentDigest)) {
+    if (s.kind === "criterion" && approval?.covers(key) && criterionStatus(post, s.id) === "rejected" && !(criterionStatus(pre, s.id) === "rejected" && !changed)) {
+      if (recorded(key) && changed) plan(b!, "revoke");
       plan(s, "reject");
       continue;
     }
-    if (recorded(key)) plan(b!.contentDigest !== s.contentDigest ? s : b!, b!.contentDigest !== s.contentDigest ? "supersede" : "revoke");
+    if (recorded(key)) withdrawn(b!, s);
+    // the person approved a new wording: the old one is taken back even if it was never recorded as accepted here
+    else if (approval && changed && s.kind === "criterion" && approval.covers(key)) plan(b!, "revoke");
   }
-  for (const [key, b] of before) if (!after.has(key) && recorded(key)) plan(b, "revoke");
+  for (const [key, b] of before) if (!after.has(key) && recorded(key)) withdrawn(b, undefined);
   return out;
 }
 
@@ -615,15 +688,12 @@ export function batchCoverage(batch: ReadonlyArray<Record<string, unknown>>, pre
   return { covers: (key) => keys.has(key) || (newWaivers && key.startsWith("waiver:") && !existingWaivers.has(key)) };
 }
 
-/** What a single human act approved in the client's dialog covers: exactly its target. */
+/** What a single human act approved in the client's dialog covers: exactly its target (a rewording: the criteria it rewords). */
 export function humanActCoverage(action: string, command: Record<string, unknown>): ApprovalCoverage {
-  const key =
-    action === "confirm-story" && command.action === "confirm-story"
-      ? subjectKey("story", String(command.id))
-      : action === "confirm-decision" && command.action === "confirm-decision"
-        ? subjectKey("decision", String(command.id))
-        : action === "approve-service" && command.action === "set-service"
-          ? subjectKey("service", String((command.service as { id?: string } | undefined)?.id))
-          : null;
-  return { covers: (candidate) => key !== null && candidate === key };
+  const keys = new Set<string>();
+  if (action === "confirm-story" && command.action === "confirm-story") keys.add(subjectKey("story", String(command.id)));
+  if (action === "confirm-decision" && command.action === "confirm-decision") keys.add(subjectKey("decision", String(command.id)));
+  if (action === "approve-service" && command.action === "set-service") keys.add(subjectKey("service", String((command.service as { id?: string } | undefined)?.id)));
+  if (action === "revise-acceptance" && command.action === "revise-acceptance") for (const edit of (command.edits as Array<{ id: string }>) ?? []) keys.add(subjectKey("criterion", edit.id));
+  return { covers: (candidate) => keys.has(candidate) };
 }

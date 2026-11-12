@@ -3,7 +3,7 @@ import { PROTOTYPE_CSS, PROTOTYPE_SCRIPT, renderPrototypeBody } from "./prototyp
 import { fingerprintFor, planEntryBase, reviewStamp, workStateStamp, type ReviewView } from "./review-submission.js";
 import { reviewProgress, storyReviewProgress, analyzeStoryCoverage, acceptanceStatus } from "./planning.js";
 import type { WorkflowState } from "./workflow.js";
-import { annotationOf, trustedView, type SubjectKind } from "./acceptance-integrity.js";
+import { outstandingIntegrity, trustedView, type SubjectKind } from "./acceptance-integrity.js";
 
 /**
  * Standard, reproducible HTML reviews. Each page is a self-contained file: server-rendered content, inline CSS and a small
@@ -244,7 +244,7 @@ function marks(name: string, current: string, labels = { accepted: "Accept", rej
  * undecided (it renders trustedView), and says why, so the user decides them again with the content in front of them.
  */
 function integrityBanner(rawState: WorkflowState, kinds: readonly SubjectKind[]): string {
-  const untrusted = Object.values(annotationOf(rawState)?.subjects ?? {}).filter((s) => (s.status === "unverified" || s.status === "invalid") && kinds.includes(s.kind));
+  const untrusted = outstandingIntegrity(rawState).filter((s) => kinds.includes(s.kind));
   if (untrusted.length === 0) return "";
   return `<div class="stale" data-integrity><strong>${untrusted.length} acceptance(s) in this work item are not backed by a Praxis decision record on this computer.</strong> They are shown as undecided: decide them again if you agree. ${untrusted
     .slice(0, 12)
