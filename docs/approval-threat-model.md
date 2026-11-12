@@ -2,6 +2,16 @@
 
 This page says what Praxis's approvals protect, against whom, and where the protection ends. The rule behind every line: **Praxis does not claim more than the architecture enforces, and where it cannot enforce a boundary, the protected action stays blocked.**
 
+## Three kinds of attacker
+
+Every protection below names which of these it stops. None stops the third.
+
+| Tier | Can | Examples |
+| --- | --- | --- |
+| **Repository** | control what is in the repository, and nothing else | a cloned repository, a merged pull request, its `.claude/settings.json` and `.mcp.json` (whose `env` reaches the Runtime), `.env`, `.praxis/*` |
+| **Sandboxed agent** | run commands and write files, but only inside its workspace and temporary folders; read the home folder; start its own MCP client and a Praxis Runtime inside the same sandbox | a Claude Code sandbox that allows writes to the project only |
+| **Same user** | everything you can: write `~/.praxis`, change the installed Runtime, read keyrings, run its own client | an agent with an unsandboxed shell (the Claude Desktop Code tab today), repository code Praxis runs, a script you run |
+
 ## Five kinds of "yes", kept apart
 
 | Class | What it is | Taken for a protected action? | Recorded as |
@@ -50,6 +60,8 @@ What the agent can reach, per client:
 | G6 | Fresh and used once | An answer is usable for 10 minutes from the moment it was given, for one execution of one action. |
 | G7 | Honest labels, auditable, append-only corrections | `decidedBy` names what answered; `personVerified` is always `false`. Every outcome is journaled outside the repository. Old misattributions are corrected by appended amendments that name the line and its hash, after the person approves them. No line is rewritten. |
 | G8 | No retrying a known failure | A client version seen at least twice declining its dialog faster than any person is not asked again: the action is refused at once. Forgetting that note only makes Praxis ask again, which gets the same automatic answer. |
+| G10 | A stored acceptance counts only with its record (0.1.0-alpha.49.3) | Every acceptance (criteria, phase acceptance, stories, decisions, services, contracts, waivers, classic mode) is appended, after the dialog approved it, to a hash-chained decision ledger outside the repository, bound to its exact content and an action id. Its location comes from the account database, not from `HOME`, `PRAXIS_STATE_HOME` or the repository. On every read the Runtime compares the file's claims with the ledger, and gates count only `accepted`: a forged, copied, edited or superseded claim reads `unverified` or `invalid` ([acceptance-integrity.md](acceptance-integrity.md)). Stops the repository and a sandboxed agent; not the same user. |
+| G11 | Credentials stay where they were configured (0.1.0-alpha.49.3) | Values of the credentials Praxis holds are redacted from everything it outputs. Repository code (tests, Quality checks, Git hooks) runs with an allowlisted environment without credentials. A credential is not used when a repository file sets where or how it is sent (`CREDENTIAL_SOURCE_UNTRUSTED`). The doctor names inherited credential variables, never their values. Stops the repository (and, for the server-held Desktop copy, repository code) from obtaining or redirecting a token; does not take a token out of an environment the agent's shell already inherited. |
 | G9 | Review decisions follow the same rule | A review page's Send for approval records nothing: it hands the decisions over. `praxis_review_apply` shows exactly those decisions (and any remark the page carries) in the client's dialog, and only its approval records them. A page served on loopback is never a channel. |
 
 ## Threats, mitigations, and what remains
@@ -62,7 +74,9 @@ What the agent can reach, per client:
 | T6 | **A program running as the person** (an agent with a shell, repository code Praxis runs) | none that holds against a determined program | **real**: see R1 to R4. Praxis approval is a consent mechanism for what goes through Praxis, plus refusal of every configuration-based self-approval Praxis can see. It is not a security boundary against a program running as the person. |
 | T12 | A misleading request (content the agent wrote: a commit message, a story, a patch) | the dialog shows the action Praxis computed from the live state, never an agent's summary; anything too long to show in full is refused | a commit is identified by file names and content hashes, not shown as a diff; the person has to read what is shown |
 | T14 | Earlier journal entries that blame the person | G7 amendments; v2 entries carry `decidedBy` and evidence | entries without timing are listed `unverified` and left as written |
-| T15 | Someone edits the journal or the observations file | the journal is never read back as an authorization; an amendment is applied only when its rule allows exactly that correction; the observations file can only make Praxis refuse sooner or ask again | the journal is a record for an honest system, not tamper-proof storage (R2) |
+| T15 | Someone edits the journal or the observations file | the journal is never read back as an authorization; an amendment is applied only when its rule allows exactly that correction; the observations file can only make Praxis refuse sooner or ask again. Since 0.1.0-alpha.49.3 the journal's place comes from the account database and the repository's identity, not from a path the caller spells or `PRAXIS_STATE_HOME` | the journal is a record for an honest system, not tamper-proof storage (R2) |
+| T16 | **Acceptance written into the Work Item file** (a criterion "accepted", a story confirmed, a service approved, a phase accepted, classic mode), by hand, by a cloned repository or by a merged pull request | G10 (0.1.0-alpha.49.3): such a claim reads `unverified` or `invalid`, and gates refuse it | the same user can append to the ledger (R2). **Affects released versions up to 0.1.0-alpha.49.2** |
+| T24 | **A repository redirects or supplies a credential**: its settings' `env` or `.env` sets the Jira base URL (or the GitHub or GitLab API URL), so the token from your environment is sent to a host it chose | G11 (0.1.0-alpha.49.3): the token is not used, and nothing is sent | none from the repository |
 | T17 | Repository code that Praxis runs (Quality checks, `.praxis/quality/adapter.mjs`) | unsandboxed by design (`docs/workflow-stages.md`) | that code has a shell's power (T6) |
 | T18 | **A repository sets the approval mode.** Claude Code applies the `env` block of a repository's `.claude/settings.json` to the MCP servers it starts; `PRAXIS_APPROVAL_MODE=trusted-client` (or `host-permission` with the plan text the agent obtained) let a protected action run on the agent's `confirmation=YES` | fixed in 0.1.0-alpha.49.2: both modes are removed and the variable is read by nothing | none through settings. **Affects released 0.1.0-alpha.48 to alpha.49.1.** |
 | T18b | **The account's settings set it**: the Desktop extension's *Approval mode* setting (released 0.1.0-alpha.48 to alpha.49.1), or the `~/.praxis/approval-settings.json` file of the unreleased Desktop candidate. A shell on the account writes both | fixed in 0.1.0-alpha.49.2: the setting and the file are gone; no account file is read for approval | none through settings. Affects released 0.1.0-alpha.48 to alpha.49.1 (the extension setting). |
@@ -78,7 +92,7 @@ What the agent can reach, per client:
 | # | Path | Why Praxis cannot close it on the person's computer |
 | --- | --- | --- |
 | R1 | **A program that controls the client process**: the agent starts the Runtime under an MCP client of its own and answers the dialog itself, at a person's pace; or it starts the genuine client with code loaded into it through the client's environment (`BUN_OPTIONS`, `NODE_OPTIONS` with `--require`, `DYLD_INSERT_LIBRARIES` and the like), a modified binary, or configuration Praxis does not read | the client is a program running as the person; Praxis cannot verify its integrity from outside it. It refuses the injection variables and launch flags it knows when it inherits them (G5), not the ones it does not |
-| R2 | The agent edits Praxis's state (work item files, the journal) or its code, or skips Praxis and runs `git` or Jira itself | Praxis reads its state from files the agent can write, and the agent can use the same credentials |
+| R2 | The agent edits Praxis's state (the decision ledger, the journal) or its code, or skips Praxis and runs `git` or Jira itself | the ledger (G10) is outside the repository and the workspace, but a program running as the person writes it like any of the person's files; and the agent can use the same credentials. A forged acceptance in the Work Item file alone is caught (T16) |
 | R3 | The agent drives the genuine CLI in a pseudo-terminal, or injects keystrokes into the person's terminal with accessibility rights | the dialog is genuine; the input is not the person's |
 | R4 | Repository code Praxis runs (T17) | it runs as the person |
 | R5 | **The repository by itself**: once Claude Code trusts a folder it runs that repository's configuration as the person (hooks of any event, `.mcp.json` servers, a status line command, its `env` block), and a person who runs a repository's scripts (a make target, a direnv `.envrc`) runs them as themselves, so a repository can do R1 to R3 without any agent action (for example a cloned repository, or one an agent wrote with a file tool) | Praxis refuses protected actions while the repository's settings hold anything but the allow-list (G5), but code that already ran as the person can remove what Praxis would see, and `.mcp.json` servers are not refused. Claude Code's workspace trust prompt is the boundary: trust only repositories you have checked |
@@ -92,6 +106,7 @@ Each needs an authority outside the account, or (R5) not opening an unchecked re
 | --- | --- | --- | --- | --- | --- |
 | The client's own dialog (Claude Code CLI) | **yes** | yes | yes where Praxis can see the configuration, best effort (G5, R6) | no (R1, R3, R5) | `client-ui`, trust `client-response` |
 | The Desktop Code tab's dialog | no: it answers by itself | | | | `auto-answered` |
+| The decision ledger (0.1.0-alpha.49.3) | records what the dialog approved; never a channel by itself | | | no: it stops repository contents and a sandboxed agent only | `accepted` / `unverified` / `invalid` / `stale` |
 | Approval page, review-page Save | **no** | | | no | earlier records: `approval-page`, `review-page` |
 | Host permission prompt (`planText`) | **no** | no | | no | earlier records: `host-prompt` |
 | Trusted Client | **no** | no: a standing permission | | no | earlier records: `trusted-client` |

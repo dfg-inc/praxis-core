@@ -14,6 +14,8 @@ Order of precedence: the operator's real environment (extension settings or shel
 
 **Change from alpha.48:** a URL or credential in a repository `.env` used to be loaded. It is not any more, because a file the agent can write could otherwise point a request that carries your real token at another host. Put connection settings in the extension settings or your shell.
 
+**Since 0.1.0-alpha.49.3, the same rule covers a repository's Claude Code settings.** Claude Code applies the `env` of a repository's `.claude/settings.json`, `.claude/settings.local.json` and `.mcp.json` servers to the Runtime's environment, so a value there looks to Praxis like one from your shell. A token and the settings that decide where and how it is sent (the Jira base URL, e-mail, mode and authentication; the GitHub API URL; the GitLab base URL) must come from the same place. When a repository file sets any of them (in the working folder, the repository or a folder above), the token is not used and nothing is sent: `CREDENTIAL_SOURCE_UNTRUSTED` names the variables and the files. A file Praxis cannot read counts as setting everything. Remove the entries from the repository file and configure them with the token.
+
 ## Where to configure Jira, GitHub and GitLab now
 
 Connection settings come only from the operator's real environment, never from a file in the repository.
@@ -41,6 +43,8 @@ Connection settings come only from the operator's real environment, never from a
 - **A manually registered Runtime:** `claude mcp add -e KEY=VALUE ...`.
 
 Never paste a token into chat, a prompt or a repository file.
+
+A token exported for your whole login session (for example with `launchctl setenv` on macOS) or in a global shell profile reaches every app you start and every agent shell inside them. Praxis keeps such values out of what it outputs and out of the repository code it starts, but it cannot take them out of an environment that was already inherited. `praxis_doctor` → `credentialExposure` names the credential variables the Runtime inherited (names only). Prefer the Desktop extension settings, which only the Runtime receives, or a token exported only in the terminal that starts Claude Code, and give agent sessions least-privilege tokens.
 
 ## Migrating an old `.env`
 
