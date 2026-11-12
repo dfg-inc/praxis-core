@@ -44,7 +44,7 @@ Connection settings come only from the operator's real environment, never from a
 
 Never paste a token into chat, a prompt or a repository file.
 
-A token exported for your whole login session (for example with `launchctl setenv` on macOS) or in a global shell profile reaches every app you start and every agent shell inside them. Praxis keeps such values out of what it outputs and out of the repository code it starts, but it cannot take them out of an environment that was already inherited. `praxis_doctor` → `credentialExposure` names the credential variables the Runtime inherited (names only). Prefer the Desktop extension settings, which only the Runtime receives, or a token exported only in the terminal that starts Claude Code, and give agent sessions least-privilege tokens.
+A token exported for your whole login session (for example with `launchctl setenv` on macOS) or in a global shell profile reaches every app you start and every agent shell inside them. Praxis keeps such values out of what it outputs and does not hand them to the repository code it starts, but it cannot take them out of an environment that was already inherited, and any program running as you can read the Runtime's own environment (`ps -E`, `/proc/<pid>/environ`). `praxis_doctor` → `credentialExposure` names the credential variables the Runtime inherited (names only). Prefer the Desktop extension settings, which only the Runtime is started with (agent shells do not inherit them, though a program running as you can still read the Runtime's environment), or a token exported only in the terminal that starts Claude Code, and give agent sessions least-privilege tokens.
 
 ## Migrating an old `.env`
 
