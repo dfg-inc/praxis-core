@@ -615,6 +615,7 @@ export {
   storyReviewProgress,
 } from "./planning.js";
 export type { CoverageGap, CoverageReport, GateResult, NextStep, PlanningCommand, PlanningResult, ReviewChannel } from "./planning.js";
+export * from "./acceptance-integrity.js";
 export { RepositoryIdSchema } from "./ids.js";
 export { SUPPORTED_WORKFLOW_VERSIONS } from "./workflow.js";
 export { ReviewMarkSchema, StoryCapabilitySchema, STORY_CAPABILITIES } from "./story.js";
