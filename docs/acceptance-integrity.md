@@ -36,18 +36,32 @@ Praxis then reported a criterion accepted, a story confirmed or a service approv
 
 | Status | Meaning |
 | --- | --- |
-| `accepted` | A ledger record matches this subject and its exact content, and it is the latest decision for it |
+| `accepted` | A ledger record accepts this subject with exactly this content, and no later decision of the person took this content back |
 | `unverified` | The file claims it, and nothing on this computer backs it: accepted before 0.1.0-alpha.49.3, on another clone or computer, or written into the file |
-| `invalid` | The ledger contradicts the file: the content changed after acceptance, a later rejection, revocation or revision, or a record copied from another subject |
-| `stale` | Accepted for an earlier revision |
+| `invalid` | The ledger contradicts the file: the content changed after acceptance outside Praxis, the person later rejected or took back this content, the record belongs to another subject, or the subject's id appears twice in the work item |
+| `stale` | Accepted for an earlier revision that Praxis recorded |
 | `independently-verified` | Reserved. No approval authority exists in this release, so nothing has this status. Anything that would need it is refused with `INDEPENDENT_AUTHORITY_UNAVAILABLE` |
 
 `praxis_workflow_status` and `praxis_workflow_inspect` show each subject's `integrity` and a summary: `integrity: { accepted, unverified, invalid, stale }` and `independentVerification: "unavailable"`. A gate that refuses an unverified or invalid claim names the subject, with `ACCEPTANCE_UNVERIFIED` or `ACCEPTANCE_INVALID`. The file's own claims are never erased.
+
+**What the dialog showed is what is recorded.** The approval of a story, decision or service, and of a reworded criterion, binds the same content digest the ledger records, not only a fingerprint. A review batch binds the stored state the dialog was built from: the Runtime applies it only to exactly that state, read once under the workflow lock. If the file changed while the dialog was open, nothing is recorded and you are asked again.
+
+**Duplicate ids.** The file format allows two criteria, decisions or waivers with one id. Since a forged copy could borrow the record of the genuine one, no copy of a duplicated id counts (`invalid`, reason "duplicate id") until the duplicates are removed, and no decision is recorded for it.
 
 **Where the ledger lives.**
 - The home folder comes from the operating system's account database, not from `HOME` or `PRAXIS_STATE_HOME`: a repository's Claude Code settings can set those for the Runtime.
 - The repository key is derived from the repository's real git directory, so every worktree of one clone shares it, and a copy elsewhere does not.
 - A ledger that would resolve inside the repository is refused (`DECISION_LEDGER_UNAVAILABLE`). Praxis then records nothing and changes nothing: the dialog's approval is not taken without its record.
+
+## Branches and worktrees
+
+Every branch and worktree of one clone shares one ledger. A decision about a subject is about its content, so:
+- An acceptance stays `accepted` on every branch whose file still has exactly the accepted content, whatever happened to that subject on another branch.
+- A revision an agent records on one branch (a reworded requirement that makes a story stale, a phase reopened, a status changed) is noted in the ledger as `supersede`. It does not count against other copies of the accepted content: switching back to a branch, reverting a commit or abandoning a branch keeps that branch's acceptances.
+- Only the person takes content back: rejecting it, or approving a rewording, rejection or withdrawal of it, records `reject` or `revoke` for that exact content. Then every copy of that content reads `invalid`, on every branch, with the reason "a later decision on this computer, on any branch or worktree, took this content back". Accept it again if it still applies.
+- A claim on content that changed reads `stale` when Praxis recorded the change (accept the new revision), and `invalid` when it did not (the content changed outside Praxis).
+
+A waiver recorded before 0.1.0-alpha.49.3 stays in the file and reads `unverified`. Once you waive the same gap again and that waiver is accepted, the old one no longer blocks.
 
 ## After upgrading
 
