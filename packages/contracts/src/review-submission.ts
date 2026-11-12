@@ -13,6 +13,7 @@ import {
   storyPlanFingerprint,
 } from "./planning.js";
 import { ScopeSchema, type StoryPlanEntry } from "./planning-schemas.js";
+import { activeStories, trustedView } from "./acceptance-integrity.js";
 import type { WorkflowState } from "./workflow.js";
 
 /**
@@ -141,7 +142,9 @@ export function planEntryBase(entry: StoryPlanEntry): string {
  * as `baseStamp`: equal means nothing the page showed has moved; different means every field the save changes must carry
  * the value the page showed for it.
  */
-export function reviewStamp(state: WorkflowState, view: ReviewView): string {
+export function reviewStamp(rawState: WorkflowState, view: ReviewView): string {
+  // the page shows what the decision ledger backs (trustedView), so the stamp is of that too
+  const state = trustedView(rawState);
   const slice = view === "requirements" ? state.requirements : view === "story-plan" ? state.storyPlan : view === "contracts" ? state.contracts : view === "prototype" ? state.prototype : state.stories;
   return createHash("sha256").update(canonicalText({ view, mode: state.mode, slice })).digest("hex").slice(0, 24);
 }
@@ -150,7 +153,8 @@ export function reviewStamp(state: WorkflowState, view: ReviewView): string {
  * The work item as a whole, for decisions that are about it and not about one page: its mode and stage, the requirements
  * with their revisions and scope, the artifacts' revisions, the stories, the contracts and the waivers on record.
  */
-export function workStateStamp(state: WorkflowState): string {
+export function workStateStamp(rawState: WorkflowState): string {
+  const state = trustedView(rawState);
   // everything a decision about the whole item can depend on, marks and remarks included
   const slice = {
     mode: state.mode,
@@ -221,7 +225,10 @@ export type SubmissionPlan = {
  * Turns the user's decisions into workflow commands. The commands are applied one by one by the Runtime, so a conflict in
  * one item does not discard the others, and each is subject to the reducer's own checks and gates.
  */
-export function submissionToCommands(state: WorkflowState, raw: unknown): SubmissionPlan {
+export function submissionToCommands(rawState: WorkflowState, raw: unknown): SubmissionPlan {
+  // Decisions are planned against what the decision ledger backs: an acceptance the file claims without a ledger record is
+  // undecided here, exactly as the page showed it, so the user decides it again (re-acceptance) with its content in the dialog.
+  const state = trustedView(rawState);
   const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
   const conflicts: ReviewConflict[] = [];
   const commands: Array<Record<string, unknown>> = [];
@@ -369,7 +376,12 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       else {
         commands.push({ action: "accept-requirements", via });
         summary.push("accept all pending criteria");
-        details.push("ACCEPT every criterion still undecided and record the requirements review as accepted");
+        // the dialog shows every criterion this accepts, in full: the approval and its ledger records bind exactly these
+        const undecided = state.requirements
+          .filter((r) => r.status !== "superseded" && r.scope === "in")
+          .flatMap((r) => r.acceptanceCriteria.filter((c) => c.review.status === "pending").map((c) => ({ r, c })));
+        details.push(`ACCEPT every criterion still undecided (${undecided.length}) and record the requirements review as accepted:`);
+        for (const { r, c } of undecided) details.push(`  ${c.id} (${r.id}, revision ${c.revision}): '${c.statement}'`);
       }
     }
   }
@@ -531,7 +543,12 @@ export function submissionToCommands(state: WorkflowState, raw: unknown): Submis
       else {
         commands.push({ action: "accept-stories", via });
         summary.push("stories accepted");
-        details.push("ACCEPT the stories");
+        // what accepting the stories review binds: every story in it, as it is now
+        details.push(`ACCEPT the stories (${activeStories(state).length}):`);
+        for (const story of activeStories(state)) {
+          details.push(`  ${story.id} revision ${story.revision}${story.title ? ` '${story.title}'` : ""}: ${story.narrative}`);
+          for (const c of story.acceptanceCriteria) details.push(`    ${c.id}: Given ${c.given}; When ${c.when}; Then ${c.then}`);
+        }
       }
     }
   }
