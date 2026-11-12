@@ -50,7 +50,7 @@ Praxis then reported a criterion accepted, a story confirmed or a service approv
 
 **Where the ledger lives.**
 - The home folder comes from the operating system's account database, not from `HOME` or `PRAXIS_STATE_HOME`: a repository's Claude Code settings can set those for the Runtime.
-- The repository key is derived from the repository's real git directory, so every worktree of one clone shares it, and a copy elsewhere does not.
+- The repository key is derived from the repository's real git directory, so every worktree of one clone shares it (when git's own layout confirms it: the worktree's git directory sits under the clone's `.git/worktrees/` and points back at it), and a copy elsewhere does not. A `.git` file that does not pass that check makes the folder count as a folder of its own, and a git repository in your home folder is never treated as the repository of the projects under it.
 - A ledger that would resolve inside the repository is refused (`DECISION_LEDGER_UNAVAILABLE`). Praxis then records nothing and changes nothing: the dialog's approval is not taken without its record.
 
 ## Branches and worktrees
