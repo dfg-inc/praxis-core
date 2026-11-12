@@ -20,6 +20,7 @@ import {
   decisionLogPath,
   logDecision,
   obtainUserApproval,
+  repositoryIdentity,
   repositoryKey,
   securityStateHome,
   securityStateInsideRepository,
@@ -115,6 +116,90 @@ describe("the decision journal's location in a shipped bundle", () => {
     symlinkSync(dir, link);
     // a temp folder may sit under a git repository on some machines; then both spellings resolve to that one, which is still one key
     expect(repositoryKey(link)).toBe(repositoryKey(dir));
+  });
+});
+
+describe("repository identity: a planted .git cannot join another repository; the home folder is not a project", () => {
+  // the reviewer's case: attacker/.git names a git directory the attacker wrote, whose commondir names the victim's .git and
+  // whose back-pointer names the attacker's own .git (T-repo archive or pull request, T-sandboxed-agent folder)
+  const planted = (base: string, victim: string, where = join(base, "attacker")) => {
+    mkdirSync(join(where, "fakegit"), { recursive: true });
+    writeFileSync(join(where, ".git"), "gitdir: fakegit\n");
+    writeFileSync(join(where, "fakegit", "commondir"), `${relative(join(where, "fakegit"), join(victim, ".git"))}\n`);
+    writeFileSync(join(where, "fakegit", "gitdir"), `${join(where, ".git")}\n`);
+    return where;
+  };
+
+  it("a planted .git file with a matching back-pointer is keyed as its own plain directory, and the walk stops there", () => {
+    const base = temp("praxis-a-plant-");
+    const victim = join(base, "victim");
+    mkdirSync(victim);
+    git(victim, "init", "-q");
+    const attacker = planted(base, victim);
+    expect(repositoryKey(attacker)).not.toBe(repositoryKey(victim));
+    expect(repositoryIdentity(attacker)).toMatchObject({ kind: "directory", basis: attacker, roots: [attacker] });
+    // inside a real repository, the planted folder does not take the outer repository's key either: the walk stopped
+    const outer = join(base, "outer");
+    mkdirSync(outer);
+    git(outer, "init", "-q");
+    const nested = planted(base, victim, join(outer, "vendor", "pkg"));
+    expect(repositoryIdentity(nested)).toMatchObject({ kind: "directory", basis: nested });
+    expect(repositoryKey(nested)).not.toBe(repositoryKey(outer));
+    // the same files placed under the victim's own worktrees/ folder still need git's back-pointer
+    mkdirSync(join(victim, ".git", "worktrees", "x"), { recursive: true });
+    writeFileSync(join(victim, ".git", "worktrees", "x", "commondir"), "../..\n");
+    writeFileSync(join(victim, ".git", "worktrees", "x", "gitdir"), `${join(base, "elsewhere", ".git")}\n`);
+    const pointing = join(base, "pointing");
+    mkdirSync(pointing);
+    writeFileSync(join(pointing, ".git"), `gitdir: ${join(victim, ".git", "worktrees", "x")}\n`);
+    expect(repositoryIdentity(pointing).kind).toBe("directory");
+  });
+
+  it("a .git directory is its own common directory: a planted commondir inside it is not followed", () => {
+    const base = temp("praxis-a-plantdir-");
+    const victim = join(base, "victim");
+    const attacker = join(base, "attacker");
+    mkdirSync(victim);
+    mkdirSync(attacker);
+    git(victim, "init", "-q");
+    git(attacker, "init", "-q");
+    writeFileSync(join(attacker, ".git", "commondir"), "../../victim/.git\n");
+    expect(repositoryKey(attacker)).not.toBe(repositoryKey(victim));
+    expect(repositoryIdentity(attacker).basis).toBe(join(attacker, ".git"));
+  });
+
+  it("a genuine `git worktree add` shares the main repository's key, and both its trees are the repository", () => {
+    const main = temp("praxis-a-main-");
+    git(main, "init", "-q");
+    writeFileSync(join(main, "a.txt"), "a\n");
+    git(main, "add", "a.txt");
+    git(main, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "a");
+    const linked = join(temp("praxis-a-linked-"), "wt");
+    git(main, "worktree", "add", "-q", linked);
+    expect(repositoryIdentity(linked)).toMatchObject({ kind: "git", key: repositoryKey(main), basis: join(main, ".git"), root: linked });
+    expect(repositoryIdentity(linked).roots).toEqual(expect.arrayContaining([linked, main, join(main, ".git")]));
+  });
+
+  it("a dotfiles repository at the account's home neither keys nor guards the projects under it", () => {
+    const home = temp("praxis-a-acct-");
+    git(home, "init", "-q");
+    const project = join(home, "work", "project");
+    mkdirSync(project, { recursive: true });
+    const state = join(home, ".praxis");
+    // without the stop (what the review found): the home repository makes ~/.praxis "inside the repository"
+    expect(securityStateInsideRepository(project, state)).toBe(state);
+    // with the account's home where the walk stops: a plain project, and the state home is outside it
+    expect(repositoryIdentity(project, { accountHome: home })).toMatchObject({ kind: "directory", roots: [project] });
+    expect(securityStateInsideRepository(project, state, { accountHome: home })).toBeUndefined();
+    // a real repository under home is still a repository
+    const real = join(home, "work", "real");
+    mkdirSync(real);
+    git(real, "init", "-q");
+    expect(repositoryIdentity(join(real), { accountHome: home }).kind).toBe("git");
+    // and a link to home is home
+    const link = join(temp("praxis-a-acctlink-"), "h");
+    symlinkSync(home, link);
+    expect(repositoryIdentity(join(link, "work", "project"), { accountHome: link }).kind).toBe("directory");
   });
 });
 
