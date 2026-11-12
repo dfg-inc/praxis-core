@@ -195,8 +195,9 @@ export function isElectronHelperExecutable(execPath: string): boolean {
 
 /**
  * The Quality service runs the repository's tests (npm test, the .project test command), so it starts with the allowlisted
- * environment for repository code plus its own PRAXIS_QUALITY_* settings, never the Runtime's credentials: it calls no
- * remote service and needs none (contracts child-env.ts; T-repo, T-sandboxed-agent). A worker thread gets the same copy.
+ * environment for repository code plus its own PRAXIS_QUALITY_* settings, and is not handed the Runtime's credentials: it
+ * calls no remote service and needs none. Hygiene, not a boundary (contracts child-env.ts): code running as the user can
+ * still read the Runtime's own environment. A worker thread gets the same copy.
  */
 export function qualityServiceEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const own = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string" && /^PRAXIS_(QUALITY_[A-Z0-9_]+|SQL_WASM)$/.test(entry[0])));

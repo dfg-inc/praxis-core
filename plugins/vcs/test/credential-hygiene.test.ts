@@ -1,6 +1,6 @@
 /**
  * 0.1.0-alpha.49.3, Agent A (T-repo): a repository file cannot redirect the operator's GitHub or GitLab token, and the git
- * Praxis runs (with the repository's hooks) never receives a token. A local capture server stands in for the API; the token
+ * Praxis runs (with the repository's hooks) is not handed a token in its environment (hygiene: contracts child-env.ts). A local capture server stands in for the API; the token
  * is a fake one. The control case (no repository declaration) shows the capture server does receive a trusted request.
  */
 import { spawnSync } from "node:child_process";

@@ -1,7 +1,7 @@
 /**
- * 0.1.0-alpha.49.3, Agent A (T-repo, T-sandboxed-agent): the repository's own test command from .project is repository code.
- * It runs with the allowlisted environment, so the Runtime's Jira token (in Claude Desktop: the extension's copy, held only
- * by the server process) never reaches it. Fake token only.
+ * 0.1.0-alpha.49.3, Agent A: the repository's own test command from .project is repository code. It runs with the
+ * allowlisted environment, so the Runtime's Jira token is not in its own environment (hygiene only: the child can still read
+ * the Runtime's environment with ps -E; see contracts child-env.ts). Fake token only.
  */
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,7 +25,7 @@ afterEach(() => {
   rmSync(repo, { recursive: true, force: true });
 });
 
-describe("the repository's test command runs without credentials", () => {
+describe("the repository's test command is not handed credentials", () => {
   it("a command that dumps its environment sees PATH, never a token", () => {
     process.env.PRAXIS_JIRA_TOKEN = "praxis-fake-token-jira-a1b2c3d4";
     process.env.PRAXIS_GITHUB_TOKEN = "praxis-fake-token-gh-a1b2c3d4";

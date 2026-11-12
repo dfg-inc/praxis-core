@@ -1,7 +1,7 @@
 /**
  * 0.1.0-alpha.49.3, Agent A: credential hygiene in the shared library.
  *   - value-based redaction of every credential the process holds, in every form Praxis may emit it;
- *   - repository code and git get an allowlisted environment without credentials;
+ *   - repository code and git are started with an allowlisted environment that hands them no credential (hygiene);
  *   - a credential and its destination must not come from a repository file (provenance, not a name list).
  * Fake tokens only.
  */
