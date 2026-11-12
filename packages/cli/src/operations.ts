@@ -36,12 +36,18 @@ import {
   type QualityCommentReadback,
 } from "@praxis/jira/workflow";
 import { resolveWorkPackageRef, type ResolvedIdentifier } from "./identity.js";
-import { approvalDiagnostics, classifyDotenvRefusal, doctorNextSteps, providerDiagnostics, type DotenvRefusal } from "./diagnostics.js";
+import { approvalDiagnostics, classifyDotenvRefusal, credentialExposure, doctorNextSteps, providerDiagnostics, type DotenvRefusal } from "./diagnostics.js";
 import { VcsError, githubTokenFlags, gitlabTokenFlags, type GitDeliveryJournal, type GitWriteFields } from "@praxis/vcs";
 import {
   ApprovalError,
+  CredentialSourceError,
   canonicalize,
+  credentialSourceReport,
   decisionKindFor,
+  gitEnv,
+  inheritedCredentialVariables,
+  noteRepositoryDotenv,
+  redactCredentials,
   hasMutationLease,
   obtainUserApproval,
   runApprovedMutation,
@@ -159,6 +165,8 @@ export const OP_CODES = {
   GIT_CONFIRMATION_REQUIRED: "GIT_CONFIRMATION_REQUIRED",
   GIT_SECRETS_DETECTED: "GIT_SECRETS_DETECTED",
   GIT_REPRODUCIBILITY_BLOCKED: "GIT_REPRODUCIBILITY_BLOCKED",
+  CREDENTIAL_SOURCE_UNTRUSTED: "CREDENTIAL_SOURCE_UNTRUSTED",
+  DECISION_LEDGER_UNAVAILABLE: "DECISION_LEDGER_UNAVAILABLE",
 } as const;
 
 export type OpCode = (typeof OP_CODES)[keyof typeof OP_CODES];
@@ -188,8 +196,9 @@ export function previewFingerprint(plan: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
 }
 
+/** Shapes of a credential (`PRAXIS_JIRA_TOKEN=...`, an Authorization header), then every value this process holds (contracts secret-redaction.ts). */
 export function redact(text: string): string {
-  return text
+  return redactCredentials(text)
     .replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>")
     .replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>")
     .replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>")
@@ -320,6 +329,8 @@ function dotenvKeyForbidden(key: string): boolean {
 
 /** Values a repository file put into process.env, so the next call can take them back: one repository's file must not apply to another. */
 const fileSourced = new Map<string, string>();
+/** Which repository file each of them came from: credential-source.ts refuses a credential paired with any of them. */
+const fileSourcedFrom = new Map<string, string>();
 const DOTENV_MAX_BYTES = 64 * 1024;
 
 function parseDotenvLine(raw: string): { key: string; value: string } | undefined {
@@ -341,9 +352,11 @@ export function loadPraxisDotenv(repo: string): void {
   // take back what the previous call's repository file set, unless the operator has since set the same variable
   for (const [key, value] of fileSourced) if (process.env[key] === value) delete process.env[key];
   fileSourced.clear();
+  fileSourcedFrom.clear();
   dotenvRefusals = [];
-  if (process.env.PRAXIS_SKIP_DOTENV === "1") return;
   const resolved = resolve(repo);
+  noteRepositoryDotenv(resolved, []);
+  if (process.env.PRAXIS_SKIP_DOTENV === "1") return;
   if (!existsSync(resolved)) return;
   for (const f of [".env.praxis", ".env", ".env.praxis.local"]) {
     const p = join(resolved, f);
@@ -371,8 +384,10 @@ export function loadPraxisDotenv(repo: string): void {
       if (process.env[key]) continue;
       process.env[key] = value;
       fileSourced.set(key, value);
+      fileSourcedFrom.set(key, p);
     }
   }
+  noteRepositoryDotenv(resolved, fileSourcedFrom);
 }
 
 function gitRoot(cwd: string): string | undefined {
@@ -380,6 +395,7 @@ function gitRoot(cwd: string): string | undefined {
     cwd,
     encoding: "utf8",
     timeout: 2000,
+    env: gitEnv(),
   });
   if ((r.status ?? 1) !== 0) return undefined;
   return r.stdout.trim() || undefined;
@@ -491,6 +507,7 @@ async function withProvider<T>(
   } catch (e) {
     const msg = redact(e instanceof Error ? e.message : String(e));
     if (e instanceof PraxisOpError) throw e;
+    if (e instanceof CredentialSourceError) throw new PraxisOpError(OP_CODES.CREDENTIAL_SOURCE_UNTRUSTED, msg, { details: e.details });
     if (/timeout|aborted/i.test(msg)) {
       throw new PraxisOpError(OP_CODES.JIRA_READ_TIMEOUT, `JIRA_READ_TIMEOUT: ${msg}`);
     }
@@ -615,10 +632,11 @@ function asApprovalError(err: unknown): never {
 }
 
 /**
- * Action -> Preview -> the user approves or rejects -> Execute -> Result.
+ * Action -> Preview -> the client's approval dialog answers approve or reject -> Execute -> Result.
  *
- * The write runs only after the user's approval of exactly this action: asked in the MCP client's own dialog when the
- * client supports it. A client without one gets the preview and a clear refusal; nothing runs (see user-approval.ts). A stale preview is refused before the user is asked, so what they approve is what runs.
+ * The write runs only after the client's own approval dialog approves exactly this action (a client response, never a
+ * verified person: see user-approval.ts). A client without one gets the preview and a clear refusal; nothing runs. A stale
+ * preview is refused before the dialog is asked, so what was shown is what runs.
  */
 async function guardWrite<T>(ctx: OpContext, spec: ProtectedSpec, write: () => Promise<T> | T): Promise<T> {
   // "NO" is the agent withdrawing the request: it is recorded as withdrawn (never as the user's rejection) and refused below.
@@ -734,6 +752,8 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     issue: github.apiUrlIssue,
   });
   const approval = approvalDiagnostics(process.env, git ?? resolved);
+  // where each credential would be sent, checked as the providers check it: a repository file may set neither (names and files only)
+  const credentialSource = credentialSourceReport(repoExists ? git ?? resolved : undefined);
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? (git ? "ok" : "no-git") : "unavailable",
@@ -760,6 +780,8 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
     dotenvLoaded: dotenvLoadedKeys(),
     providers,
     approval,
+    credentialExposure: credentialExposure(inheritedCredentialVariables()),
+    credentialSource,
     nextSteps: [
       ...doctorNextSteps({
       repoExists,
@@ -772,6 +794,9 @@ export async function doctorOp(ctx: OpContext, version: string): Promise<Record<
       dotenvRefused: dotenvRefusals,
       dotenvLoaded: dotenvLoadedKeys(),
     }),
+      ...Object.entries(credentialSource)
+        .filter(([, report]) => !report.trusted)
+        .map(([provider, report]) => `${provider}: ${report.repositoryVariables.join(", ")} ${report.repositoryVariables.length === 1 ? "is" : "are"} set by a repository file (${report.files.join("; ")}), so its credential is not used. Remove ${report.repositoryVariables.length === 1 ? "it" : "them"} from the repository and configure ${provider} together with its token in the operator environment.`),
     ],
     codes: {
       repository:
@@ -1660,7 +1685,7 @@ export async function developerGitConnectPreviewOp(ctx: OpContext) {
   }
 }
 
-// --- request descriptions for secure Git authorization -----------------------------------------------------
+// --- request descriptions for Git approvals -----------------------------------------------------------------
 // Each one re-reads the live repository and refuses a stale preview, so what the owner is shown and what the
 // token binds is exactly what would run now.
 

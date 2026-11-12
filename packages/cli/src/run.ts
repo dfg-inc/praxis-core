@@ -53,7 +53,7 @@ import {
   workPackageShowOp,
   type OpContext,
 } from "./operations.js";
-import { withApprovalChannel } from "@praxis/contracts";
+import { redactCredentials, redactCredentialsDeep, withApprovalChannel } from "@praxis/contracts";
 import { terminalApprovalChannel } from "./terminal-approval.js";
 
 function unbundledPackageVersion(): string {
@@ -138,8 +138,9 @@ export function parseFlags(argv: string[]): Flags {
   return flags;
 }
 
+/** Everything the CLI prints passes value-based credential redaction (contracts secret-redaction.ts). */
 function printJson(obj: unknown): void {
-  process.stdout.write(`${JSON.stringify(obj)}\n`);
+  process.stdout.write(`${JSON.stringify(redactCredentialsDeep(obj))}\n`);
 }
 
 function printHelp(path: string[], json: boolean): ExitCode {
@@ -230,9 +231,9 @@ export async function runCli(argv: string[]): Promise<ExitCode> {
       const rec = data as Record<string, unknown>;
       if (typeof rec.help === "string") process.stdout.write(String(rec.help));
       else if (typeof rec.planText === "string") {
-        process.stdout.write(`${rec.planText}\n`);
+        process.stdout.write(`${redactCredentials(rec.planText)}\n`);
       } else {
-        process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify(redactCredentialsDeep(data), null, 2)}\n`);
       }
     }
     if (data && typeof data === "object" && (data as { _exit?: number })._exit) {

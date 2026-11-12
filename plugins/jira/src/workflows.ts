@@ -15,7 +15,7 @@ import type {
   WorkPackageClaim,
   QualityWpReport,
 } from "@praxis/contracts";
-import { JiraBaHandoffSchema, JiraBaProposalSchema } from "@praxis/contracts";
+import { JiraBaHandoffSchema, JiraBaProposalSchema, repositoryCodeEnv } from "@praxis/contracts";
 import { authorizeJira, hasMutationLease, jiraMutation } from "./mutation-auth.js";
 import type { JiraProvider } from "./provider.js";
 import { assertRole } from "./role-policy.js";
@@ -726,7 +726,8 @@ function runAllowlisted(
     cwd,
     shell: true,
     encoding: "utf8",
-    env: process.env,
+    // a build/test/coverage command from the repository's .project: repository code, never given the Runtime's credentials
+    env: repositoryCodeEnv(),
   });
   return { ok: (r.status ?? 1) === 0, stdout: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }

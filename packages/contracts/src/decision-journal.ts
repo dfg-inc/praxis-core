@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { decisionLogPath, type DecidedBy, type DecisionLogEntry, type DecisionOutcome } from "./user-approval.js";
+import { assertSecurityStateOutside, decisionLogPath, repositoryIdentity, type ApprovalLabels, type DecidedBy, type DecisionLogEntry, type DecisionOutcome } from "./user-approval.js";
 
 /**
  * Reading the decision journal back, and correcting it without rewriting it.
+ *
+ * The journal is a log for the user's later review, not evidence. Nothing in Praxis reads it to decide whether an action may
+ * run, a gate opens or a record counts as accepted: an approval is only ever the in-memory object obtainUserApproval issued
+ * for the call being served (verifyUserApproval). Anyone with the user's account can append to the journal (T-same-user, and
+ * T-sandboxed-agent wherever the account home is writable from its sandbox), so a line in it, "approved" included, proves
+ * nothing. Readers here only display it and look for claims about the user that the evidence takes back.
  *
  * The journal is append-only. An entry that claimed more than Praxis knew (an "approval rejected by the user" that was
  * really the agent's confirmation=NO, or a client that answered `decline` by itself in a few milliseconds) is never edited
@@ -12,11 +17,15 @@ import { decisionLogPath, type DecidedBy, type DecisionLogEntry, type DecisionOu
  * claimed, what the evidence shows instead, by which rule and on what evidence. Readers apply amendments on top; the
  * original line stays exactly as it was written.
  *
- * Only two rules exist, and both only take a claim about the user away; nothing here can turn anything into an approval:
+ * Only two rules exist, and both only take a claim about the user away; nothing here can turn anything into an approval
+ * (validAmendment checks the corrected outcome against the rule, so a hand-written amendment line claiming "approved" is
+ * ignored, and praxis_approval_journal amend can only append these two corrections):
  *   agent-reported-decline         decision "rejected", channel "none", reason "reported by the agent" (confirmation=NO
  *                                  before journal v2): the agent withdrew the request; no decision of the user is known
  *   client-answered-without-dialog decision "rejected"/"dismissed" from the client dialog, answered faster than a person
  *                                  can read it (the timing comes from the Runtime's diagnostics log): the client's answer
+ *
+ * Reads and writes are refused when the journal would be inside the repository being operated on (assertSecurityStateOutside).
  */
 
 export type AmendmentRule = "agent-reported-decline" | "client-answered-without-dialog";
@@ -31,6 +40,8 @@ export type DecisionAmendment = {
   rule: AmendmentRule;
   evidence: Record<string, string | number | boolean>;
   by: string;
+  /** How appending this correction was approved (written since 0.1.0-alpha.49.3); never a verified person. */
+  approvedThrough?: ApprovalLabels;
   repository?: string;
 };
 
@@ -47,6 +58,7 @@ export type JournalLine = {
 const lineHash = (raw: string): string => `sha256:${createHash("sha256").update(raw, "utf8").digest("hex")}`;
 
 export function readDecisionJournal(repo: string): JournalLine[] {
+  assertSecurityStateOutside(repo);
   const path = decisionLogPath(repo);
   if (!existsSync(path)) return [];
   const raws = readFileSync(path, "utf8").split("\n");
@@ -205,9 +217,9 @@ export function auditDecisionJournal(lines: JournalLine[], options: { roundTrips
  * Appends one amendment per "amend" finding. Idempotent: an entry that already has an amendment is skipped. The journal
  * lines it amends are not touched.
  */
-export function appendDecisionAmendments(repo: string, findings: JournalFinding[], by: string, now: Date = new Date()): { appended: number; skipped: number; path: string } {
-  const path = decisionLogPath(repo);
+export function appendDecisionAmendments(repo: string, findings: JournalFinding[], by: string, now: Date = new Date(), approvedThrough?: ApprovalLabels): { appended: number; skipped: number; path: string } {
   const lines = readDecisionJournal(repo);
+  const path = decisionLogPath(repo);
   const already = validlyAmended(lines);
   const current = new Map(lines.map((l) => [l.line, l.sha256]));
   let appended = 0;
@@ -230,7 +242,8 @@ export function appendDecisionAmendments(repo: string, findings: JournalFinding[
       rule: finding.rule,
       evidence: finding.evidence ?? {},
       by,
-      repository: resolve(repo),
+      ...(approvedThrough ? { approvedThrough: { ...approvedThrough, personVerified: false as const, independentlyVerified: false as const } } : {}),
+      repository: repositoryIdentity(repo).root,
     };
     appendFileSync(path, `${JSON.stringify(amendment)}\n`, { mode: 0o600 });
     already.add(key);

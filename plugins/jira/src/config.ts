@@ -1,3 +1,5 @@
+import { assertCredentialSource } from "@praxis/contracts";
+
 export type JiraMode = "cloud" | "datacenter" | "auto";
 
 export type JiraAuthMode = "pat" | "cloud-basic" | "oauth-placeholder";
@@ -116,9 +118,15 @@ export function detectJiraMode(
   return looksCloud ? "cloud" : "datacenter";
 }
 
+/**
+ * The token and the base URL (and the e-mail and mode that decide how it is sent) are paired here and only here. They must
+ * all come from the operator: a repository file that sets any of them refuses the token before a request is built
+ * (contracts credential-source.ts; T-repo).
+ */
 export function loadJiraConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): JiraConfig {
+  assertCredentialSource("jira");
   const baseUrl = (env.PRAXIS_JIRA_BASE_URL ?? "").replace(/\/$/, "");
   const token = env.PRAXIS_JIRA_TOKEN ?? "";
   const projectKey = env.PRAXIS_JIRA_PROJECT_KEY ?? "";

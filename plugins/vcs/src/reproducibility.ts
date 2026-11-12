@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { repositoryCodeEnv } from "@praxis/contracts";
 import { runGit } from "./git-local.js";
 
 export type ReproRun = {
@@ -50,7 +51,8 @@ function runNpmTestAtSha(repo: string, sha: string, label: string): ReproRun {
       cwd: dir,
       encoding: "utf8",
       timeout: 60_000,
-      env: { ...process.env, npm_config_audit: "false", npm_config_fund: "false" },
+      // the committed tree's own test script: repository code, run without the Runtime's credentials (child-env.ts)
+      env: repositoryCodeEnv({ npm_config_audit: "false", npm_config_fund: "false" }),
     });
     const output = `${test.stdout}\n${test.stderr}`;
     const parsed = parseTestCounts(output);

@@ -1,4 +1,4 @@
-import { requireMutationLease } from "@praxis/contracts";
+import { assertCredentialSource, CredentialSourceError, requireMutationLease } from "@praxis/contracts";
 import { VCS_CODES, VcsError } from "./errors.js";
 import { tokenConfigured } from "./redact.js";
 import type { CiStatus, MergeRequestInfo, RemoteRepositoryInfo, VcsProvider } from "./provider.js";
@@ -8,7 +8,18 @@ export type GitlabConfig = {
   baseUrl: string;
 };
 
+/** The token and the base URL it is sent to must both come from the operator, never a repository file (credential-source.ts; T-repo). */
+export function gitlabCredentialSource(): void {
+  try {
+    assertCredentialSource("gitlab");
+  } catch (error) {
+    if (error instanceof CredentialSourceError) throw new VcsError(VCS_CODES.CREDENTIAL_SOURCE_UNTRUSTED, error.message, error.details);
+    throw error;
+  }
+}
+
 export function loadGitlabConfig(env: NodeJS.ProcessEnv = process.env): GitlabConfig {
+  gitlabCredentialSource();
   const token = env.PRAXIS_GITLAB_TOKEN?.trim() ?? "";
   if (!tokenConfigured(token)) {
     throw new VcsError(
@@ -39,6 +50,7 @@ export function createGitlabProvider(opts?: {
   fetchImpl?: FetchLike;
   env?: NodeJS.ProcessEnv;
 }): VcsProvider {
+  if (!opts?.config) gitlabCredentialSource();
   const config =
     opts?.config ??
     (opts?.fetchImpl
